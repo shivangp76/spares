@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { describeReverted, redoEvent, undoEvent } from '../api/client';
-import type { EventSummary } from '../types/spares';
-import { RedoIcon, UndoIcon } from './Icons';
-import { errorMessage } from '../utils';
+import { useState } from "react";
+import { describeReverted, redoEvent, undoEvent } from "../api/client";
+import type { EventSummary } from "../types/spares";
+import { RedoIcon, UndoIcon } from "./Icons";
+import { errorMessage } from "../utils";
 
 export interface ActionOutcome {
   message: string;
@@ -14,7 +14,13 @@ export interface ActionOutcome {
  * Shows the outcome of a mutating action, with an Undo button for the events it created. Once
  * undone, the button becomes Redo, and so on.
  */
-export default function ActionResult({ outcome, onReverted }: { outcome: ActionOutcome; onReverted?: () => void }) {
+export default function ActionResult({
+  outcome,
+  onReverted,
+}: {
+  outcome: ActionOutcome;
+  onReverted?: () => void;
+}) {
   const [undone, setUndone] = useState(false);
   // Events the next Undo or Redo reverses, processed last first. Undo returns its undo events
   // newest action first, so redoing them last first replays the actions in their original order.
@@ -43,8 +49,12 @@ export default function ActionResult({ outcome, onReverted }: { outcome: ActionO
           }
         }
       }
-      const verb = undone ? 'Redone' : 'Undone';
-      setStatus(reverted.length ? describeReverted(verb, reverted) : `No event to ${undone ? 'redo' : 'undo'}.`);
+      const verb = undone ? "Redone" : "Undone";
+      setStatus(
+        reverted.length
+          ? describeReverted(verb, reverted)
+          : `No event to ${undone ? "redo" : "undo"}.`,
+      );
       setEventIds(created);
       setUndone(!undone);
       onReverted?.();
@@ -55,13 +65,20 @@ export default function ActionResult({ outcome, onReverted }: { outcome: ActionO
     }
   }
 
-  const label = undone ? (busy ? 'Redoing…' : 'Redo') : (busy ? 'Undoing…' : 'Undo');
+  const label = undone
+    ? busy
+      ? "Redoing…"
+      : "Redo"
+    : busy
+      ? "Undoing…"
+      : "Undo";
   return (
-    <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+    <div className="status-line" style={{ marginTop: 8 }}>
       <span>{outcome.message}</span>
       {eventIds.length > 0 && (
-        <button onClick={revert} disabled={busy} style={{ padding: '2px 8px', fontSize: 12 }}>
-          {undone ? <RedoIcon /> : <UndoIcon />}{label}
+        <button onClick={revert} disabled={busy} className="button-small">
+          {undone ? <RedoIcon /> : <UndoIcon />}
+          {label}
         </button>
       )}
       {status && <span>{status}</span>}

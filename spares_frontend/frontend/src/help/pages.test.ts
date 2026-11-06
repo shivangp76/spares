@@ -120,9 +120,9 @@ test("the fields whose descriptions explain values exist", () => {
   const named = sources.flatMap((file) =>
     [
       ...readFileSync(join(import.meta.dir, "..", file), "utf8").matchAll(
-        /\babout\('([^']+)'\)/g,
+        /\babout\((["'])([^"']+)\1\)/g,
       ),
-    ].map((m) => m[1]),
+    ].map((m) => m[2]),
   );
   expect(named).toContain("c.stability");
   for (const name of named) expect(FIELDS).toContain(name);

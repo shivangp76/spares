@@ -390,32 +390,10 @@ button.navbar-link-current {
   font-weight: normal;
 }
 
-/* What the navbar's last undo, redo or sync did */
+/* What the navbar's last undo, redo or sync did, in a `status-line` of its own */
 .navbar-status {
   flex-basis: 100%;
   margin-top: 4px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-/* A compact button beside a line of text, as Undo after an action */
-.button-small {
-  padding: 2px 8px;
-  font-size: 12px;
-}
-
-/* Read by screen readers but not shown, as the name of a button that only shows an icon */
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 /* Notes a sync could not merge (`sync-conflict`) */
@@ -658,6 +636,92 @@ input[type="checkbox"] {
   50% {
     opacity: 0.3;
   }
+}
+
+/* Shared text and controls, used instead of the same inline styles on each page */
+
+/* A page's title (`PageTitle`), and what the page is for under it */
+.page-title {
+  margin: 0 0 16px;
+}
+
+.page-title:has(+ .page-description) {
+  margin-bottom: 8px;
+}
+
+.page-description {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+/* A compact button beside a line of text, as Undo after an action */
+.button-small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* Read by screen readers but not shown, as the name of a button that only shows an icon */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The help under a form field */
+.field-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* A short note beside or under a control, quieter than the text around it */
+.hint {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Text a step quieter than the page's, at a smaller size */
+.secondary-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* What an action did, or what is shown, in a line of its own */
+.status-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.error-text {
+  color: var(--error);
+}
+
+.error-text-small {
+  font-size: 13px;
+  color: var(--error);
+}
+
+/* A checkbox or radio button with its label beside it */
+.checkbox-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+}
+
+/* A table of rows, as the Tags or Parsers page lists */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
 }
 
 @media (prefers-reduced-motion: reduce) {

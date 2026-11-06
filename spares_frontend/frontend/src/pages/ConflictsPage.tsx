@@ -9,6 +9,7 @@ import {
 } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import { errorMessage, formatNoteId, sectionLabel } from "../utils";
+import PageTitle from "../components/PageTitle";
 
 const KIND_ABOUT: Record<SyncConflict["kind"], string> = {
   text: "Both sides changed the same lines. This side’s text was kept.",
@@ -196,19 +197,24 @@ export default function ConflictsPage() {
 
   return (
     <div className="page">
-      <h2 style={{ marginBottom: 8 }}>Conflicts</h2>
-      <p style={{ marginTop: 0, color: "var(--text-secondary)" }}>
-        Notes a sync could not merge on its own. Card ids stand in for card
-        orders (o:c40 is card 40), so the same card reads the same on both
-        sides.
-      </p>
+      <PageTitle
+        description={
+          <>
+            Notes a sync could not merge on its own. Card ids stand in for card
+            orders (o:c40 is card 40), so the same card reads the same on both
+            sides.
+          </>
+        }
+      >
+        Conflicts
+      </PageTitle>
       {status && (
         <p role="status" style={{ color: "var(--text-secondary)" }}>
           {status}
         </p>
       )}
       {error && (
-        <p role="alert" style={{ color: "var(--error)" }}>
+        <p role="alert" className="error-text">
           {error}
         </p>
       )}

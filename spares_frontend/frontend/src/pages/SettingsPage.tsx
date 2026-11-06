@@ -51,6 +51,7 @@ import {
   type TypstThemePreference,
 } from "../theme";
 import { sectionLabel } from "../utils";
+import PageTitle from "../components/PageTitle";
 
 const THEMES: { value: ThemePreference; label: string }[] = [
   { value: "light", label: "Light" },
@@ -103,21 +104,13 @@ export default function SettingsPage() {
 
   return (
     <div className="page">
-      <h2 style={{ marginBottom: 16 }}>Settings</h2>
+      <PageTitle>Settings</PageTitle>
 
       <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
         <legend style={{ ...sectionLabel, padding: 0 }}>Theme</legend>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
           {THEMES.map(({ value, label }) => (
-            <label
-              key={value}
-              style={{
-                display: "flex",
-                gap: 6,
-                alignItems: "center",
-                cursor: "pointer",
-              }}
-            >
+            <label key={value} className="checkbox-label">
               <input
                 type="radio"
                 name="theme"
@@ -143,15 +136,7 @@ export default function SettingsPage() {
         >
           <span>Page width:</span>
           {PAGE_WIDTHS.map((width) => (
-            <label
-              key={width}
-              style={{
-                display: "flex",
-                gap: 6,
-                alignItems: "center",
-                cursor: "pointer",
-              }}
-            >
+            <label key={width} className="checkbox-label">
               <input
                 type="radio"
                 name="page-width"
@@ -163,13 +148,7 @@ export default function SettingsPage() {
             </label>
           ))}
         </div>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           For large screens. Also changed with w while reviewing. Typst pages
           that fit the screen get longer lines, and pages of a fixed size get
           larger.
@@ -194,13 +173,7 @@ export default function SettingsPage() {
             ))}
           </select>
         </label>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           Wherever cards are shown. Also changed with + and - while reviewing.
           Typst pages that fit the screen are laid out narrower and scaled up;
           pages of a fixed size are unchanged.
@@ -216,15 +189,7 @@ export default function SettingsPage() {
         >
           <span>Typst pages per row:</span>
           {PAGES_PER_ROW.map((pages) => (
-            <label
-              key={pages}
-              style={{
-                display: "flex",
-                gap: 6,
-                alignItems: "center",
-                cursor: "pointer",
-              }}
-            >
+            <label key={pages} className="checkbox-label">
               <input
                 type="radio"
                 name="pages-per-row"
@@ -236,13 +201,7 @@ export default function SettingsPage() {
             </label>
           ))}
         </div>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           For cards of several pages, wherever they are shown. Two When Wide
           shows two side by side once the card is at least 1000 pixels wide,
           e.g. with the Wide page width. Always one on phones.
@@ -253,15 +212,7 @@ export default function SettingsPage() {
         <legend style={{ ...sectionLabel, padding: 0 }}>Typst Cards</legend>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
           {TYPST_THEMES.map(({ value, label }) => (
-            <label
-              key={value}
-              style={{
-                display: "flex",
-                gap: 6,
-                alignItems: "center",
-                cursor: "pointer",
-              }}
-            >
+            <label key={value} className="checkbox-label">
               <input
                 type="radio"
                 name="typst-theme"
@@ -273,13 +224,7 @@ export default function SettingsPage() {
             </label>
           ))}
         </div>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           Also set by the Dark/Light button on each card. Dark inverts the
           page&apos;s colours, images included.
         </p>
@@ -287,14 +232,7 @@ export default function SettingsPage() {
 
       <fieldset style={{ border: "none", padding: 0, margin: "24px 0 0" }}>
         <legend style={{ ...sectionLabel, padding: 0 }}>Review</legend>
-        <label
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            cursor: "pointer",
-          }}
-        >
+        <label className="checkbox-label">
           <input
             type="checkbox"
             checked={showReviewTimer}
@@ -302,13 +240,7 @@ export default function SettingsPage() {
           />
           Show the running recall and rate timer
         </label>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           Both durations are still recorded, and shown after each card is rated.
         </p>
         <label
@@ -327,13 +259,7 @@ export default function SettingsPage() {
           />
           Read card text aloud
         </label>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           For text marked with <code>tts</code>, read by this browser's voices.
           Audio clips play either way.
         </p>
@@ -375,14 +301,7 @@ export default function SettingsPage() {
 
       <fieldset style={{ border: "none", padding: 0, margin: "24px 0 0" }}>
         <legend style={{ ...sectionLabel, padding: 0 }}>Editor</legend>
-        <label
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            cursor: "pointer",
-          }}
-        >
+        <label className="checkbox-label">
           <input
             type="checkbox"
             checked={vimKeybindings}
@@ -391,13 +310,7 @@ export default function SettingsPage() {
           Vim keybindings in the note editor and typed answers, and j and k to
           move through lists
         </label>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           Off by default on touchscreens, since a phone keyboard can't leave
           Vim's normal mode to type.
         </p>
@@ -434,15 +347,7 @@ export default function SettingsPage() {
         >
           <span>Font:</span>
           {EDITOR_FONTS.map((font) => (
-            <label
-              key={font}
-              style={{
-                display: "flex",
-                gap: 6,
-                alignItems: "center",
-                cursor: "pointer",
-              }}
-            >
+            <label key={font} className="checkbox-label">
               <input
                 type="radio"
                 name="editor-font"
@@ -454,13 +359,7 @@ export default function SettingsPage() {
             </label>
           ))}
         </div>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           For the note editor&apos;s text, tags and keywords. The typed answer
           box while reviewing is unchanged.
         </p>
@@ -475,15 +374,7 @@ export default function SettingsPage() {
         >
           <span>Wrap long lines:</span>
           {LINE_WRAPPINGS.map((wrapping) => (
-            <label
-              key={wrapping}
-              style={{
-                display: "flex",
-                gap: 6,
-                alignItems: "center",
-                cursor: "pointer",
-              }}
-            >
+            <label key={wrapping} className="checkbox-label">
               <input
                 type="radio"
                 name="line-wrapping"
@@ -495,13 +386,7 @@ export default function SettingsPage() {
             </label>
           ))}
         </div>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           Lines that aren&apos;t wrapped scroll sideways.
         </p>
         <label
@@ -520,13 +405,7 @@ export default function SettingsPage() {
           />
           Line numbers beside the note&apos;s text
         </label>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           Never on phones, to give the text the width.
         </p>
         <label
@@ -545,13 +424,7 @@ export default function SettingsPage() {
           />
           Mark misspelled words in the note&apos;s text
         </label>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-muted)",
-            margin: "4px 0 0",
-          }}
-        >
+        <p className="field-hint">
           With the browser&apos;s spellchecker, in the languages it is set to
           check.
         </p>

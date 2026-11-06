@@ -36,6 +36,7 @@ import type {
   NoteResponse,
 } from "../types/spares";
 import { errorMessage, formatNoteId, keepShown } from "../utils";
+import PageTitle from "../components/PageTitle";
 
 const MAX_NODES = 2000;
 /** How far the arrow keys move the graph, and with Shift. */
@@ -574,7 +575,7 @@ export default function GraphPage() {
   return (
     <div className="page-wide">
       <NavbarHelp help={keys} />
-      <h2 style={{ marginBottom: 16 }}>Graph</h2>
+      <PageTitle>Graph</PageTitle>
 
       <div className="split">
         <div
@@ -837,7 +838,7 @@ export default function GraphPage() {
                   onClick={() =>
                     saveGroups(groupDrafts.filter((_, j) => j !== i))
                   }
-                  style={{ padding: "2px 8px", fontSize: 12 }}
+                  className="button-small"
                   aria-label={`Remove group ${i + 1}`}
                 >
                   ×
@@ -1168,8 +1169,7 @@ export default function GraphPage() {
                     <button
                       key={id}
                       onClick={() => openNote(id)}
-                      className="button-link"
-                      style={{ padding: "4px 10px", fontSize: 12 }}
+                      className="button-link button-small"
                     >
                       {shown.nodes.find((n) => n.id === id)?.keywords[0] ??
                         formatNoteId(id)}{" "}
