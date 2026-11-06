@@ -20,6 +20,7 @@ use crate::adapters::SrsAdapter;
 use crate::adapters::migration::MigrationFunc;
 use crate::api::note::create_notes;
 use crate::api::note::delete_notes;
+use crate::api::note::list_live_notes;
 use crate::api::note::relocate_live_cards;
 use crate::api::note::render_notes;
 use crate::api::note::update_notes_batch;
@@ -42,6 +43,8 @@ use crate::schema::note::DeleteNotesRequest;
 use crate::schema::note::DeleteNotesResponse;
 use crate::schema::note::FindLiveNoteRequest;
 use crate::schema::note::FindLiveNoteResponse;
+use crate::schema::note::ListLiveNotesRequest;
+use crate::schema::note::ListLiveNotesResponse;
 use crate::schema::note::LiveNoteClozes;
 use crate::schema::note::NoteResponse;
 use crate::schema::note::NotesResponse;
@@ -563,6 +566,41 @@ impl SrsAdapter for SparesAdapter {
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
                 Ok(note_id)
+            }
+        }
+    }
+
+    async fn live_notes(&self, live_sync_name: &str) -> Result<BTreeMap<i64, NoteId>, Error> {
+        match &self.request_processor {
+            SparesRequestProcessorInternal::Server {
+                base_url,
+                client,
+                api_key,
+            } => {
+                let url = format!("{}/api/notes/live/list", base_url);
+                let body = ListLiveNotesRequest {
+                    live_sync_name: live_sync_name.to_string(),
+                };
+                let response = authed(client.post(url), api_key.as_deref())
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(Error::ApiRequest)?;
+                let response = self.handle_response(response).await?;
+                let response: ListLiveNotesResponse = response.json().await.map_err(|e| {
+                    Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                        adapter_name: self.get_adapter_name().to_string(),
+                        error: e.to_string(),
+                    }))
+                })?;
+                Ok(response
+                    .notes
+                    .into_iter()
+                    .map(|n| (n.block_order, n.id))
+                    .collect())
+            }
+            SparesRequestProcessorInternal::Database { pool } => {
+                list_live_notes(pool, live_sync_name).await
             }
         }
     }

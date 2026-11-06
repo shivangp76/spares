@@ -16,6 +16,7 @@ use spares_core::api::note::get_note;
 use spares_core::api::note::get_note_graph;
 use spares_core::api::note::get_note_links;
 use spares_core::api::note::get_unmatched_keywords;
+use spares_core::api::note::list_live_notes;
 use spares_core::api::note::list_notes;
 use spares_core::api::note::relocate_live_cards;
 use spares_core::api::note::render_notes;
@@ -34,6 +35,9 @@ use spares_core::schema::note::DeleteNotesRequest;
 use spares_core::schema::note::ExportNotesRequest;
 use spares_core::schema::note::FindLiveNoteRequest;
 use spares_core::schema::note::FindLiveNoteResponse;
+use spares_core::schema::note::ListLiveNotesRequest;
+use spares_core::schema::note::ListLiveNotesResponse;
+use spares_core::schema::note::LiveNoteId;
 use spares_core::schema::note::NoteGraphRequest;
 use spares_core::schema::note::NoteLinksRequest;
 use spares_core::schema::note::RelocateLiveCardsRequest;
@@ -214,6 +218,19 @@ pub(crate) async fn find_live_note_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(FindLiveNoteResponse { id }))
+}
+
+pub(crate) async fn list_live_notes_handler(
+    Coll(data): Coll,
+    Json(body): Json<ListLiveNotesRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let notes = list_live_notes(&data.db, &body.live_sync_name)
+        .await
+        .map_err(error_to_response)?
+        .into_iter()
+        .map(|(block_order, id)| LiveNoteId { block_order, id })
+        .collect();
+    Ok(Json(ListLiveNotesResponse { notes }))
 }
 
 pub(crate) async fn relocate_live_cards_handler(

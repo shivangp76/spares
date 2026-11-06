@@ -56,6 +56,8 @@ use crate::handlers::note::get_note_handler;
 use crate::handlers::note::get_note_links_handler;
 use crate::handlers::note::get_note_render_handler;
 use crate::handlers::note::get_unmatched_keywords_handler;
+#[cfg(not(target_family = "wasm"))]
+use crate::handlers::note::list_live_notes_handler;
 use crate::handlers::note::list_notes_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::note::relocate_live_cards_handler;
@@ -351,6 +353,7 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         )
         // Live notes are files on the laptop.
         .route("/api/notes/live", post(find_live_note_handler))
+        .route("/api/notes/live/list", post(list_live_notes_handler))
         .route(
             "/api/notes/live/relocate-cards",
             post(relocate_live_cards_handler),
@@ -805,6 +808,7 @@ mod tests {
             ("POST", "/api/sync/run"),
             ("POST", "/api/notes/generate_files"),
             ("POST", "/api/notes/live"),
+            ("POST", "/api/notes/live/list"),
             ("POST", "/api/notes/live/relocate-cards"),
             ("POST", "/api/notes/vcs/receive"),
         ] {

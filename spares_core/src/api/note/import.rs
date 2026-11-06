@@ -301,6 +301,27 @@ struct ParserAggregate<'a> {
     stale_live_note_ids: Vec<NoteId>,
 }
 
+/// The database's live notes by sync group, each group read once: an import changes nothing in
+/// the database until every file is read, so they stay as read.
+#[derive(Default)]
+struct LiveNoteIds(HashMap<String, BTreeMap<i64, NoteId>>);
+
+impl LiveNoteIds {
+    /// The note at `block_order` of `live_sync_name`, if any
+    async fn find(
+        &mut self,
+        adapter: &dyn SrsAdapter,
+        live_sync_name: &str,
+        block_order: i64,
+    ) -> Result<Option<NoteId>, Error> {
+        if !self.0.contains_key(live_sync_name) {
+            let notes = adapter.live_notes(live_sync_name).await?;
+            self.0.insert(live_sync_name.to_string(), notes);
+        }
+        Ok(self.0[live_sync_name].get(&block_order).copied())
+    }
+}
+
 fn parse_blocks(
     parser: &dyn Parseable,
     to_parser_opt: Option<&dyn Parseable>,
@@ -395,6 +416,7 @@ async fn handle_strip_liveness(
     notes: &[(NoteSettings, Option<String>)],
     adapter: &dyn SrsAdapter,
     stripped_note_ids: &mut HashSet<NoteId>,
+    live_note_ids: &mut LiveNoteIds,
 ) -> Result<Option<(ParsedNotes, Option<String>)>, Error> {
     let any_live = notes
         .iter()
@@ -450,8 +472,8 @@ async fn handle_strip_liveness(
                     *bo += 1;
                     block_order
                 });
-                adapter
-                    .find_live_note_by_block_order(lsn, block_order)
+                live_note_ids
+                    .find(adapter, lsn, block_order)
                     .await?
                     .ok_or_else(|| {
                         Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
@@ -494,6 +516,7 @@ async fn handle_strip_liveness(
     Ok(Some((result, rewritten)))
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn aggregate_note_into_parser_group(
     file: usize,
     mut local_settings: NoteSettings,
@@ -502,6 +525,7 @@ async fn aggregate_note_into_parser_group(
     adapter: &dyn SrsAdapter,
     file_counters: &mut HashMap<String, i64>,
     stripped_note_ids: &HashSet<NoteId>,
+    live_note_ids: &mut LiveNoteIds,
 ) -> Result<(), Error> {
     let lsn_opt = local_settings
         .custom_data
@@ -548,10 +572,7 @@ async fn aggregate_note_into_parser_group(
         let bo = file_counters.entry(lsn.clone()).or_insert(0);
         let block_order = *bo;
         *bo += 1;
-        match adapter
-            .find_live_note_by_block_order(&lsn, block_order)
-            .await?
-        {
+        match live_note_ids.find(adapter, &lsn, block_order).await? {
             Some(note_id) => {
                 local_settings.action = NoteImportAction::Update(note_id);
                 agg.update_note_ids.push(note_id);
@@ -615,6 +636,7 @@ pub async fn import_files(
     let mut aggregates: BTreeMap<&str, ParserAggregate<'_>> = BTreeMap::new();
     let mut outcome = ImportOutcome::default();
     let mut stripped_note_ids: HashSet<NoteId> = HashSet::new();
+    let mut live_note_ids = LiveNoteIds::default();
 
     for (file_index, file) in files.iter().enumerate() {
         let file_contents = &file.contents;
@@ -652,6 +674,7 @@ pub async fn import_files(
                 &max_parser_all_notes,
                 &*adapter,
                 &mut stripped_note_ids,
+                &mut live_note_ids,
             )
             .await?
             {
@@ -736,6 +759,7 @@ pub async fn import_files(
                 &*adapter,
                 &mut file_counters,
                 &stripped_note_ids,
+                &mut live_note_ids,
             )
             .await?;
         }
@@ -744,10 +768,7 @@ pub async fn import_files(
         // of their clozes that moved to other notes go along with them (see `process_data`).
         for (lsn, count) in &file_counters {
             let mut block_order = *count;
-            while let Some(note_id) = adapter
-                .find_live_note_by_block_order(lsn, block_order)
-                .await?
-            {
+            while let Some(note_id) = live_note_ids.find(&*adapter, lsn, block_order).await? {
                 agg.stale_live_note_ids.push(note_id);
                 block_order += 1;
             }

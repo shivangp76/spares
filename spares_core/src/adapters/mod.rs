@@ -1,6 +1,8 @@
 //! Adapters let spares interface with different spaced repetition software. Spares ships with an
 //! adapter for Anki and for spares itself ([`impls`]).
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
@@ -52,6 +54,13 @@ pub trait SrsAdapter: Send + Sync {
         block_order: i64,
     ) -> Result<Option<NoteId>, Error> {
         Ok(None)
+    }
+
+    /// The notes of the live sync group `live_sync_name`, by block order. Default returns none
+    /// (non-spares adapters don't support live notes).
+    #[allow(unused_variables)]
+    async fn live_notes(&self, live_sync_name: &str) -> Result<BTreeMap<i64, NoteId>, Error> {
+        Ok(BTreeMap::new())
     }
 
     /// The `live_sync_name` of note `note_id`, or `None` if it is not a live note. Default returns
