@@ -283,6 +283,57 @@ fn kill_process_tree(child: &mut Child) {
 
 /// Sends `SIGKILL` to a process group whose leader has not been reaped yet. Returns whether the
 /// signal could be sent.
+/// Spawns a render process that keeps running between renders, such as a Typst worker, in a
+/// process group of its own that [`kill_running_renders`] stops with the collection's other
+/// renders. Refused once renders were stopped. Stop it with [`kill_render_process`].
+#[cfg_attr(
+    not(all(feature = "typst-render", not(target_family = "wasm"))),
+    allow(dead_code)
+)]
+pub(crate) fn spawn_render_process(
+    state: &crate::collection::CollectionState,
+    command: &mut Command,
+    name: &str,
+) -> Result<Child, Error> {
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(command, 0);
+    let mut running_renders = crate::collection::lock(&state.renders);
+    if running_renders.stopped {
+        return Err(Error::Io {
+            description: format!("{name} was not started since renders were stopped"),
+            source: std::io::ErrorKind::Interrupted.into(),
+        });
+    }
+    let child = command.spawn().map_err(|e| Error::Io {
+        description: format!("Failed to start {name}"),
+        source: e,
+    })?;
+    running_renders.process_groups.insert(child.id());
+    Ok(child)
+}
+
+/// Stops a process from [`spawn_render_process`] for `state`'s collection, and any it started,
+/// and reaps it. With `state` gone (the collection closing), it is stopped all the same.
+#[cfg_attr(
+    not(all(feature = "typst-render", not(target_family = "wasm"))),
+    allow(dead_code)
+)]
+pub(crate) fn kill_render_process(
+    state: Option<&crate::collection::CollectionState>,
+    child: &mut Child,
+) {
+    match state {
+        Some(state) => {
+            let mut running_renders = crate::collection::lock(&state.renders);
+            running_renders.process_groups.remove(&child.id());
+            // Not reaped yet, so its group's id cannot have been reused
+            kill_process_tree(child);
+        }
+        None => kill_process_tree(child),
+    }
+    let _ = child.wait();
+}
+
 fn kill_process_group(process_group: u32) -> bool {
     #[cfg(unix)]
     if let Ok(process_group) = libc::pid_t::try_from(process_group) {

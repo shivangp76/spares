@@ -184,6 +184,8 @@ enum Command {
 
 #[tokio::main(worker_threads = 5)]
 async fn main() {
+    // A Typst worker serves renders and exits (see `spares_core::render::init_typst_workers`).
+    spares_core::render::init_typst_workers();
     // Answers shell completion requests (COMPLETE=zsh) and exits.
     clap_complete::CompleteEnv::with_factory(Args::command).complete();
     // With the user whose collection a line is about, if any. Note texts never go in the log.

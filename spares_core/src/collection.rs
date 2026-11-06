@@ -195,6 +195,9 @@ pub struct CollectionState {
     /// Its renders at once, if its user's limits say other than the host's `[render]`; `0` if not
     pub renders_at_once: std::sync::atomic::AtomicUsize,
     pub(crate) vcs: crate::notes_vcs::VcsState,
+    /// Its idle Typst workers (see `parsers::impls::typst::worker`)
+    #[cfg(all(feature = "typst-render", not(target_family = "wasm")))]
+    pub(crate) typst_workers: crate::parsers::impls::typst::worker::TypstWorkers,
 }
 
 impl std::fmt::Debug for CollectionState {

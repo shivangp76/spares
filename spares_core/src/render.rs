@@ -69,6 +69,32 @@ pub struct RenderConfig {
     /// of different users with the same id would replace each other's, so this is for a host
     /// with one user, such as a laptop's. The link is made outside the sandbox, by the host.
     pub copy_notes_to: BTreeMap<String, PathBuf>,
+    /// Directories Typst finds fonts in (searched recursively), besides the fonts built into
+    /// Typst and, unless [`typst_system_fonts`](Self::typst_system_fonts) is off, the system's.
+    /// Renders may read them.
+    ///
+    /// ```toml
+    /// typst_font_dirs = ["/Users/me/Library/Fonts"]
+    /// ```
+    pub typst_font_dirs: Vec<PathBuf>,
+    /// Whether Typst also finds the system's fonts, the ones `typst fonts` lists. Default: on.
+    ///
+    /// Each run of the `typst` CLI looks through all of them before compiling: about 75 ms of
+    /// the 155 ms a card takes on a Mac with 400 fonts. Turning this off, with the directories of
+    /// the fonts notes use in [`typst_font_dirs`](Self::typst_font_dirs), saves that per file.
+    /// Renders in a worker ([`typst_in_process`](Self::typst_in_process)) look through them once
+    /// per worker, so it matters little there. A font that is in neither is replaced by one of
+    /// Typst's, with a warning.
+    pub typst_system_fonts: bool,
+    /// Whether Typst notes render in worker processes with the Typst compiler built in, rather
+    /// than with one run of the `typst` CLI per file. Default: on. A worker runs in the same
+    /// sandbox, with the same limits, as a `typst` run, and keeps its fonts, packages and parsed
+    /// files between renders, so that a card takes a few milliseconds rather than 155. Each of a
+    /// user's [`renders_at_once`](Self::renders_at_once) has its own worker.
+    ///
+    /// Needs spares built with the `typst-render` feature (the default): without it, and when a
+    /// worker can't start, renders use the `typst` CLI.
+    pub typst_in_process: bool,
 }
 
 impl Default for RenderConfig {
@@ -82,6 +108,9 @@ impl Default for RenderConfig {
             memory_mb: 2048,
             renders_at_once: 4,
             copy_notes_to: BTreeMap::new(),
+            typst_font_dirs: Vec::new(),
+            typst_system_fonts: true,
+            typst_in_process: true,
         }
     }
 }
@@ -150,6 +179,15 @@ pub fn config() -> RenderConfig {
                 RenderConfig::default()
             }
         })
+}
+
+/// Call first in a binary's `main`. In a process started as a Typst worker (see the
+/// `typst-render` feature and [`RenderConfig::typst_in_process`]), this serves renders and exits.
+/// In any other, it lets renders start workers from this executable. Without the feature, it does
+/// nothing. A binary that doesn't call it, such as a test's, renders Typst with the `typst` CLI.
+pub fn init_typst_workers() {
+    #[cfg(all(feature = "typst-render", not(target_family = "wasm")))]
+    crate::parsers::impls::typst::worker::init();
 }
 
 /// What a render of the current collection may read: its directories and the host's
@@ -223,6 +261,7 @@ impl Renderer {
         }
         let mut readable = readable_dirs();
         readable.extend(tool_dirs());
+        readable.extend(config.typst_font_dirs.iter().cloned());
         Ok(Self {
             writable: vec![paths.files.clone(), scratch.clone()],
             readable,
@@ -304,6 +343,29 @@ impl Renderer {
         let _ = std::fs::create_dir_all(scratch.join("tmp"));
         self.limit(&mut sandboxed);
         Ok(sandboxed)
+    }
+
+    /// [`Self::prepare`] for a program that isn't one of the [`Engine`]s, such as a Typst worker
+    /// (see `parsers::impls::typst::worker`), which may also read `readable`, such as its own
+    /// executable. The caller checks its engine is on.
+    pub fn prepare_program(
+        &self,
+        command: &Command,
+        readable: &[PathBuf],
+    ) -> Result<Command, Error> {
+        let mut renderer = Self {
+            config: self.config.clone(),
+            readable: self.readable.clone(),
+            writable: self.writable.clone(),
+            scratch: self.scratch.clone(),
+        };
+        renderer.readable.extend(readable.iter().cloned());
+        renderer.prepare(command)
+    }
+
+    /// The host's render settings, as this renderer runs them
+    pub fn config(&self) -> &RenderConfig {
+        &self.config
     }
 
     fn sandbox(&self) -> Result<Sandbox, Error> {
