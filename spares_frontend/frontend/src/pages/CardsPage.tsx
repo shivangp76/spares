@@ -120,27 +120,22 @@ async function tagNotesOf(
 const BULK_ACTIONS: BulkAction[] = [
   {
     label: "Suspend",
-    confirm: (count) => `Suspend ${count} card(s)?`,
     run: (selector) =>
       editCards(selector, { special_state: "Suspended" }, "Suspended"),
   },
   {
     label: "Bury",
-    confirm: (count) => `Bury ${count} card(s)?`,
     run: (selector) =>
       editCards(selector, { special_state: "Buried" }, "Buried"),
   },
   {
     label: "Unsuspend",
-    confirm: (count) => `Unsuspend and unbury ${count} card(s)?`,
     run: (selector) =>
       editCards(selector, { special_state: null }, "Unsuspended and unburied"),
   },
   {
     label: "Set due",
     input: { kind: "datetime" },
-    confirm: (count, [due]) =>
-      `Make ${count} card(s) due ${new Date(due).toLocaleString()}?`,
     run: (selector, [due]) =>
       editCards(selector, { due: new Date(due).toISOString() }, "Rescheduled"),
   },
@@ -153,8 +148,6 @@ const BULK_ACTIONS: BulkAction[] = [
       max: 0.99,
       step: 0.01,
     },
-    confirm: (count, [retention]) =>
-      `Set the desired retention of ${count} card(s) to ${retention}?`,
     run: (selector, [retention]) =>
       editCards(
         selector,
@@ -165,8 +158,6 @@ const BULK_ACTIONS: BulkAction[] = [
   {
     label: "Forget",
     danger: true,
-    confirm: (count) =>
-      `Forget ${count} card(s)? Their scheduling is reset; review logs are kept.`,
     run: async (selector) => {
       const ids = await cardIdsOf(selector);
       const eventIds: number[] = [];
@@ -180,15 +171,11 @@ const BULK_ACTIONS: BulkAction[] = [
   {
     label: "Add tags to notes",
     input: { kind: "tags", suggestions: listManualTagNames },
-    confirm: (count, tags) =>
-      `Add ${tagList(tags)} to the notes of ${count} card(s)?`,
     run: (selector, tags) => tagNotesOf(selector, tags, []),
   },
   {
     label: "Remove tags from notes",
     input: { kind: "tags", suggestions: listManualTagNames },
-    confirm: (count, tags) =>
-      `Remove ${tagList(tags)} from the notes of ${count} card(s)?`,
     run: (selector, tags) => tagNotesOf(selector, [], tags),
   },
   FILTERED_TAG_ACTION,
@@ -751,7 +738,7 @@ export default function CardsPage() {
     body: tableBody,
     search: searchInput,
     // As the review page's keys, while the capitals act on the checked cards, which a search
-    // checks all of, so that a slip of the Shift key asks first
+    // checks all of. A slip of the Shift key is undone with the Undo shown after it.
     extra: [
       {
         keys: ["s"],
@@ -770,14 +757,14 @@ export default function CardsPage() {
       {
         keys: ["S"],
         codes: ["S"],
-        description: "Suspend the checked cards, after asking",
+        description: "Suspend the checked cards, with Undo after",
         available: checkedCount > 0,
         run: () => bulkBar.current?.choose("Suspend"),
       },
       {
         keys: ["B"],
         codes: ["B"],
-        description: "Bury the checked cards, after asking",
+        description: "Bury the checked cards, with Undo after",
         available: checkedCount > 0,
         run: () => bulkBar.current?.choose("Bury"),
       },

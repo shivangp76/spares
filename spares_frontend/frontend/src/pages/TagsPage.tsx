@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useDataVersion } from "../dataVersion";
+import { dataChanged, useDataVersion } from "../dataVersion";
 import { Link, useNavigate } from "react-router-dom";
 import {
   ApiError,
@@ -10,6 +10,7 @@ import {
   renameTags,
   updateTag,
 } from "../api/client";
+import ActionResult, { type ActionOutcome } from "../components/ActionResult";
 import { NavbarHelp } from "../components/Navbar";
 import Pagination from "../components/Pagination";
 import SearchInput, { type SearchInputError } from "../components/SearchInput";
@@ -509,7 +510,17 @@ export default function TagsPage() {
   const navigate = useNavigate();
   const [tags, setTags] = useState<TagResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  // What the last action did, numbered so each gets a fresh Undo button
+  const [result, setResult] = useState<{
+    seq: number;
+    outcome: ActionOutcome;
+  } | null>(null);
+  /** Shows `message`, with Undo for `eventIds`. */
+  const setStatus = (message: string, eventIds: number[] = []) =>
+    setResult((prev) => ({
+      seq: (prev?.seq ?? 0) + 1,
+      outcome: { message, eventIds },
+    }));
   const [filter, setFilter] = useState("");
   const [view, setView] = useState<"table" | "tree">("table");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -533,11 +544,13 @@ export default function TagsPage() {
   }, [credentials, navigate, load, dataVersion]);
 
   async function remove(tag: TagResponse) {
-    if (!window.confirm(`Delete tag \`${tag.name}\`?`)) return;
     try {
-      await deleteTag(tag.id);
+      const eventId = await deleteTag(tag.id);
       setTags((prev) => prev?.filter((t) => t.id !== tag.id) ?? prev);
-      setStatus(`Tag \`${tag.name}\` deleted.`);
+      setStatus(
+        `Tag \`${tag.name}\` deleted.`,
+        eventId === null ? [] : [eventId],
+      );
     } catch (e) {
       setStatus(errorMessage(e));
     }
@@ -624,7 +637,7 @@ export default function TagsPage() {
       run: (i) => setEditing({ tag: shown[i] }),
     },
     remove: {
-      description: "Delete the highlighted tag, after asking",
+      description: "Delete the highlighted tag, with Undo after",
       run: (i) => void remove(shown[i]),
     },
     filter: filterInput,
@@ -705,15 +718,13 @@ export default function TagsPage() {
           onCancel={() => setEditing(null)}
         />
       )}
-      {status && (
-        <div
-          style={{
-            fontSize: 13,
-            color: "var(--text-secondary)",
-            marginBottom: 12,
-          }}
-        >
-          {status}
+      {result && (
+        <div style={{ marginBottom: 12 }}>
+          <ActionResult
+            key={result.seq}
+            outcome={result.outcome}
+            onReverted={dataChanged}
+          />
         </div>
       )}
       {error && (
