@@ -1002,11 +1002,11 @@ pub mod tests {
         };
         assert_eq!(
             card(2, CardSide::Front),
-            "Spain: Madrid, France: [card-#256-2 _____]{.mark}, $3^{2^{2}}$ Rome Lazio"
+            "Spain: Madrid, France: [card-2 _____]{.mark}, $3^{2^{2}}$ Rome Lazio"
         );
         assert_eq!(
             card(4, CardSide::Back),
-            "Spain: Madrid, France: Paris, $3^{2^{2}}$ Rome [card-#256-4 Lazio]{.mark}"
+            "Spain: Madrid, France: Paris, $3^{2^{2}}$ Rome [card-4 Lazio]{.mark}"
         );
     }
 
