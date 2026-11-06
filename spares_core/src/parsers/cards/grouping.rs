@@ -404,6 +404,14 @@ pub(super) fn modify_card_settings(
                     None,
                 )
             });
+            // An image occlusion's settings are stored in its clozes SVG, which is read with the
+            // default keys (see `get_clozes_from_svg_str`), not the note's parser's. For example,
+            // Typst escapes `*` as `\*`, which the SVG would read as a grouping named `\*`.
+            let groupings_all = if cloze_data.image_occlusion.is_some() {
+                NoteSettingsKeys::default().groupings_all
+            } else {
+                groupings_all
+            };
             let cloze_settings_string = construct_cloze_string(
                 &cloze_data.settings,
                 &all_groupings,
