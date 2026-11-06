@@ -1379,6 +1379,19 @@ export function getSearchFields(): Promise<SearchField[]> {
   return searchFields;
 }
 
+/** How `query` parses and the SQL it runs to find `item`, as `spares note search --explain` prints them. */
+export async function explainQuery(
+  query: string,
+  item: "Notes" | "Cards",
+): Promise<string> {
+  const res = await apiFetch<{ explanation: string }>(
+    "Explain",
+    "/api/search/explain",
+    { method: "POST", body: JSON.stringify({ query, item }) },
+  );
+  return res.explanation;
+}
+
 let searchExamples: Promise<QueryExample[]> | null = null;
 
 /** Example queries, each with what it finds, fetched once. */

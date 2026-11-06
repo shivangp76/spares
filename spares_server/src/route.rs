@@ -60,6 +60,7 @@ use crate::handlers::note::list_notes_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::note::relocate_live_cards_handler;
 use crate::handlers::note::search_examples_handler;
+use crate::handlers::note::search_explain_handler;
 use crate::handlers::note::search_fields_handler;
 use crate::handlers::note::search_keyword_handler;
 use crate::handlers::note::search_notes_handler;
@@ -429,6 +430,7 @@ fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route("/api/notes/search/page", post(search_page_handler))
         .route("/api/search/fields", get(search_fields_handler))
         .route("/api/search/examples", get(search_examples_handler))
+        .route("/api/search/explain", post(search_explain_handler))
         .route("/api/saved-searches", get(list_saved_searches_handler))
         .route("/api/saved-searches", put(save_search_handler))
         .route("/api/saved-searches/{name}", get(get_saved_search_handler))
@@ -741,6 +743,22 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{exported}");
+        // Explaining a query reads nothing, so the copy answers it
+        let (status, explained) = call_json(
+            &router,
+            "POST",
+            "/api/search/explain",
+            serde_json::json!({ "query": "tag=a", "item": "Notes" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{explained}");
+        assert!(
+            explained["explanation"]
+                .as_str()
+                .unwrap()
+                .contains("SELECT"),
+            "{explained}"
+        );
         // Images, audio and image occlusions are stored on the device (here, invalid requests)
         for (method, uri) in [
             ("POST", "/api/images"),
