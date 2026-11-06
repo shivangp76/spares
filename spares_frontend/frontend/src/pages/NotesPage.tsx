@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useDataVersion } from "../dataVersion";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ApiError,
@@ -277,6 +278,8 @@ export default function NotesPage() {
   const [importOpen, setImportOpen] = useState(false);
   // Bumped after a bulk action, to refetch the notes it may have changed
   const [reloadCount, setReloadCount] = useState(0);
+  // Fetch again after an undo, redo or sync elsewhere changed what is shown
+  const dataVersion = useDataVersion();
   // Bumped when the shown note is changed by a bulk action, so its editor starts again from it
   const [detailVersion, setDetailVersion] = useState(0);
   // The notes seen on any page, to find the tags of those checked
@@ -330,6 +333,7 @@ export default function NotesPage() {
     pageSize,
     searchQuery,
     reloadCount,
+    dataVersion,
     listBySearch,
     sortField,
     sortDescending,
@@ -380,6 +384,7 @@ export default function NotesPage() {
     pageSize,
     searchQuery,
     reloadCount,
+    dataVersion,
     listBySearch,
   ]);
 
@@ -447,6 +452,7 @@ export default function NotesPage() {
     pageSize,
     searchCount,
     reloadCount,
+    dataVersion,
     saveRecentSearch,
     sortField,
     sortDescending,
