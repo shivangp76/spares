@@ -70,19 +70,16 @@ impl Parseable for TypstParser {
     fn get_linked_notes(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // We cannot use regex here since then braces won't properly match up. For example, `#lin("test(a)") ( )` or `#lin[test[a]]` or `#lin[a [b]] a #test[]`.
         // Regex::new(r"(?s)#lin\(([^,\n]*)(?:, note_link: ([^\n\)]*))?\)").unwrap()
-        let parser = TypstDataParser::new(data);
-        Ok(parser.linked_notes)
+        Ok(TypstDataParser::cached(data).linked_notes.clone())
     }
 
     fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
-        let parser = TypstDataParser::new(data);
-        Ok(parser.keywords)
+        Ok(TypstDataParser::cached(data).keywords.clone())
     }
 
     fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
-        let parser = TypstDataParser::new(data);
-        Ok(parser.settings)
+        Ok(TypstDataParser::cached(data).settings.clone())
     }
 
     fn note_settings_keys(&self) -> NoteSettingsKeys {
@@ -94,8 +91,12 @@ impl Parseable for TypstParser {
 
     fn get_clozes(&self, data: &str) -> Result<Vec<ClozeMatch>, LibraryError> {
         // Note that a regex approach will not work for nested clozes.
-        let parser = TypstDataParser::new(data);
-        Ok(parser.clozes.into_iter().flatten().collect::<Vec<_>>())
+        Ok(TypstDataParser::cached(data)
+            .clozes
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>())
     }
 
     fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String) {

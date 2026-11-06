@@ -22,7 +22,36 @@ pub struct TypstDataParser {
     pub keywords: Vec<Range<usize>>,
 }
 
+/// How many notes' texts [`TypstDataParser::cached`] keeps parsed, per thread
+const CACHED_PARSES: usize = 4;
+
+thread_local! {
+    /// The last texts parsed on this thread, newest last
+    static PARSED: std::cell::RefCell<Vec<(String, std::rc::Rc<TypstDataParser>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl TypstDataParser {
+    /// [`Self::new`], reusing the parse of one of the last texts parsed on this thread. A note's
+    /// text is asked for its clozes, linked notes, keywords and settings one after another, and
+    /// parsing it is most of what an import of Typst notes costs, so this parses it once.
+    pub fn cached(input: &str) -> std::rc::Rc<Self> {
+        PARSED.with_borrow_mut(|parsed| {
+            if let Some(i) = parsed.iter().position(|(text, _)| text == input) {
+                let entry = parsed.remove(i);
+                let parser = std::rc::Rc::clone(&entry.1);
+                parsed.push(entry);
+                return parser;
+            }
+            let parser = std::rc::Rc::new(Self::new(input));
+            if parsed.len() >= CACHED_PARSES {
+                parsed.remove(0);
+            }
+            parsed.push((input.to_string(), std::rc::Rc::clone(&parser)));
+            parser
+        })
+    }
+
     pub fn new(input: &str) -> Self {
         let root = parse(input);
         let linked = LinkedNode::new(&root);
