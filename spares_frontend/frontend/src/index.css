@@ -709,6 +709,15 @@ input[type="checkbox"] {
   color: var(--error);
 }
 
+/* An error with details to read as they are, e.g. a query's position */
+.error-detail {
+  margin-bottom: 8px;
+  font-family: monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  color: var(--error);
+}
+
 /* A checkbox or radio button with its label beside it */
 .checkbox-label {
   display: flex;

@@ -26,6 +26,7 @@ import CardDetail, { type CardDetailHandle } from "../components/CardDetail";
 import CardTools from "../components/CardTools";
 import { NavbarHelp } from "../components/Navbar";
 import RecentSearches from "../components/RecentSearches";
+import SavedSearches from "../components/SavedSearches";
 import SearchInput, { type SearchInputError } from "../components/SearchInput";
 import Pagination from "../components/Pagination";
 import { QueueOrder } from "../components/QueuePositions";
@@ -617,21 +618,16 @@ export default function CardsPage() {
     setSearchCount((n) => n + 1);
   }
 
-  const {
-    saved: savedSearches,
-    save: saveSavedSearch,
-    remove: removeSavedSearch,
-    error: savedSearchError,
-  } = useSavedSearches();
+  const savedSearches = useSavedSearches();
 
   function handleSaveSearch() {
     const q = query.trim();
     if (!q) return;
     const name = window.prompt(
       "Save this search as:",
-      savedSearches.find((s) => s.query === q)?.name ?? "",
+      savedSearches.saved.find((s) => s.query === q)?.name ?? "",
     );
-    if (name?.trim()) void saveSavedSearch(name.trim(), q);
+    if (name?.trim()) void savedSearches.save(name.trim(), q);
   }
 
   function handleClear() {
@@ -809,7 +805,7 @@ export default function CardsPage() {
               display: "flex",
               gap: 8,
               marginBottom:
-                recentSearches.length + savedSearches.length > 0 ? 8 : 16,
+                recentSearches.length + savedSearches.saved.length > 0 ? 8 : 16,
             }}
           >
             <SearchInput
@@ -842,30 +838,7 @@ export default function CardsPage() {
               </button>
             )}
           </div>
-          <RecentSearches
-            heading="Saved"
-            recent={savedSearches}
-            label={(s) => s.name}
-            itemTitle={(s) => s.query}
-            onSelect={(s) => handleSearch(s.query)}
-            onRemove={(s) => {
-              if (window.confirm(`Delete the saved search "${s.name}"?`))
-                void removeSavedSearch(s);
-            }}
-          />
-          {savedSearchError && (
-            <div
-              style={{
-                color: "var(--error)",
-                fontSize: 13,
-                marginBottom: 8,
-                whiteSpace: "pre-wrap",
-                fontFamily: "monospace",
-              }}
-            >
-              {savedSearchError}
-            </div>
-          )}
+          <SavedSearches searches={savedSearches} onSelect={handleSearch} />
           <RecentSearches
             recent={recentSearches}
             onSelect={handleSearch}

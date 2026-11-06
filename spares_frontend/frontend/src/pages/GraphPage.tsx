@@ -23,6 +23,7 @@ import {
   type GraphGroup,
 } from "../graphLayout";
 import RecentSearches from "../components/RecentSearches";
+import SavedSearches from "../components/SavedSearches";
 import SearchInput, { type SearchInputError } from "../components/SearchInput";
 import { useAuth } from "../hooks/useAuth";
 import { useDetailView } from "../hooks/useDetailView";
@@ -361,8 +362,7 @@ export default function GraphPage() {
     save: saveRecent,
     remove: removeRecent,
   } = useRecentSearches("spares_graph_recent_searches");
-  const { saved: savedSearches, remove: removeSavedSearch } =
-    useSavedSearches();
+  const savedSearches = useSavedSearches();
   // Fetch again after an undo, redo or sync elsewhere changed what is shown
   const dataVersion = useDataVersion();
 
@@ -614,17 +614,7 @@ export default function GraphPage() {
               </button>
             )}
           </div>
-          <RecentSearches
-            heading="Saved"
-            recent={savedSearches}
-            label={(s) => s.name}
-            itemTitle={(s) => s.query}
-            onSelect={(s) => search(s.query)}
-            onRemove={(s) => {
-              if (window.confirm(`Delete the saved search "${s.name}"?`))
-                void removeSavedSearch(s);
-            }}
-          />
+          <SavedSearches searches={savedSearches} onSelect={search} />
           <RecentSearches
             recent={recent}
             onSelect={search}
