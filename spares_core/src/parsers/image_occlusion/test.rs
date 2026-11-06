@@ -1550,3 +1550,59 @@ fn test_card_image_skips_unchanged_file() {
     std::fs::remove_file(original_image_filepath).unwrap();
     std::fs::remove_file(clozes_filepath).unwrap();
 }
+
+/// A Typst note writes its image occlusions' settings back to their clozes SVG with the SVG's
+/// keys, not Typst's: `g:*` stays `g:*` instead of becoming Typst's `g:\*`, which the SVG would
+/// read as a grouping named `\*` whose only cloze is hidden.
+#[test]
+fn test_typst_image_occlusion_keeps_all_groupings_in_svg() {
+    use crate::parsers::ConstructImageOcclusionType;
+    use crate::parsers::impls::typst::TypstParser;
+
+    let dir = get_image_occlusion_directory();
+    let original_image_filepath = dir.join("test-typst-all-groupings.png");
+    image::RgbaImage::from_pixel(100, 80, image::Rgba([249, 115, 22, 255]))
+        .save(&original_image_filepath)
+        .unwrap();
+    let clozes_filepath = dir.join("test-typst-all-groupings_clozes.svg");
+    std::fs::write(
+        &clozes_filepath,
+        indoc! { r##"<?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="100" height="80">
+          <g class="layer" id="markup-group">
+            <title>Markup</title>
+          </g>
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="20" width="30" y="10" id="svg_1" x="10" data-cloze-settings="" />
+            <rect fill="#FFEBA2" height="20" width="30" y="40" id="svg_2" x="10" data-cloze-settings="g:*;hide:" />
+          </g>
+        </svg>"##},
+    )
+    .unwrap();
+    let parser = TypstParser::new();
+    let image_occlusion = parser.construct_image_occlusion(
+        &ImageOcclusionData {
+            original_image_filepath: original_image_filepath.clone(),
+            clozes_filepath: clozes_filepath.clone(),
+            front_conceal: FrontConceal::AllGroupings,
+            back_reveal: BackReveal::OnlyAnswered,
+            back_emphasis: true,
+        },
+        ConstructImageOcclusionType::Note,
+    );
+    let note_data = format!("a #cl[b][g:\\*;hide:] c\n\n{image_occlusion}\n");
+
+    // Cards are made twice since the first writes the settings back to the SVG
+    for _ in 0..2 {
+        let cards = get_cards(&parser, None, &note_data, true, MOVE_FILES).unwrap();
+        assert_eq!(cards.len(), 1);
+        let settings = read_to_string(&clozes_filepath).unwrap();
+        assert!(
+            settings.contains(r#"data-cloze-settings="g:*;"#) && !settings.contains(r"g:\*"),
+            "{settings}"
+        );
+    }
+    std::fs::remove_file(clozes_filepath).unwrap();
+    std::fs::remove_file(original_image_filepath).unwrap();
+}
