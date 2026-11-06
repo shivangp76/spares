@@ -197,12 +197,20 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use sqlx::SqlitePool;
 
 use crate::Error;
 use crate::LibraryError;
 use crate::NoteErrorKind;
 use crate::ParserErrorKind;
 use crate::adapters::SrsAdapter;
+use crate::adapters::impls::spares::SparesAdapter;
+use crate::adapters::impls::spares::SparesRequestProcessor;
+use crate::api::note::share_bundle::is_zip;
+use crate::api::note::share_bundle::parser_of;
+use crate::api::note::share_bundle::read_bundle;
+use crate::api::note::share_bundle::refuse_note_ids;
+use crate::api::note::share_bundle::store_bundled;
 use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::model::NoteId;
@@ -210,6 +218,7 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
 use crate::parsers::add_cloze_uid_to_file;
+use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_file_notes;
 use crate::parsers::remove_cloze_uid_from_file;
@@ -869,5 +878,343 @@ impl ImportResponse {
             rewritten_files: outcome.rewritten.clone(),
             ..Self::default()
         }
+    }
+}
+
+/// A file uploaded to import: a file of notes, or a zip of them with their media (see
+/// [`share_bundle`](super::share_bundle))
+#[derive(Clone, Debug)]
+pub struct Upload {
+    /// Its name, whose extension says which parser reads a file of notes
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
+/// [`ImportOptions`] by parser name, for an API request
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ImportRequestOptions {
+    /// Without one, each file's parser is guessed (see [`ImportOptions::parser`])
+    #[serde(default)]
+    pub parser: Option<String>,
+    #[serde(default)]
+    pub to_parser: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub strip_liveness: bool,
+}
+
+fn invalid(description: String) -> Error {
+    Error::Library(LibraryError::Note(NoteErrorKind::Other { description }))
+}
+
+/// Imports `uploads` into the collection, as `spares import` imports files: the server's import
+/// for the web app (`POST /api/notes/import`). A zip's files are imported with the media it
+/// bundles, which are stored first (except in a dry run), as `spares import` uploads them. As
+/// there, a zip is shared notes, so one whose files name notes by id is refused (see
+/// [`refuse_note_ids`]); upload such files on their own.
+pub async fn import_uploaded(
+    db: &SqlitePool,
+    uploads: &[Upload],
+    options: &ImportRequestOptions,
+    at: DateTime<Utc>,
+) -> Result<ImportResponse, Error> {
+    let all_parsers = get_all_parsers();
+    let parser = options
+        .parser
+        .as_deref()
+        .map(|name| find_parser(name, &all_parsers))
+        .transpose()?;
+    let to_parser = options
+        .to_parser
+        .as_deref()
+        .map(|name| find_parser(name, &all_parsers))
+        .transpose()?;
+    let mut response = ImportResponse::default();
+    let mut files = Vec::new();
+    let mut stored: HashMap<String, String> = HashMap::new();
+    for upload in uploads {
+        if !is_zip(&upload.bytes) {
+            let contents = String::from_utf8(upload.bytes.clone())
+                .map_err(|_| invalid(format!("{} isn't text, or a zip", upload.name)))?;
+            files.push(ImportFile {
+                name: upload.name.clone(),
+                contents,
+            });
+            continue;
+        }
+        let bundle = read_bundle(&upload.bytes)?;
+        refuse_note_ids(&bundle, &all_parsers)?;
+        for (name, contents) in &bundle.files {
+            let name = format!("{}/{name}", upload.name);
+            if parser_of(&name, &all_parsers).is_none() {
+                response.skipped_files.push(name);
+                continue;
+            }
+            let contents = store_bundled(
+                contents,
+                &bundle,
+                &mut stored,
+                &mut response.missing_media,
+                !options.dry_run,
+            )?;
+            files.push(ImportFile { name, contents });
+        }
+    }
+    if files.is_empty() {
+        return Err(invalid(
+            "There are no files of notes to import: they are .md, .typ or .tex files, or zips of \
+             them"
+                .to_string(),
+        ));
+    }
+    let mut adapter = SparesAdapter::new(SparesRequestProcessor::Database { pool: db.clone() });
+    let import_options = ImportOptions {
+        parser: parser.as_deref(),
+        to_parser: to_parser.as_deref(),
+        dry_run: options.dry_run,
+        strip_liveness: options.strip_liveness,
+    };
+    let outcome = import_files(&mut adapter, &files, import_options, at).await?;
+    Ok(ImportResponse {
+        event_id: adapter.import_group(),
+        media_count: stored.len(),
+        missing_media: response.missing_media,
+        skipped_files: response.skipped_files,
+        ..ImportResponse::new(&outcome, &files, options.dry_run)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::note::share_bundle::write_bundle;
+    use crate::api::parser::create_parser;
+    use crate::api::undo::undo_event;
+    use crate::schema::note::ExportNotesResponse;
+    use crate::schema::parser::CreateParserRequest;
+    use crate::schema::undo::UndoEventRequest;
+
+    const NOTES: &str = "<!--- spares: start --->\n\n<!--- # tags: geo --->\n<!--- spares: note start --->\n{{ Paris }} is the capital\n<!--- spares: note end --->\n\n<!--- spares: end --->\n";
+
+    const LIVE: &str = "<!--- spares: start --->\n<!--- # live-sync-name: lecture --->\n# Oceans\n<!--- spares: note start --->\nThe deepest point is {{the Mariana Trench}}.\n<!--- spares: note end --->\n<!--- spares: end --->\n";
+
+    async fn markdown(pool: &SqlitePool) {
+        let request = CreateParserRequest {
+            name: "markdown".to_string(),
+        };
+        create_parser(pool, request, true).await.unwrap();
+    }
+
+    fn upload(name: &str, text: &str) -> Upload {
+        Upload {
+            name: name.to_string(),
+            bytes: text.as_bytes().to_vec(),
+        }
+    }
+
+    async fn note_data(pool: &SqlitePool) -> Vec<(NoteId, String)> {
+        sqlx::query_as("SELECT id, data FROM note ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A dry run says what the import would do and changes nothing; then the import does it.
+    #[sqlx::test]
+    async fn test_dry_run_then_import(pool: SqlitePool) {
+        markdown(&pool).await;
+        let options = ImportRequestOptions {
+            dry_run: true,
+            ..ImportRequestOptions::default()
+        };
+        let preview = import_uploaded(&pool, &[upload("a.md", NOTES)], &options, Utc::now())
+            .await
+            .unwrap();
+        assert!(preview.dry_run);
+        assert_eq!(preview.notes.len(), 1);
+        let note = &preview.notes[0];
+        assert_eq!(
+            (
+                note.file.as_str(),
+                note.parser.as_str(),
+                note.action.as_str()
+            ),
+            ("a.md", "markdown", "add")
+        );
+        assert_eq!(note.card_count, 1);
+        assert_eq!(note.tags, ["geo"]);
+        assert_eq!(preview.event_id, None);
+        assert_eq!(note_data(&pool).await.len(), 0);
+
+        let imported = import_uploaded(
+            &pool,
+            &[upload("a.md", NOTES)],
+            &ImportRequestOptions::default(),
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        assert!(!imported.dry_run);
+        assert!(imported.event_id.is_some());
+        assert_eq!(note_data(&pool).await.len(), 1);
+    }
+
+    /// Unlike an import of shared notes, a file can update the notes it names by id, and one undo
+    /// of the import's group reverts every file of it.
+    #[sqlx::test]
+    async fn test_update_by_id_and_undo_the_import(pool: SqlitePool) {
+        markdown(&pool).await;
+        let options = ImportRequestOptions::default();
+        import_uploaded(&pool, &[upload("a.md", NOTES)], &options, Utc::now())
+            .await
+            .unwrap();
+        let (id, _) = note_data(&pool).await[0].clone();
+        let edited = NOTES
+            .replace(
+                "<!--- # tags: geo --->\n",
+                &format!("<!--- # note-id: {} --->\n", id.letters()),
+            )
+            .replace("is the capital", "is the capital of France");
+        let imported = import_uploaded(
+            &pool,
+            &[
+                upload("edit.md", &edited),
+                upload("b.md", &NOTES.replace("Paris", "Rome")),
+            ],
+            &options,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        let actions = imported
+            .notes
+            .iter()
+            .map(|n| (n.file.as_str(), n.action.as_str(), n.note_id))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actions,
+            [("edit.md", "update", Some(id)), ("b.md", "add", None)]
+        );
+        let notes = note_data(&pool).await;
+        assert_eq!(notes.len(), 2);
+        assert!(notes[0].1.contains("capital of France"), "{notes:?}");
+
+        undo_event(
+            &pool,
+            UndoEventRequest {
+                event_id: imported.event_id,
+                undo_group: true,
+            },
+        )
+        .await
+        .unwrap();
+        let notes = note_data(&pool).await;
+        assert_eq!(notes.len(), 1);
+        assert!(!notes[0].1.contains("France"), "{notes:?}");
+    }
+
+    /// A live note's file comes back with its clozes' `id:` keys, to download in place of the one
+    /// uploaded; reimporting that updates the note rather than adding another.
+    #[sqlx::test]
+    async fn test_live_notes_return_their_rewritten_file(pool: SqlitePool) {
+        markdown(&pool).await;
+        let options = ImportRequestOptions::default();
+        let imported = import_uploaded(&pool, &[upload("live.md", LIVE)], &options, Utc::now())
+            .await
+            .unwrap();
+        assert!(imported.notes[0].live);
+        let [rewritten] = imported.rewritten_files.as_slice() else {
+            panic!("{:?}", imported.rewritten_files);
+        };
+        assert_eq!(rewritten.name, "live.md");
+        assert!(
+            rewritten.contents.contains("[id:"),
+            "{}",
+            rewritten.contents
+        );
+        assert!(rewritten.contents.contains("# Oceans"));
+
+        let again = import_uploaded(
+            &pool,
+            &[upload("live.md", &rewritten.contents)],
+            &options,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(again.notes[0].action, "update");
+        assert!(again.rewritten_files.is_empty());
+        assert_eq!(note_data(&pool).await.len(), 1);
+
+        // Stripping liveness gives the file back without the keys
+        let stripped = import_uploaded(
+            &pool,
+            &[upload("live.md", &rewritten.contents)],
+            &ImportRequestOptions {
+                strip_liveness: true,
+                ..ImportRequestOptions::default()
+            },
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        assert!(!stripped.notes[0].live);
+        assert!(!stripped.rewritten_files[0].contents.contains("[id:"));
+    }
+
+    /// A zip's files are imported, and those that are no parser's left out. As in `spares import`,
+    /// a zip that names notes by id is refused.
+    #[sqlx::test]
+    async fn test_zips(pool: SqlitePool) {
+        markdown(&pool).await;
+        let export = ExportNotesResponse {
+            files: HashMap::from([("md".to_string(), NOTES.to_string())]),
+            ..ExportNotesResponse::default()
+        };
+        let zip = write_bundle(&export).unwrap();
+        let imported = import_uploaded(
+            &pool,
+            &[Upload {
+                name: "shared.zip".to_string(),
+                bytes: zip,
+            }],
+            &ImportRequestOptions::default(),
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported.notes.len(), 1);
+        assert_eq!(imported.notes[0].file, "shared.zip/export.md");
+
+        let by_id = ExportNotesResponse {
+            files: HashMap::from([(
+                "md".to_string(),
+                NOTES.replace("<!--- # tags: geo --->", "<!--- # note-id: aaaa --->"),
+            )]),
+            ..ExportNotesResponse::default()
+        };
+        let error = import_uploaded(
+            &pool,
+            &[Upload {
+                name: "edit.zip".to_string(),
+                bytes: write_bundle(&by_id).unwrap(),
+            }],
+            &ImportRequestOptions::default(),
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("ids"), "{error}");
+
+        let error = import_uploaded(
+            &pool,
+            &[upload("notes.txt", "hi")],
+            &ImportRequestOptions::default(),
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("parsed 0 notes"), "{error}");
     }
 }
