@@ -314,6 +314,40 @@ pub async fn get_note_links_map(
     Ok(all_note_links_map)
 }
 
+/// Matches the stored note links again, without rendering, if a change since they were last
+/// matched may have changed them. For a browser's copy, where [`render_notes`] renders nothing and
+/// so matches nothing: the server matches its own links when it renders, but links aren't synced
+/// (see `crate::sync`), so the copy matches its own. Not for the server, whose next render has to
+/// see which links changed, to render the notes they're in.
+///
+/// It marks the links found before matching, so a change made meanwhile, which marks them as not
+/// found, is matched next time.
+pub async fn match_note_links(db: &SqlitePool) -> Result<(), Error> {
+    if read_internal_config(db).await?.linked_notes_generated {
+        return Ok(());
+    }
+    set_linked_notes_generated(db, true).await?;
+    if let Err(e) = rematch_stored_note_links(db).await {
+        set_linked_notes_generated(db, false).await?;
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Sets only `linked_notes_generated` of the internal config, which is all
+/// [`match_note_links`] may change while other requests run.
+async fn set_linked_notes_generated(db: &SqlitePool, generated: bool) -> Result<(), Error> {
+    sqlx::query(
+        "INSERT INTO app_state (key, value) VALUES ('linked_notes_generated', ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(generated.to_string())
+    .execute(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(())
+}
+
 /// - Determines linked notes for _all_ notes. This is not possible for only some notes. See note below.
 /// - Generates files for specified notes, usually all notes.
 ///
@@ -324,7 +358,8 @@ pub async fn render_notes(
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<(), Error> {
     // A browser renders nothing, as in `create_note_files_bulk`. The server renders the notes once
-    // the browser's changes reach it, linked notes included.
+    // the browser's changes reach it, linked notes included. A browser matches its own links with
+    // `match_note_links`.
     if cfg!(target_family = "wasm") {
         return Ok(());
     }
@@ -615,6 +650,48 @@ mod tests {
                 Some("keyword 2".to_string())
             ]
         );
+    }
+
+    /// A browser's copy matches links without rendering, once per change to the notes.
+    #[sqlx::test]
+    async fn test_match_note_links(pool: SqlitePool) -> () {
+        let _ = create_note_helper(&pool).await;
+        let generated = async || {
+            crate::config::read_internal_config(&pool)
+                .await
+                .unwrap()
+                .linked_notes_generated
+        };
+        assert!(!generated().await);
+
+        super::match_note_links(&pool).await.unwrap();
+        assert!(generated().await);
+        let matched: Vec<Option<String>> =
+            sqlx::query_scalar("SELECT matched_keyword FROM note_link ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            matched,
+            vec![
+                Some("keyword 1".to_string()),
+                Some("keyword 1".to_string()),
+                Some("keyword 2".to_string())
+            ]
+        );
+
+        // Already matched, so it leaves the links alone
+        sqlx::query("UPDATE note_link SET matched_keyword = NULL, linked_note_id = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        super::match_note_links(&pool).await.unwrap();
+        let unmatched: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM note_link WHERE matched_keyword IS NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(unmatched, 3);
     }
 
     /// Exact matches are only rematched when the matcher version changes.
