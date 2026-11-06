@@ -615,14 +615,15 @@ async fn update_tag_inner(
     Ok((tag_response, None))
 }
 
-pub async fn delete_tag(db: &SqlitePool, id: i64, log: bool) -> Result<(), Error> {
+/// Deletes the tag `id`. Returns the id of the event logged, to undo it with, if `log`.
+pub async fn delete_tag(db: &SqlitePool, id: i64, log: bool) -> Result<Option<i64>, Error> {
     let affected = notes_with_tag(db, id).await?;
     let result = delete_tag_inner(db, id, log).await;
     notes_vcs::reconcile_after(db, affected, "untag").await;
     result
 }
 
-async fn delete_tag_inner(db: &SqlitePool, id: i64, log: bool) -> Result<(), Error> {
+async fn delete_tag_inner(db: &SqlitePool, id: i64, log: bool) -> Result<Option<i64>, Error> {
     let tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
         .bind(id)
         .fetch_one(db)
@@ -655,7 +656,7 @@ async fn delete_tag_inner(db: &SqlitePool, id: i64, log: bool) -> Result<(), Err
         card_ids,
         review_log_ids: review_ids_with_tag(db, id).await?,
     };
-    delete_tag_event(db, payload, log).await
+    delete_tag_logged(db, payload, log).await
 }
 
 pub async fn delete_tag_event(
