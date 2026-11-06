@@ -189,7 +189,8 @@ async fn update_parser_inner(
     Ok(parser_response)
 }
 
-pub async fn delete_parser(db: &SqlitePool, id: i64, log: bool) -> Result<(), Error> {
+/// Deletes the parser `id`. Returns the id of the event logged, to undo it with, if `log`.
+pub async fn delete_parser(db: &SqlitePool, id: i64, log: bool) -> Result<Option<i64>, Error> {
     let parser: Parser = sqlx::query_as(r"SELECT * FROM parser WHERE id = ?")
         .bind(id)
         .fetch_one(db)
@@ -208,11 +209,12 @@ pub async fn delete_parser(db: &SqlitePool, id: i64, log: bool) -> Result<(), Er
     delete_parser_event(db, payload, log).await
 }
 
+/// Deletes the parser `payload` describes. Returns the id of the event logged, if `log`.
 pub async fn delete_parser_event(
     db: &SqlitePool,
     payload: DeleteParserPayload,
     log: bool,
-) -> Result<(), Error> {
+) -> Result<Option<i64>, Error> {
     let id = payload.id.ok_or_else(|| {
         Error::Library(LibraryError::InvalidConfig(
             "DeleteParserPayload missing id".to_string(),
@@ -224,17 +226,17 @@ pub async fn delete_parser_event(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    if log {
-        let _event_id = insert_events(
-            db,
-            &[(EventType::DeleteParser, to_value(&payload).unwrap())],
-            Utc::now(),
-            None,
-        )
-        .await?;
+    if !log {
+        return Ok(None);
     }
-
-    Ok(())
+    let event_ids = insert_events(
+        db,
+        &[(EventType::DeleteParser, to_value(&payload).unwrap())],
+        Utc::now(),
+        None,
+    )
+    .await?;
+    Ok(event_ids.first().copied())
 }
 
 pub async fn list_parsers(
