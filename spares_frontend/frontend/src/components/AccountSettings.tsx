@@ -7,8 +7,9 @@ import {
   getCredentials,
 } from "../api/client";
 import { errorMessage, sectionLabel } from "../utils";
+import DeviceTokens from "./DeviceTokens";
 
-/** The account on the host: its password, exporting its collection, and deleting it. */
+/** The account on the host: its password, its logged-in devices, exporting its collection, and deleting it. */
 export default function AccountSettings() {
   const navigate = useNavigate();
   const [current, setCurrent] = useState("");
@@ -127,6 +128,7 @@ export default function AccountSettings() {
           {error}
         </p>
       )}
+      <DeviceTokens />
     </fieldset>
   );
 }

@@ -1621,6 +1621,41 @@ export async function exportAccount(): Promise<Blob> {
   return res.blob();
 }
 
+/** A device token of the account's (`spares_server::host::auth::Device`): a `spares login`, or a host syncing with this one. Times are Unix seconds. */
+export interface DeviceToken {
+  id: number;
+  user_id: string;
+  name: string;
+  /** `sync` only syncs: another host's copy of the collection */
+  scope: "all" | "sync";
+  /** The replica it enrolled as, if it keeps a copy */
+  replica: number | null;
+  created_at: number;
+  last_used_at: number | null;
+}
+
+/** The account's device tokens that are not revoked. Always from the server, which keeps them. */
+export async function listDeviceTokens(): Promise<DeviceToken[]> {
+  const { serverUrl } = getCredentials();
+  const label = "Devices fetch";
+  const res = await send(label, `${serverUrl}/api/auth/devices`, {
+    headers: authHeaders(),
+  });
+  await throwIfNotOk(res, label);
+  return res.json() as Promise<DeviceToken[]>;
+}
+
+/** Revokes a device token, like `spares logout` on that device, and frees the replica it enrolled as. */
+export async function revokeDeviceToken(id: number): Promise<void> {
+  const { serverUrl } = getCredentials();
+  const label = "Revoke device";
+  const res = await send(label, `${serverUrl}/api/auth/devices/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  await throwIfNotOk(res, label);
+}
+
 /** Deletes the account and its collection on the host. */
 export async function deleteAccount(password: string): Promise<void> {
   await apiSend("Delete account", "/api/account", {
