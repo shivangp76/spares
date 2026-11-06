@@ -30,6 +30,7 @@ import type {
 } from "../types/spares";
 import { errorMessage, formatNoteId, keepShown, td } from "../utils";
 import PageTitle from "../components/PageTitle";
+import Skeleton from "../components/Skeleton";
 
 type Tab = "all" | "search" | "unmatched" | "duplicate" | "links";
 
@@ -106,7 +107,7 @@ function AllKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   const uniquePages = useKeywordPages(unique);
 
   if (error) return <div className="error-text">{error}</div>;
-  if (!keywords) return <div>Loading…</div>;
+  if (!keywords) return <Skeleton lines={8} />;
 
   return (
     <>
@@ -325,7 +326,7 @@ function UnmatchedKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   }, []);
 
   if (error) return <div className="error-text">{error}</div>;
-  if (!rows) return <div>Loading…</div>;
+  if (!rows) return <Skeleton lines={8} />;
   return (
     <>
       <p style={hint}>Keywords that notes link to, but that no note has.</p>
@@ -388,7 +389,7 @@ function DuplicateKeywords({ onOpen }: { onOpen: (id: number) => void }) {
   }, []);
 
   if (error) return <div className="error-text">{error}</div>;
-  if (!rows) return <div>Loading…</div>;
+  if (!rows) return <Skeleton lines={8} />;
   return (
     <>
       <p style={hint}>Keywords on more than one note.</p>

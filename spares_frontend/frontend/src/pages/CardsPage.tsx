@@ -70,6 +70,7 @@ import {
   withSearch,
 } from "../utils";
 import PageTitle from "../components/PageTitle";
+import Skeleton from "../components/Skeleton";
 
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
 
@@ -924,7 +925,7 @@ export default function CardsPage() {
               {error}
             </pre>
           )}
-          {loading && <div>Loading…</div>}
+          {loading && <Skeleton lines={8} />}
 
           {queueOrder && searchQuery !== null && (
             <QueueOrder

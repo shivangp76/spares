@@ -102,6 +102,7 @@ import {
   sectionLabel,
 } from "../utils";
 import PageTitle from "../components/PageTitle";
+import Skeleton from "../components/Skeleton";
 
 /** A wait of `ms` milliseconds, like "4m 05s". */
 function formatWait(ms: number): string {
@@ -1794,17 +1795,7 @@ export default function ReviewPage() {
               onClose={() => setShowQueue(false)}
             />
           )}
-          {noteLoading && (
-            <div
-              style={{
-                marginTop: 12,
-                fontSize: 13,
-                color: "var(--text-muted)",
-              }}
-            >
-              Loading note…
-            </div>
-          )}
+          {noteLoading && <Skeleton lines={4} style={{ marginTop: 12 }} />}
           {notePanel}
           {history && (
             <div style={{ marginTop: 40 }}>
@@ -1817,7 +1808,7 @@ export default function ReviewPage() {
         </div>
       )}
 
-      {phase === "loading" && <div className="loading-delayed">Loading…</div>}
+      {phase === "loading" && <Skeleton block={220} lines={2} />}
 
       {phase === "waiting" && waitingUntil !== null && (
         <div
@@ -2252,17 +2243,7 @@ export default function ReviewPage() {
             </div>
           )}
 
-          {noteLoading && (
-            <div
-              style={{
-                marginTop: 12,
-                fontSize: 13,
-                color: "var(--text-muted)",
-              }}
-            >
-              Loading note…
-            </div>
-          )}
+          {noteLoading && <Skeleton lines={4} style={{ marginTop: 12 }} />}
           {notePanel}
 
           <div
