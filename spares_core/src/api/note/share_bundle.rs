@@ -227,7 +227,10 @@ pub fn refuse_note_ids(
 }
 
 /// The parser whose files have the extension of `name`
-fn parser_of(name: &str, all_parsers: &[fn() -> Box<dyn Parseable>]) -> Option<Box<dyn Parseable>> {
+pub(crate) fn parser_of(
+    name: &str,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Option<Box<dyn Parseable>> {
     let extension = Path::new(name).extension()?.to_str()?;
     all_parsers
         .iter()
@@ -254,12 +257,15 @@ async fn parser_id(db: &SqlitePool, name: &str, added: &mut Vec<String>) -> Resu
 }
 
 /// `contents` with the bundled files it names stored, once each (`stored` has the paths of those
-/// stored so far, by their paths in the bundle), and named by their paths here.
-fn store_bundled(
+/// stored so far, by their paths in the bundle), and named by their paths here. The ones the
+/// bundle doesn't have are added to `missing`. Without `store` (a dry run), nothing is stored and
+/// `contents` is returned as it is, after checking the bundle has what it names.
+pub(crate) fn store_bundled(
     contents: &str,
     bundle: &Bundle,
     stored: &mut HashMap<String, String>,
-    response: &mut ImportSharedResponse,
+    missing: &mut Vec<String>,
+    store: bool,
 ) -> Result<String, Error> {
     let mut text = String::with_capacity(contents.len());
     let mut last = 0;
@@ -273,13 +279,16 @@ fn store_bundled(
             path.clone()
         } else {
             let Some(media) = bundle.media.get(&in_bundle) else {
-                if !response.missing_media.contains(&in_bundle) {
-                    response.missing_media.push(in_bundle);
+                if !missing.contains(&in_bundle) {
+                    missing.push(in_bundle);
                 }
                 continue;
             };
             if media.len() > MAX_IMAGE_SIZE {
                 return Err(invalid(format!("{in_bundle} is too large")));
+            }
+            if !store {
+                continue;
             }
             let path = store_media(reference.kind, &reference.name, media)?
                 .display()
@@ -290,6 +299,9 @@ fn store_bundled(
         text.push_str(&contents[last..reference.range.start]);
         text.push_str(&path);
         last = reference.range.end;
+    }
+    if !store {
+        return Ok(contents.to_string());
     }
     text.push_str(&contents[last..]);
     Ok(text)
@@ -338,7 +350,13 @@ pub async fn import_shared(
             response.skipped_files.push(file_name.clone());
             continue;
         };
-        let text = store_bundled(contents, &bundle, &mut stored, &mut response)?;
+        let text = store_bundled(
+            contents,
+            &bundle,
+            &mut stored,
+            &mut response.missing_media,
+            true,
+        )?;
 
         let notes = get_notes(
             parser.as_ref(),

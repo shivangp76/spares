@@ -73,7 +73,8 @@ pub struct SparesAdapter {
 #[derive(Debug)]
 pub enum SparesRequestProcessor {
     Server,
-    /// For testing use only. Logs undo events, as the server's handlers do.
+    /// Writes to the database directly, logging undo events as the server's handlers do: the
+    /// server's imports of files the web app uploads (`crate::api::note::import`), and tests.
     Database {
         pool: SqlitePool,
     },
@@ -118,6 +119,12 @@ impl SparesAdapter {
             request_processor: internal,
             import_group: Mutex::new(None),
         }
+    }
+
+    /// The first event of the imports so far, whose group the others are in, so undoing it with
+    /// its group reverts them all
+    pub fn import_group(&self) -> Option<i64> {
+        *self.import_group.lock().unwrap()
     }
 
     /// Puts `event_ids`, the events of part of an import, in the group of the import's first
