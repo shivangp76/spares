@@ -1259,3 +1259,14 @@ html:has(.review-answer-bar) {
     visibility: visible;
   }
 }
+
+/* A review session's summary, an hour after the session ended */
+.review-summary-fading {
+  animation: review-summary-fade 2s ease-out forwards;
+}
+
+@keyframes review-summary-fade {
+  to {
+    opacity: 0;
+  }
+}
