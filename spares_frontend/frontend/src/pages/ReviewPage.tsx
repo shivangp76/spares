@@ -353,6 +353,9 @@ function initialFilter(params: URLSearchParams): {
   return { mode: "query", input: params.get("query") ?? "" };
 }
 
+/** How long after a session ends its summary stays on the page before fading out. */
+const SUMMARY_FADE_AFTER_MS = 60 * 60 * 1000;
+
 /** Inverse of `initialFilter`, so a session's URL can be bookmarked to prefill the same filter. */
 function filterParams(mode: FilterMode, input: string): URLSearchParams {
   return input ? new URLSearchParams({ [mode]: input }) : new URLSearchParams();
@@ -467,6 +470,10 @@ export default function ReviewPage() {
   const [sessionEnd, setSessionEnd] = useState<number | null>(null);
   // Whether the session has shown a card, so one that failed to start, e.g. on a query error, has no summary
   const [sessionShowedCard, setSessionShowedCard] = useState(false);
+  // The summary fades out an hour after the session ends, then is gone until the next one
+  const [summaryFade, setSummaryFade] = useState<"shown" | "fading" | "gone">(
+    "shown",
+  );
   // When the next learning card can be shown, while waiting for it with nothing else to review
   const [waitingUntil, setWaitingUntil] = useState<number | null>(null);
   const [, setWaitTick] = useState(0);
@@ -630,6 +637,23 @@ export default function ReviewPage() {
     };
   }, [phase, waitingUntil, loadCard, activeFilter]);
 
+  // Fade the summary out an hour after the session ends. Checked again when the page is shown,
+  // since timers don't count time the computer was asleep.
+  useEffect(() => {
+    if (sessionEnd === null) return;
+    const fadeAt = sessionEnd + SUMMARY_FADE_AFTER_MS;
+    const check = () => {
+      if (Date.now() >= fadeAt)
+        setSummaryFade((f) => (f === "shown" ? "fading" : f));
+    };
+    const timer = setTimeout(check, Math.max(0, fadeAt - Date.now()));
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [sessionEnd]);
+
   // Refresh the day's statistics whenever the session ends
   useEffect(() => {
     if (phase === "done") refreshStatistics();
@@ -714,6 +738,7 @@ export default function ReviewPage() {
     setSessionStart(Date.now());
     setSessionEnd(null);
     setSessionShowedCard(false);
+    setSummaryFade("shown");
     lastEventId.current = null;
     lastActionWasRating.current = false;
     setLastUndo(null);
@@ -1500,8 +1525,12 @@ export default function ReviewPage() {
       </div>
     </div>
   );
-  const summary = sessionStarted && (
+  const summary = sessionStarted && summaryFade !== "gone" && (
     <div
+      className={summaryFade === "fading" ? "review-summary-fading" : undefined}
+      onAnimationEnd={(e) => {
+        if (e.target === e.currentTarget) setSummaryFade("gone");
+      }}
       style={{
         border: "1px solid var(--border)",
         borderRadius: 6,
@@ -1630,10 +1659,8 @@ export default function ReviewPage() {
       </div>
 
       {phase === "landing" && (
-        <div
-          style={{ marginTop: sessionStarted && sessionShowedCard ? 0 : 24 }}
-        >
-          {sessionStarted && sessionShowedCard && (
+        <div style={{ marginTop: summary && sessionShowedCard ? 0 : 24 }}>
+          {summary && sessionShowedCard && (
             <div style={{ marginBottom: 20 }}>{summary}</div>
           )}
           {/* Rendered before the statistics load, at the height of one row of cards, so the search bar below does not shift.
