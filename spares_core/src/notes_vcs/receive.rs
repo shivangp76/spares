@@ -29,12 +29,11 @@ use super::lock::NotesGuard;
 use super::lock::exclusive_guard;
 use super::note_file::NoteFileContext;
 use super::note_file::ParsedNoteFile;
+use super::note_file::ParsedPushedFile;
 use super::note_file::construct_db_note_file;
 use super::note_file::db_note_fields;
 use super::note_file::file_note_fields;
-use super::note_file::is_warning;
-use super::note_file::parse_new_note_file;
-use super::note_file::parse_note_file;
+use super::note_file::parse_pushed_file;
 use super::note_file::same_note;
 use super::paths::enabled;
 use super::paths::note_rel_paths_all_parsers;
@@ -62,7 +61,6 @@ use crate::config::get_data_dir;
 use crate::model::NoteId;
 use crate::parsers::CardInheritance;
 use crate::parsers::InheritMode;
-use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
 use crate::parsers::ReadableCardIdentifier;
 use crate::parsers::get_all_parsers;
@@ -542,12 +540,23 @@ pub(crate) fn wrong_repo(hook_repo: &Path) -> Option<String> {
     ))
 }
 
-struct PushedNote {
+/// A pushed note file. It may hold several notes (see [`ParsedPushedFile`]): one it belongs to, and
+/// notes it creates.
+struct PushedFile {
     rel: PathBuf,
     parser: Box<dyn Parseable>,
     change: PushedChange,
-    /// The cards its `mv:` settings take from other notes
-    moves: Vec<ReadableCardIdentifier>,
+    /// How many notes it creates
+    creates: usize,
+    /// The cards its notes' `mv:` settings take from other notes
+    moves: Vec<CardMove>,
+}
+
+/// A card that a pushed `mv:` setting takes
+struct CardMove {
+    source: ReadableCardIdentifier,
+    /// Whether the note the file belongs to moves it, rather than a note the file creates
+    by_own_note: bool,
 }
 
 enum PushedChange {
@@ -560,14 +569,14 @@ enum PushedChange {
         id: NoteId,
         old_blob: Vec<u8>,
     },
-    /// A `new-*` file
+    /// A `new-*` file, which creates all its notes
     Create {
         new_blob: String,
     },
 }
 
-impl PushedNote {
-    /// The note the push changes, and the file it is based on, unless it creates one
+impl PushedFile {
+    /// The note the push changes, and the file it is based on, unless it only creates notes
     fn existing(&self) -> Option<(NoteId, &[u8])> {
         match &self.change {
             PushedChange::Update { id, old_blob, .. } | PushedChange::Delete { id, old_blob } => {
@@ -645,7 +654,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
         .collect();
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
-    let mut pushed: Vec<PushedNote> = Vec::new();
+    let mut pushed: Vec<PushedFile> = Vec::new();
     let mut readme_changed = false;
     let mut tokens = nul_split(&raw);
     while let Some(header) = tokens.next() {
@@ -771,39 +780,16 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
             *new_blob = blob;
         }
         let parsed = match &change {
-            PushedChange::Update {
-                id,
-                old_blob,
-                new_blob,
-            } => match parse_note_file(&context, parser.as_ref(), new_blob, *id, false) {
-                Ok(parsed) => {
-                    if let Some(reason) =
-                        live_note_edit(&context, parser.as_ref(), *id, old_blob, &parsed)
-                    {
-                        errors.push(format!("{path}: {reason}"));
-                        continue;
-                    }
-                    Ok((parsed.settings, Some(parsed.data)))
-                }
-                Err(problems) => Err(problems),
-            },
-            PushedChange::Create { new_blob } => {
-                parse_new_note_file(&context, parser.as_ref(), new_blob, false)
-                    .map(|parsed| (parsed.settings, Some(parsed.data)))
-            }
-            PushedChange::Delete { .. } => Ok((NoteSettings::default(), None)),
-        };
-        let data = match parsed {
-            Ok((settings, data)) => {
-                warnings.extend(
-                    settings
-                        .errors_and_warnings
-                        .iter()
-                        .filter(|e| is_warning(e))
-                        .map(|e| format!("{path}: {e}")),
-                );
-                data
-            }
+            PushedChange::Update { id, new_blob, .. } => Some((Some(*id), new_blob)),
+            PushedChange::Create { new_blob } => Some((None, new_blob)),
+            PushedChange::Delete { .. } => None,
+        }
+        .map(|(file_id, new_blob)| {
+            parse_pushed_file(&context, parser.as_ref(), new_blob, file_id, false)
+        })
+        .transpose();
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
             Err(problems) => {
                 for problem in problems {
                     errors.push(format!("{path}: {problem}"));
@@ -811,18 +797,40 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
                 continue;
             }
         };
-        let moves = match data.map(|data| card_move_sources(parser.as_ref(), &data)) {
-            None => Vec::new(),
-            Some(Ok(moves)) => moves,
-            Some(Err(e)) => {
-                errors.push(format!("{path}: {e}"));
+        if let (PushedChange::Update { id, old_blob, .. }, Some(own)) =
+            (&change, parsed.as_ref().and_then(|p| p.own.as_ref()))
+            && let Some(reason) = live_note_edit(&context, parser.as_ref(), *id, old_blob, own)
+        {
+            errors.push(format!("{path}: {reason}"));
+            continue;
+        }
+        let mut moves = Vec::new();
+        let mut creates = 0;
+        if let Some(parsed) = &parsed {
+            warnings.extend(parsed.warnings.iter().map(|w| format!("{path}: {w}")));
+            creates = parsed.new.len();
+            let mut failed = false;
+            for (_, data, by_own_note) in parsed.notes() {
+                match card_move_sources(parser.as_ref(), data) {
+                    Ok(sources) => moves.extend(sources.into_iter().map(|source| CardMove {
+                        source,
+                        by_own_note,
+                    })),
+                    Err(e) => {
+                        errors.push(format!("{path}: {e}"));
+                        failed = true;
+                    }
+                }
+            }
+            if failed {
                 continue;
             }
-        };
-        pushed.push(PushedNote {
+        }
+        pushed.push(PushedFile {
             rel: PathBuf::from(&path),
             parser,
             change,
+            creates,
             moves,
         });
     }
@@ -839,7 +847,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
     }
 
     // 6. Compare-and-swap: the database must still hold what the push is based on.
-    let existing: Vec<(&PushedNote, NoteId, &[u8])> = pushed
+    let existing: Vec<(&PushedFile, NoteId, &[u8])> = pushed
         .iter()
         .filter_map(|note| note.existing().map(|(id, old_blob)| (note, id, old_blob)))
         .collect();
@@ -1014,16 +1022,21 @@ fn card_move_sources(
 
 /// Why the `mv:` settings of the pushed notes cannot be carried out: a source card that does not
 /// exist (the push cannot create it, since a pushed note gets its id only once it is imported), is
-/// in the note that moves it, or is moved by more than one cloze.
-async fn card_move_errors(db: &SqlitePool, pushed: &[PushedNote]) -> Result<Vec<String>, Error> {
+/// in the note that moves it, or is moved by more than one cloze. A note that a file creates may
+/// take cards from the note the file belongs to, which splits that note.
+async fn card_move_errors(db: &SqlitePool, pushed: &[PushedFile]) -> Result<Vec<String>, Error> {
     let mut errors = Vec::new();
     let mut moved_by: Vec<(ReadableCardIdentifier, &Path)> = Vec::new();
     for note in pushed {
         let own_id = note.existing().map(|(id, _)| id);
-        for source in &note.moves {
+        for CardMove {
+            source,
+            by_own_note,
+        } in &note.moves
+        {
             let path = note.rel.display();
             let setting = format!("`mv:{}/{}`", source.note_id.letters(), source.order);
-            if own_id == Some(source.note_id) {
+            if *by_own_note && own_id == Some(source.note_id) {
                 errors.push(format!(
                     "{path}: {setting} moves a card within its own note; reorder the clozes instead"
                 ));
@@ -1047,20 +1060,24 @@ async fn card_move_errors(db: &SqlitePool, pushed: &[PushedNote]) -> Result<Vec<
 /// Imports the push: deletes first, then updates, then creates, so a note moved to another parser
 /// (deleted, and created from a `new-*` file) and keywords of linked notes stay consistent. Notes
 /// that a pushed `mv:` takes cards from are the exception: they are updated and deleted last, once
-/// their cards have moved, so a push can merge notes and delete or edit their sources. Its events
-/// form one group, so one undo reverts it all.
+/// their cards have moved, so a push can merge notes and delete or edit their sources, or split a
+/// note into notes its file creates. Its events form one group, so one undo reverts it all.
 async fn import(
     db: &SqlitePool,
     context: &NoteFileContext,
-    pushed: &[PushedNote],
+    pushed: &[PushedFile],
     journal: &mut Journal,
 ) -> Result<(), Error> {
     let sources: BTreeSet<NoteId> = pushed
         .iter()
-        .flat_map(|note| note.moves.iter().map(|source| source.note_id))
+        .flat_map(|note| note.moves.iter().map(|m| m.source.note_id))
         .collect();
     let (deleted_last, deleted_first): (Vec<NoteId>, Vec<NoteId>) =
         journal.deleted.iter().partition(|id| sources.contains(id));
+    let updated_last = |file: &PushedFile| match &file.change {
+        PushedChange::Update { id, .. } => Some(sources.contains(id)),
+        _ => None,
+    };
     let mut import = Import {
         db,
         context,
@@ -1068,25 +1085,21 @@ async fn import(
         at: Utc::now(),
         leader: None,
         journal,
+        pushed,
+        parsed: pushed.iter().map(|_| None).collect(),
     };
     import.delete(deleted_first).await?;
-    for note in pushed {
-        if let PushedChange::Update { id, new_blob, .. } = &note.change
-            && !sources.contains(id)
-        {
-            import.update(note, *id, new_blob).await?;
+    for (i, file) in pushed.iter().enumerate() {
+        if updated_last(file) == Some(false) {
+            import.update(i).await?;
         }
     }
-    for note in pushed {
-        if let PushedChange::Create { new_blob } = &note.change {
-            import.create(note, new_blob).await?;
-        }
+    for i in 0..pushed.len() {
+        import.create(i).await?;
     }
-    for note in pushed {
-        if let PushedChange::Update { id, new_blob, .. } = &note.change
-            && sources.contains(id)
-        {
-            import.update(note, *id, new_blob).await?;
+    for (i, file) in pushed.iter().enumerate() {
+        if updated_last(file) == Some(true) {
+            import.update(i).await?;
         }
     }
     import.delete(deleted_last).await
@@ -1101,6 +1114,10 @@ struct Import<'a> {
     /// The first event of the import, whose group the later ones join
     leader: Option<i64>,
     journal: &'a mut Journal,
+    pushed: &'a [PushedFile],
+    /// Each pushed file, parsed when its first note is imported. Parsing moves the files of image
+    /// occlusions, so each file is parsed once.
+    parsed: Vec<Option<ParsedPushedFile>>,
 }
 
 impl Import<'_> {
@@ -1120,10 +1137,43 @@ impl Import<'_> {
         self.join(response.event_id).await
     }
 
-    async fn update(&mut self, note: &PushedNote, id: NoteId, new_blob: &str) -> Result<(), Error> {
-        let parser_id = self.parser_id(note).await?;
-        let parsed = parse_note_file(self.context, note.parser.as_ref(), new_blob, id, true)
-            .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
+    /// Parses pushed file `i`, the first time only.
+    fn parsed(&mut self, i: usize) -> Result<&mut ParsedPushedFile, Error> {
+        let file = &self.pushed[i];
+        if self.parsed[i].is_none() {
+            let (contents, file_id) = match &file.change {
+                PushedChange::Update { id, new_blob, .. } => (new_blob, Some(*id)),
+                PushedChange::Create { new_blob } => (new_blob, None),
+                PushedChange::Delete { .. } => {
+                    return Err(Error::NotesVcs(format!(
+                        "{} is deleted, so it has no notes",
+                        file.rel.display()
+                    )));
+                }
+            };
+            let parsed =
+                parse_pushed_file(self.context, file.parser.as_ref(), contents, file_id, true)
+                    .map_err(|problems| {
+                        Error::NotesVcs(format!("{}: {}", file.rel.display(), problems.join("; ")))
+                    })?;
+            self.parsed[i] = Some(parsed);
+        }
+        self.parsed[i]
+            .as_mut()
+            .ok_or_else(|| Error::NotesVcs(format!("{} was not parsed", file.rel.display())))
+    }
+
+    /// Updates the note that pushed file `i` belongs to.
+    async fn update(&mut self, i: usize) -> Result<(), Error> {
+        let file = &self.pushed[i];
+        let PushedChange::Update { id, .. } = file.change else {
+            return Ok(());
+        };
+        let parser_id = self.parser_id(file).await?;
+        let parsed =
+            self.parsed(i)?.own.take().ok_or_else(|| {
+                Error::NotesVcs(format!("{} has no note {id}", file.rel.display()))
+            })?;
         let request = UpdateNotesRequest {
             selector: NotesSelector::Ids(vec![id]),
             parser_id: Some(parser_id),
@@ -1136,21 +1186,28 @@ impl Import<'_> {
         self.join(response.event_id).await
     }
 
-    async fn create(&mut self, note: &PushedNote, new_blob: &str) -> Result<(), Error> {
-        let parser_id = self.parser_id(note).await?;
-        let parsed = parse_new_note_file(self.context, note.parser.as_ref(), new_blob, true)
-            .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
+    /// Creates the notes of pushed file `i`, if it creates any.
+    async fn create(&mut self, i: usize) -> Result<(), Error> {
+        let file = &self.pushed[i];
+        if file.creates == 0 {
+            return Ok(());
+        }
+        let parser_id = self.parser_id(file).await?;
+        let new = std::mem::take(&mut self.parsed(i)?.new);
         let response = create_notes(
             self.db,
             CreateNotesRequest {
                 parser_id,
-                requests: vec![CreateNoteRequest {
-                    data: parsed.data,
-                    keywords: parsed.settings.keywords,
-                    tags: parsed.settings.tags,
-                    is_suspended: parsed.settings.is_suspended,
-                    custom_data: parsed.settings.custom_data,
-                }],
+                requests: new
+                    .into_iter()
+                    .map(|parsed| CreateNoteRequest {
+                        data: parsed.data,
+                        keywords: parsed.settings.keywords,
+                        tags: parsed.settings.tags,
+                        is_suspended: parsed.settings.is_suspended,
+                        custom_data: parsed.settings.custom_data,
+                    })
+                    .collect(),
             },
             self.at,
             &self.parsers,
@@ -1166,7 +1223,7 @@ impl Import<'_> {
         self.join(response.event_id).await
     }
 
-    async fn parser_id(&self, note: &PushedNote) -> Result<i64, Error> {
+    async fn parser_id(&self, note: &PushedFile) -> Result<i64, Error> {
         let name = note.parser.get_parser_name();
         parser_id(self.db, name)
             .await?
