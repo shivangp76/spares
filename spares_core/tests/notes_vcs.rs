@@ -534,14 +534,40 @@ async fn test_push_rejections(pool: SqlitePool) {
             }),
         ),
         (
-            "holds 2 notes",
+            "note 2 of 2: names note aab, but the file belongs to note aaa; edit note aab in its own file",
             Box::new(move |c: &Path| {
                 let path = note_path(c, first());
-                let s = read(&path).replace(
-                "<!--- spares: end --->",
-                "<!--- spares: note start --->\nSmuggled {{ new note }}\n<!--- spares: note end --->\n<!--- spares: end --->",
-            );
+                let s = with_extra_notes(
+                    &read(&path),
+                    &["<!--- # note-id: aab --->\nSmuggled {{ edit }}"],
+                );
                 std::fs::write(path, s).unwrap();
+            }),
+        ),
+        (
+            "note 2 of 2: names note aaa too",
+            Box::new(move |c: &Path| {
+                let path = note_path(c, first());
+                let s = with_extra_notes(
+                    &read(&path),
+                    &["<!--- # note-id: aaa --->\nTwice {{ edit }}"],
+                );
+                std::fs::write(path, s).unwrap();
+            }),
+        ),
+        (
+            "holds no note with note id aaa",
+            Box::new(move |c: &Path| {
+                let path = note_path(c, first());
+                let s = read(&path).replace("<!--- # note-id: aaa --->\n", "");
+                std::fs::write(path, s).unwrap();
+            }),
+        ),
+        (
+            "note 1 of 2: names note aaa; a new note's file must not have a note id",
+            Box::new(|c: &Path| {
+                let s = with_extra_notes(&read(&note_path(c, first())), &["New {{ note }}"]);
+                std::fs::write(c.join("markdown/new-copy.md"), s).unwrap();
             }),
         ),
         (
@@ -1099,6 +1125,35 @@ async fn test_push_live_note(pool: SqlitePool) {
     );
 }
 
+/// `file` with notes added after its last one, each given as its settings and data
+fn with_extra_notes(file: &str, notes: &[&str]) -> String {
+    use std::fmt::Write as _;
+    let end = "<!--- spares: end --->";
+    assert!(file.contains(end), "{file}");
+    let mut extra = String::new();
+    for note in notes {
+        if let Some((settings, _)) = note.rsplit_once('\n') {
+            extra.push_str(settings);
+            extra.push('\n');
+        }
+        let data = note.rsplit_once('\n').map_or(*note, |(_, data)| data);
+        let _ = write!(
+            extra,
+            "<!--- spares: note start --->\n{data}\n<!--- spares: note end --->\n"
+        );
+    }
+    file.replace(end, &format!("{extra}{end}"))
+}
+
+/// The id of the note whose data starts with `prefix`
+async fn note_starting_with(pool: &SqlitePool, prefix: &str) -> NoteId {
+    sqlx::query_scalar("SELECT id FROM note WHERE data LIKE ? || '%'")
+        .bind(prefix)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 /// A new note's file made from the first note's: without its note id, with other data
 fn new_note_file(clone: &Path, data: &str) -> String {
     let file = read(&note_path(clone, first()));
@@ -1203,6 +1258,158 @@ async fn test_push_creating_and_deleting_rolls_back(pool: SqlitePool) {
         "{:?}",
         notes_vcs::status().saved_copies
     );
+}
+
+#[sqlx::test]
+async fn test_push_creates_several_notes_from_one_file(pool: SqlitePool) {
+    let _guard = setup(&pool).await;
+    init(&pool).await;
+    let clone = clone();
+    let file = with_extra_notes(
+        &new_note_file(&clone, "Fourth {{ New cloze }}"),
+        &["Fifth {{ Another }}", "Sixth, without clozes"],
+    );
+    std::fs::write(clone.join("markdown/new-several.md"), file).unwrap();
+    git(&clone, &["add", "-A"]);
+    git(
+        &clone,
+        &["commit", "-qm", "create several notes in one file"],
+    );
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let message = &pushed.receive.message;
+    assert!(message.contains("created notes"), "{message}");
+    assert!(
+        message.contains("markdown/new-several.md: note 3 of 3: No cards found."),
+        "{message}"
+    );
+    let mut created = Vec::new();
+    for prefix in ["Fourth", "Fifth", "Sixth"] {
+        created.push(note_starting_with(&pool, prefix).await);
+    }
+    assert_eq!(note_count(&pool).await, 6);
+    let finish = pushed.finish.unwrap();
+    for id in &created {
+        assert!(finish.imported.contains(id), "{:?}", finish.imported);
+    }
+
+    // spares gave each note its own file on top of the push.
+    assert!(finish.normalized, "{}", finish.message);
+    assert!(!repo().join("markdown/new-several.md").exists());
+    let changed = git(
+        &repo(),
+        &["diff", "--name-status", "--no-renames", "HEAD~", "HEAD"],
+    );
+    assert!(changed.contains("D\tmarkdown/new-several.md"), "{changed}");
+    for (id, data) in created.iter().zip([
+        "Fourth {{[o:1] New cloze }}",
+        "Fifth {{[o:1] Another }}",
+        "Sixth",
+    ]) {
+        assert!(
+            changed.contains(&format!("A\tmarkdown/{id}.md")),
+            "{changed}"
+        );
+        let file = read(&note_path(&repo(), *id));
+        assert!(file.contains(data), "{file}");
+        assert_eq!(file.matches("spares: note start").count(), 1, "{file}");
+    }
+    assert_eq!(status(&repo()), "");
+
+    // One undo removes them all.
+    undo_last_group(&pool).await;
+    assert_eq!(note_count(&pool).await, 3);
+}
+
+#[sqlx::test]
+async fn test_push_splits_a_note_in_its_file(pool: SqlitePool) {
+    let _guard = setup(&pool).await;
+    init(&pool).await;
+    let card = card_at(&pool, first(), 1).await.unwrap();
+    let clone = clone();
+    // The first note's cloze moves to a note its file creates, and a second new note is added.
+    let path = note_path(&clone, first());
+    let file = read(&path);
+    let split = file.replace("First {{[o:1] Cloze here }}", "First, split up");
+    assert_ne!(split, file);
+    let split = with_extra_notes(
+        &split,
+        &[
+            &format!("Split off {{{{[mv:{}/1] moved }}}}", first()),
+            "Expanded {{ further }}",
+        ],
+    );
+    std::fs::write(&path, split).unwrap();
+    git(&clone, &["commit", "-qam", "split the first note"]);
+    let pushed = push(&pool, &clone, true).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let message = &pushed.receive.message;
+    assert!(
+        message.contains(&format!("imported note {}", first())),
+        "{message}"
+    );
+    assert!(
+        message.contains("note 1 of 3: No cards found."),
+        "{message}"
+    );
+    let split_off = note_starting_with(&pool, "Split off").await;
+    let expanded = note_starting_with(&pool, "Expanded").await;
+    // The card kept its id, so its scheduling and reviews, in the note split off.
+    assert_eq!(card_at(&pool, split_off, 1).await, Some(card));
+    assert_eq!(card_at(&pool, first(), 1).await, None);
+    assert!(card_at(&pool, expanded, 1).await.is_some());
+    assert_eq!(note_data(&pool, first()).await, "First, split up");
+
+    // The first note's file holds only it again, and the others have their own.
+    assert!(pushed.finish.unwrap().normalized);
+    let file = read(&note_path(&repo(), first()));
+    assert!(file.contains("First, split up"), "{file}");
+    assert_eq!(file.matches("spares: note start").count(), 1, "{file}");
+    assert!(read(&note_path(&repo(), split_off)).contains("Split off {{[o:1] moved }}"));
+    assert!(read(&note_path(&repo(), expanded)).contains("Expanded {{[o:1] further }}"));
+    assert_eq!(status(&repo()), "");
+
+    // One undo puts the card back and removes the new notes.
+    undo_last_group(&pool).await;
+    assert_eq!(card_at(&pool, first(), 1).await, Some(card));
+    assert_eq!(note_count(&pool).await, 3);
+}
+
+#[sqlx::test]
+async fn test_push_creating_several_notes_from_one_file_rolls_back(pool: SqlitePool) {
+    let _guard = setup(&pool).await;
+    init(&pool).await;
+    let clone = clone();
+    let before = head(&repo());
+    let original = note_data(&pool, first()).await;
+    std::fs::write(
+        clone.join("markdown/new-several.md"),
+        with_extra_notes(
+            &new_note_file(&clone, "Fourth {{ Never }}"),
+            &["Fifth {{ Never }}"],
+        ),
+    )
+    .unwrap();
+    let path = note_path(&clone, first());
+    let file = with_extra_notes(
+        &read(&path).replace("Cloze here", "Edited cloze"),
+        &["Added {{ Never reaches main }}"],
+    );
+    std::fs::write(&path, file).unwrap();
+    git(&clone, &["add", "-A"]);
+    git(&clone, &["commit", "-qm", "create several notes"]);
+    let pushed = push(&pool, &clone, false).await;
+    assert!(pushed.receive.ok, "{}", pushed.receive.message);
+    let finish = pushed.finish.unwrap();
+    assert!(finish.message.contains("rolled back"), "{}", finish.message);
+    assert!(!finish.message.contains("partial"), "{}", finish.message);
+    assert_eq!(note_count(&pool).await, 3);
+    assert_eq!(note_data(&pool, first()).await, original);
+    assert_eq!(head(&repo()), before);
+    assert_eq!(status(&repo()), "");
+    // The created notes' files are gone with them.
+    let files = walk(&repo().join("markdown"));
+    assert_eq!(files.len(), 3, "{files:?}");
 }
 
 /// The id of the card at `order` of note `id`, if there is one
