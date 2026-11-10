@@ -44,6 +44,7 @@ pub use data::*;
 use grouping::apply_conceal_and_reveal;
 use grouping::group_clozes;
 use grouping::modify_card_settings;
+use grouping::settings_cloze_position;
 pub use match_cards::*;
 use uids::mint_cloze_uid;
 pub use uids::*;
@@ -253,10 +254,18 @@ pub fn get_cards_main(
     let old_orders: Vec<Option<Vec<usize>>> = cards_raw
         .iter()
         .map(|clozes| {
-            clozes
-                .iter()
-                .find(|(_, x)| !x.skip_serialization)
-                .and_then(|(_, settings)| settings.orders.clone())
+            clozes[settings_cloze_position(clozes)]
+                .1
+                .orders
+                .clone()
+                // Notes written before orders were kept off clozes in all groupings (`g:*`) may
+                // have a card's orders on its first cloze instead
+                .or_else(|| {
+                    clozes
+                        .iter()
+                        .find(|(_, x)| !x.skip_serialization)
+                        .and_then(|(_, x)| x.orders.clone())
+                })
         })
         .collect::<Vec<_>>();
 
@@ -270,6 +279,17 @@ pub fn get_cards_main(
         serialize_ephemeral,
     )?;
 
+    // The cloze that keeps each card's settings, found before an image occlusion's clozes are
+    // combined below: the combined cloze has the settings of the first of them, which may be one
+    // that is only hidden in the card
+    let settings_clozes = cards_raw
+        .iter()
+        .map(|clozes| {
+            let (cloze_data, settings) = &clozes[settings_cloze_position(clozes)];
+            (settings.clone(), cloze_data.settings.cloze_uid)
+        })
+        .collect::<Vec<_>>();
+
     // Combine image occlusions
     // This is done in place since image occlusions containing grouped clozes are a relatively rare type of card. This means that it is rare that combining image occlusion clozes will change the data.
     for clozes in &mut cards_raw {
@@ -279,8 +299,8 @@ pub fn get_cards_main(
     // Convert Vec<ClozeData> to CardData
     let mut cards: Vec<CardData> = Vec::new();
     let mut old_orders_iter = old_orders.into_iter();
-    for clozes in cards_raw {
-        // Since cloze settings are boiled up, just examine the first cloze for the settings.
+    for (clozes, (settings, cloze_uid)) in cards_raw.into_iter().zip(settings_clozes) {
+        // Since cloze settings are boiled up, just examine the cloze that keeps them.
         let ClozeGroupingSettings {
             grouping,
             inherit,
@@ -294,14 +314,12 @@ pub fn get_cards_main(
             back_emphasis,
             type_answer,
             skip_serialization: _,
-        } = &clozes
-            .iter()
-            .find(|(_, x)| !x.skip_serialization)
-            .unwrap()
-            .1;
-        let ClozeSettings {
-            hint, cloze_uid, ..
-        } = &clozes.first().unwrap().0.settings;
+            from_all_groupings: _,
+        } = &settings;
+        let ClozeSettings { hint, .. } = &clozes.first().unwrap().0.settings;
+        // A card is known by the uid of the cloze it is made from in its own right, not that of a
+        // cloze in all groupings, which all of its cards would share
+        let cloze_uid = &cloze_uid;
         let mut orders_iter = orders.as_ref().into_iter().flat_map(|v| v.iter().copied());
 
         // Extract old orders for this grouping
@@ -517,10 +535,10 @@ pub(crate) fn get_cloze_context_for_card_order(
     let card_clozes = cards_raw
         .iter()
         .find(|clozes| {
-            clozes
-                .iter()
-                .find(|(_, gs)| !gs.skip_serialization)
-                .and_then(|(_, gs)| gs.orders.as_ref())
+            clozes[settings_cloze_position(clozes)]
+                .1
+                .orders
+                .as_ref()
                 .is_some_and(|orders| orders.contains(&card_order_usize))
         })
         .or_else(|| cards_raw.get(card_order_usize - 1));

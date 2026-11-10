@@ -260,6 +260,7 @@ fn generate_note(node: &ClozeEntry, parser: &dyn Parseable, rng: &mut ThreadRng)
         back_emphasis: false,
         type_answer: None,
         skip_serialization: false,
+        from_all_groupings: false,
     };
     // NOTE: For simplicity, each cloze is only a part of 1 grouping.
     let NoteSettingsKeys {

@@ -1660,3 +1660,85 @@ fn test_image_occlusion_all_groupings_not_repeated_per_card() {
     std::fs::remove_file(clozes_filepath).unwrap();
     std::fs::remove_file(original_image_filepath).unwrap();
 }
+
+/// A text cloze in all groupings added before an image occlusion is first in all of the image
+/// occlusion's cards. It used to be read for their orders, which it has none of, so all of the
+/// cards were made anew and lost their reviews. The orders stay in the clozes SVG instead. With
+/// `f:all`, the image occlusion's other clozes are hidden in each card, and the first of them must
+/// not be taken for the card's own when its clozes are combined.
+#[test]
+fn test_grouping_all_text_cloze_keeps_image_occlusion_orders() {
+    use crate::parsers::ConstructImageOcclusionType;
+    use crate::parsers::impls::typst::TypstParser;
+
+    let dir = get_image_occlusion_directory();
+    let original_image_filepath = dir.join("test-all-groupings-orders.png");
+    image::RgbaImage::from_pixel(100, 80, image::Rgba([249, 115, 22, 255]))
+        .save(&original_image_filepath)
+        .unwrap();
+    let clozes_filepath = dir.join("test-all-groupings-orders_clozes.svg");
+    std::fs::write(
+        &clozes_filepath,
+        indoc! { r##"<?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="100" height="80">
+          <g class="layer" id="markup-group">
+            <title>Markup</title>
+          </g>
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="10" width="30" y="0" id="svg_1" x="10" data-cloze-settings="o:1" />
+            <rect fill="#FFEBA2" height="10" width="30" y="20" id="svg_2" x="10" data-cloze-settings="o:2" />
+            <rect fill="#FFEBA2" height="10" width="30" y="40" id="svg_3" x="10" data-cloze-settings="" />
+          </g>
+        </svg>"##},
+    )
+    .unwrap();
+    let parser = TypstParser::new();
+    let image_occlusion = parser.construct_image_occlusion(
+        &ImageOcclusionData {
+            original_image_filepath: original_image_filepath.clone(),
+            clozes_filepath: clozes_filepath.clone(),
+            front_conceal: FrontConceal::AllGroupings,
+            back_reveal: BackReveal::OnlyAnswered,
+            back_emphasis: true,
+        },
+        ConstructImageOcclusionType::Note,
+    );
+    let note_data = format!("#cl[a][g:\\*;hide:;f:all;b:a]\n\n{image_occlusion}\n");
+
+    // As read when the note is updated, without giving new orders
+    let cards = get_cards(&parser, None, &note_data, false, MOVE_FILES).unwrap();
+    assert_eq!(
+        cards.iter().map(|card| card.order).collect::<Vec<_>>(),
+        vec![Some(1), Some(2), None]
+    );
+    let cards = get_cards(&parser, None, &note_data, true, MOVE_FILES).unwrap();
+    assert_eq!(
+        cards
+            .iter()
+            .map(|card| card.previous_order)
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2), None]
+    );
+    assert_eq!(
+        cards.iter().map(|card| card.order).collect::<Vec<_>>(),
+        vec![Some(1), Some(2), Some(3)]
+    );
+    // The text cloze keeps no orders
+    let text_cloze = format!("{:?}", cards[0].data);
+    assert!(
+        text_cloze.contains(r#"ClozeEnd("][g:\\*;hide:;f:all;b:a]")"#),
+        "{text_cloze}"
+    );
+    let svg = read_to_string(&clozes_filepath).unwrap();
+    for (id, settings) in [("svg_1", "o:1"), ("svg_2", "o:2"), ("svg_3", "o:3")] {
+        assert!(
+            svg.contains(&format!(
+                r#"id="{id}" x="10" data-cloze-settings="{settings}""#
+            )),
+            "{svg}"
+        );
+    }
+    std::fs::remove_file(clozes_filepath).unwrap();
+    std::fs::remove_file(original_image_filepath).unwrap();
+}
