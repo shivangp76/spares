@@ -119,6 +119,21 @@ pub fn construct_cloze_string(
     let default = ClozeGroupingSettings::default(&mut 0, modify_defaults_fn);
     let mut all_grouping_parts: Vec<String> = Vec::new();
     let mut only_groups = Vec::new();
+    // Writes the groupings without settings of their own together, e.g. `g:1,2`
+    let write_only_groups = |only_groups: &mut Vec<ClozeGrouping>,
+                             all_grouping_parts: &mut Vec<String>| {
+        if !only_groups.is_empty() {
+            let groups_str = only_groups
+                .drain(0..)
+                .map(|grouping| grouping.to_parser_string(groupings_all))
+                .collect::<Vec<_>>()
+                .join(",");
+            all_grouping_parts.push(format!(
+                "{}{}{}",
+                cloze_settings_keys.grouping, settings_key_value_delim, groups_str
+            ));
+        }
+    };
     // Orders belong to a card, so they are never written on `g:*`, though notes written before
     // kept them there (see `settings_cloze_position`)
     let all_groupings_settings =
@@ -280,24 +295,18 @@ pub fn construct_cloze_string(
             only_groups.push(grouping.clone());
             grouping_parts.clear();
         }
-        if ((parse_grouping && grouping_parts.len() > 1) || i == grouping_settings.len() - 1)
-            && !only_groups.is_empty()
-        {
-            let groups_str = only_groups
-                .drain(0..)
-                .map(|grouping| grouping.to_parser_string(groupings_all))
-                .collect::<Vec<_>>()
-                .join(",");
-            all_grouping_parts.push(format!(
-                "{}{}{}",
-                cloze_settings_keys.grouping, settings_key_value_delim, groups_str
-            ));
+        // The groupings without settings so far are written before the next one with settings
+        if parse_grouping && grouping_parts.len() > 1 {
+            write_only_groups(&mut only_groups, &mut all_grouping_parts);
         }
         if !grouping_parts.is_empty() {
             let grouping_parts_str = grouping_parts.join(settings_delim);
             all_grouping_parts.push(grouping_parts_str);
         }
     }
+    // and after the last one. A cloze's last grouping may be one it is only hidden in, which is
+    // never written, so this cannot wait for it.
+    write_only_groups(&mut only_groups, &mut all_grouping_parts);
     if !all_grouping_parts.is_empty() {
         let delim = format!("{} ", settings_delim);
         let all_grouping_parts_str = all_grouping_parts.join(delim.as_str());

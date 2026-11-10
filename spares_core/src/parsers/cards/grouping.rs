@@ -652,6 +652,12 @@ pub(super) fn apply_conceal_and_reveal(
                 new_clozes.extend(matching_clozes);
             }
         }
+        // Each cloze with these settings finds the same other clozes, and every cloze of a card has
+        // them once its settings are written back on it, so a cloze is added once. Otherwise the
+        // card would have it several times, and the note's text, rebuilt from the card, too.
+        new_clozes.sort_by_key(|x| x.index);
+        new_clozes.dedup_by_key(|x| x.index);
+        new_clozes.retain(|x| !clozes.iter().any(|(cloze, _)| cloze.index == x.index));
         // Add these clozes along with a new grouping setting that has `hidden_no_answer` enabled.
         // NOTE: The value of `is_image_occlusion` doesn't matter here since that property won't be read.
         let mut new_grouping_settings = ClozeGroupingSettings::default(&mut 0, None);

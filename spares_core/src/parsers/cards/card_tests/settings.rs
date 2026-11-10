@@ -966,3 +966,56 @@ fn test_get_notes_type_answer_shortcut() {
             .contains("Failed to parse type answer")
     );
 }
+
+/// Writes `data` back twice and checks that the first pass gives `expected` and the second
+/// changes nothing
+fn assert_settings_rewrite_to(data: &str, expected: &str) {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let (new_data, _) =
+        crate::parsers::add_order_to_note_data(parser.as_ref(), data, None).unwrap();
+    assert_eq!(new_data, expected);
+    let (newer_data, _) =
+        crate::parsers::add_order_to_note_data(parser.as_ref(), &new_data, None).unwrap();
+    assert_eq!(newer_data, expected);
+}
+
+#[test]
+fn test_front_conceal_all_keeps_other_groupings() {
+    // A cloze is only hidden in the card of `d`, so it used to lose its `g:` key: `c` was made a
+    // card of its own, and with `b` alone in grouping 2 too, the note could not be read again
+    assert_settings_rewrite_to(
+        r"{{[g:2]a}} {{[f:all]b}} {{[g:2]c}}",
+        r"{{[g:2;o:1]a}} {{[o:2;f:all]b}} {{[g:2]c}}",
+    );
+    assert_settings_rewrite_to(
+        r"{{a}} {{[g:1,2]b}} {{[g:2]c}} {{[f:all]d}}",
+        r"{{[o:1]a}} {{[g:1;o:2; g:2;o:3]b}} {{[g:2]c}} {{[o:4;f:all]d}}",
+    );
+}
+
+#[test]
+fn test_front_conceal_all_hides_a_cloze_once() {
+    // Each cloze of a card with `f:all` hid the other clozes, so once the setting was written on
+    // each of them, a card had a cloze several times, and the note's text did too
+    assert_settings_rewrite_to(
+        r"{{a}} {{[g:*;f:all]b}} {{c}}",
+        r"{{[o:1;f:all]a}} {{[g:*;f:all]b}} {{[o:2;f:all]c}}",
+    );
+    let parser = MarkdownParser::new();
+    let cards = get_cards(
+        &parser,
+        None,
+        r"{{[o:1;f:all]a}} {{[g:*;f:all]b}} {{[o:2;f:all]c}}",
+        true,
+        false,
+    )
+    .unwrap();
+    for card in cards {
+        let clozes = card
+            .data
+            .iter()
+            .filter(|part| matches!(part, NotePart::ClozeData(..)))
+            .count();
+        assert_eq!(clozes, 3, "{:?}", card.data);
+    }
+}
