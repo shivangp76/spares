@@ -141,6 +141,12 @@ pub struct ClozeGroupingSettings {
     /// Any unique string that is shared among all clozes that are meant to be a part of the same card. The special keyword `*` indicates this cloze is a part of all groups.
     /// If this is not specified, then the cloze will be in its own group. In other words, a card will be created for this cloze and the card will only contain this one cloze.
     ///
+    /// The settings after `*` apply in every grouping, except in groupings the cloze names itself,
+    /// which have their own settings in their place:
+    /// ```md
+    /// {{[g:1]a}} {{b}} {{[g:*;hide:; g:1]c}}
+    /// ```
+    /// Here "c" is hidden without being asked in the card for "b", but asked in the card for "a".
     /// The settings of a card, such as its orders, are kept on the clozes the card is made from
     /// in its own right, not on a cloze in all groupings.
     pub grouping: ClozeGrouping,
@@ -256,9 +262,9 @@ pub struct ClozeGroupingSettings {
     /// Will not serialize this grouping in the cloze settings string
     pub skip_serialization: bool,
     /// Internal
-    /// Whether this is a copy of the settings of `g:*` for one of the note's groupings (see
-    /// `group_clozes`). A card's own settings, such as its orders, are never written on such a
-    /// copy, since it has no `g:` key of its own when its grouping is automatic.
+    /// Whether this is a copy of the settings of `g:*` for a grouping the cloze does not name
+    /// itself (see `group_clozes`). A card's own settings, such as its orders, are never written on
+    /// such a copy, since it has no `g:` key of its own when its grouping is automatic.
     pub from_all_groupings: bool,
 }
 

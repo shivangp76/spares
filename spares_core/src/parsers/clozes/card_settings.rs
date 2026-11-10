@@ -239,17 +239,22 @@ pub fn construct_cloze_string(
         }
         grouping_parts
     };
+    let parts_of_all_groupings = all_groupings_settings.as_ref().map(settings_parts);
     for (i, settings) in grouping_settings_with_all.iter().enumerate() {
         if settings.skip_serialization {
             continue;
         }
         let own_parts = settings_parts(settings);
-        // A cloze in all groupings is given one grouping per card (see `group_clozes`), each a
-        // copy of the settings of `g:*`, which says nothing `g:*` does not. An automatic grouping
-        // is written without a `g:` key, so writing them would only repeat the settings after
-        // `g:*`, once per card in the note, e.g. `g:*;hide:; hide:; hide:`. The card's own
-        // settings, such as its orders, are kept on another cloze (see `settings_cloze_position`).
-        if settings.from_all_groupings {
+        // A cloze in all groupings is given one grouping per card (see `group_clozes`). Those it
+        // does not name are copies of the settings of `g:*`, which say nothing `g:*` does not,
+        // and so do groupings it names with the same settings. An automatic grouping is written
+        // without a `g:` key, so writing them would only repeat the settings after `g:*`, once
+        // per card in the note, e.g. `g:*;hide:; hide:; hide:`. The card's own settings, such as
+        // its orders, are kept on another cloze (see `settings_cloze_position`).
+        if i > 0
+            && let Some(parts_of_all_groupings) = &parts_of_all_groupings
+            && (settings.from_all_groupings || own_parts == *parts_of_all_groupings)
+        {
             continue;
         }
         let grouping = &settings.grouping;
@@ -265,10 +270,14 @@ pub fn construct_cloze_string(
         grouping_parts.extend(own_parts);
 
         // Push settings
-        if parse_grouping && grouping_parts.len() == 1 && *grouping != ClozeGrouping::All {
-            if global_settings.all_groupings.is_none() {
-                only_groups.push(grouping.clone());
-            }
+        // Groupings without settings are listed together, e.g. `g:1,2`. With `g:*`, a grouping
+        // left here differs from it, so it is written on its own, e.g. `g:*;hide:; g:1`.
+        if parse_grouping
+            && grouping_parts.len() == 1
+            && *grouping != ClozeGrouping::All
+            && global_settings.all_groupings.is_none()
+        {
+            only_groups.push(grouping.clone());
             grouping_parts.clear();
         }
         if ((parse_grouping && grouping_parts.len() > 1) || i == grouping_settings.len() - 1)

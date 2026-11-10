@@ -59,7 +59,11 @@ pub(super) fn group_clozes(
         cloze_data.settings.all_groupings = Some(all_groupings_settings.clone());
 
         // Replace `ClozeGrouping::All` with each grouping
-        *grouping_settings = expand_all_groupings(&all_grouping_names, &all_groupings_settings);
+        *grouping_settings = expand_all_groupings(
+            grouping_settings,
+            &all_grouping_names,
+            &all_groupings_settings,
+        );
     }
 
     let cards_raw: Vec<Vec<(ClozeData, ClozeGroupingSettings)>> = all_clozes
@@ -136,18 +140,26 @@ pub(super) fn group_clozes(
     Ok((cards_raw, all_grouping_names.len()))
 }
 
-/// The settings of a cloze in all groupings (`g:*`) for each of `all_grouping_names`: a copy of
-/// the settings of `g:*`.
+/// The settings of a cloze in all groupings (`g:*`) for each of `all_grouping_names`. A grouping
+/// the cloze names itself keeps its own settings, e.g. `g:*;hide:; g:1` is hidden in all groupings
+/// but grouping 1. Every other grouping is given a copy of the settings of `g:*`.
 fn expand_all_groupings(
+    grouping_settings: &[ClozeGroupingSettings],
     all_grouping_names: &[ClozeGrouping],
     all_groupings_settings: &ClozeGroupingSettings,
 ) -> Vec<ClozeGroupingSettings> {
     all_grouping_names
         .iter()
-        .map(|grouping| ClozeGroupingSettings {
-            grouping: grouping.clone(),
-            from_all_groupings: true,
-            ..all_groupings_settings.clone()
+        .map(|grouping| {
+            grouping_settings
+                .iter()
+                .find(|settings| settings.grouping == *grouping)
+                .cloned()
+                .unwrap_or_else(|| ClozeGroupingSettings {
+                    grouping: grouping.clone(),
+                    from_all_groupings: true,
+                    ..all_groupings_settings.clone()
+                })
         })
         .collect()
 }

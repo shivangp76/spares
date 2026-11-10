@@ -978,6 +978,18 @@ fn test_adding_grouping_all_cloze_keeps_card_orders() {
 }
 
 #[test]
+fn test_grouping_all_orders_written_before_are_read() {
+    // Notes written before kept a card's orders on its first cloze, even in all groupings
+    assert_eq!(
+        previous_orders(r"{{[g:*; o:1; g:1;o:2]a}}{{b}}{{[g:1]c}}"),
+        vec![
+            (ClozeGrouping::Custom("1".to_string()), Some(2)),
+            (ClozeGrouping::Auto(1), Some(1)),
+        ]
+    );
+}
+
+#[test]
 fn test_grouping_all_card_uids() {
     // A card is known by the uid of its own cloze, not that of the cloze in all groupings
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
@@ -993,5 +1005,48 @@ fn test_grouping_all_card_uids() {
             Some("bbbbbbbbbbbb".to_string()),
             Some("cccccccccccc".to_string())
         ]
+    );
+}
+
+#[test]
+fn test_grouping_all_keeps_own_grouping_settings() {
+    // A grouping a cloze in all groupings names itself has its own settings in place of those of
+    // `g:*`. They used to be replaced by those of `g:*`.
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let data = r"{{[g:1]a}}{{b}}{{[g:*;hide:; g:1;f:all]c}}";
+    assert_rewrites_to(data, r"{{[g:1;o:1;f:all]a}}{{[o:2]b}}{{[g:*;hide:; g:1]c}}");
+    let cards = get_cards(parser.as_ref(), None, data, true, MOVE_FILES).unwrap();
+    assert_eq!(cards[0].grouping, ClozeGrouping::Custom("1".to_string()));
+    assert_eq!(cards[0].front_conceal, FrontConceal::AllGroupings);
+    assert_eq!(cards[1].front_conceal, FrontConceal::OnlyGrouping);
+
+    // Hidden only in grouping 1
+    assert_rewrites_to(
+        r"{{[g:1]a}}{{b}}{{[g:*; g:1;hide:]c}}",
+        r"{{[g:1;o:1]a}}{{[o:2]b}}{{[g:*; g:1;hide:]c}}",
+    );
+    // Hidden in all groupings but grouping 1
+    let data = r"{{[g:1]a}}{{b}}{{[g:*;hide:; g:1]c}}";
+    assert_rewrites_to(data, r"{{[g:1;o:1]a}}{{[o:2]b}}{{[g:*;hide:; g:1]c}}");
+    let cards = get_cards(parser.as_ref(), None, data, true, MOVE_FILES).unwrap();
+    let c_part = |card: &CardData| {
+        card.data
+            .iter()
+            .find(|part| matches!(part, NotePart::ClozeData(text, _) if text == "c"))
+            .cloned()
+    };
+    assert_eq!(
+        c_part(&cards[0]),
+        Some(NotePart::ClozeData(
+            "c".to_string(),
+            ClozeHiddenReplacement::ToAnswer { hint: None }
+        ))
+    );
+    assert_eq!(
+        c_part(&cards[1]),
+        Some(NotePart::ClozeData(
+            "c".to_string(),
+            ClozeHiddenReplacement::NotToAnswer
+        ))
     );
 }
