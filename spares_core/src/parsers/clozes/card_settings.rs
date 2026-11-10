@@ -119,18 +119,28 @@ pub fn construct_cloze_string(
     let default = ClozeGroupingSettings::default(&mut 0, modify_defaults_fn);
     let mut all_grouping_parts: Vec<String> = Vec::new();
     let mut only_groups = Vec::new();
+    // Orders belong to a card, so they are never written on `g:*`, though notes written before
+    // kept them there (see `settings_cloze_position`)
+    let all_groupings_settings =
+        global_settings
+            .all_groupings
+            .as_ref()
+            .map(|settings| ClozeGroupingSettings {
+                orders: None,
+                ..settings.clone()
+            });
     let grouping_settings_with_all =
-        if let Some(ref all_groupings_settings) = global_settings.all_groupings {
+        if let Some(ref all_groupings_settings) = all_groupings_settings {
             std::iter::once(all_groupings_settings)
                 .chain(grouping_settings.iter())
                 .collect::<Vec<_>>()
         } else {
             grouping_settings.iter().collect::<Vec<_>>()
         };
-    for (
-        i,
-        ClozeGroupingSettings {
-            grouping,
+    // The settings of one grouping, without its `g:` key
+    let settings_parts = |settings: &ClozeGroupingSettings| {
+        let ClozeGroupingSettings {
+            grouping: _,
             inherit,
             orders,
             include_forward_card,
@@ -141,36 +151,10 @@ pub fn construct_cloze_string(
             back_reveal,
             back_emphasis,
             type_answer,
-            skip_serialization,
-        },
-    ) in grouping_settings_with_all.iter().enumerate()
-    {
-        if *skip_serialization {
-            continue;
-        }
-        // A cloze in all groupings is given one grouping per card (see `group_clozes`), each a
-        // copy of the settings of `g:*`. A copy that still matches them says nothing `g:*` does
-        // not. An `Auto` grouping is written without a grouping key, so it would only repeat the
-        // settings after `g:*`, once per card in the note, e.g. `g:*;hide:; hide:; hide:`.
-        if i > 0
-            && let Some(all_groupings_settings) = &global_settings.all_groupings
-            && grouping_settings_with_all[i].grouping != ClozeGrouping::All
-            && (ClozeGroupingSettings {
-                grouping: ClozeGrouping::All,
-                ..grouping_settings_with_all[i].clone()
-            }) == *all_groupings_settings
-        {
-            continue;
-        }
+            skip_serialization: _,
+            from_all_groupings: _,
+        } = settings;
         let mut grouping_parts: Vec<String> = Vec::new();
-        let parse_grouping = !matches!(grouping, ClozeGrouping::Auto(_));
-        if parse_grouping {
-            let grouping_str = grouping.to_parser_string(groupings_all);
-            grouping_parts.push(format!(
-                "{}{}{}",
-                cloze_settings_keys.grouping, settings_key_value_delim, grouping_str
-            ));
-        }
         if let Some(orders) = orders {
             grouping_parts.push(format!(
                 "{}{}{}",
@@ -253,6 +237,32 @@ pub fn construct_cloze_string(
                 source.order,
             ));
         }
+        grouping_parts
+    };
+    for (i, settings) in grouping_settings_with_all.iter().enumerate() {
+        if settings.skip_serialization {
+            continue;
+        }
+        let own_parts = settings_parts(settings);
+        // A cloze in all groupings is given one grouping per card (see `group_clozes`), each a
+        // copy of the settings of `g:*`, which says nothing `g:*` does not. An automatic grouping
+        // is written without a `g:` key, so writing them would only repeat the settings after
+        // `g:*`, once per card in the note, e.g. `g:*;hide:; hide:; hide:`. The card's own
+        // settings, such as its orders, are kept on another cloze (see `settings_cloze_position`).
+        if settings.from_all_groupings {
+            continue;
+        }
+        let grouping = &settings.grouping;
+        let mut grouping_parts: Vec<String> = Vec::new();
+        let parse_grouping = !matches!(grouping, ClozeGrouping::Auto(_));
+        if parse_grouping {
+            let grouping_str = grouping.to_parser_string(groupings_all);
+            grouping_parts.push(format!(
+                "{}{}{}",
+                cloze_settings_keys.grouping, settings_key_value_delim, grouping_str
+            ));
+        }
+        grouping_parts.extend(own_parts);
 
         // Push settings
         if parse_grouping && grouping_parts.len() == 1 && *grouping != ClozeGrouping::All {

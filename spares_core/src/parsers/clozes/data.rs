@@ -140,6 +140,9 @@ pub struct CardInheritance {
 pub struct ClozeGroupingSettings {
     /// Any unique string that is shared among all clozes that are meant to be a part of the same card. The special keyword `*` indicates this cloze is a part of all groups.
     /// If this is not specified, then the cloze will be in its own group. In other words, a card will be created for this cloze and the card will only contain this one cloze.
+    ///
+    /// The settings of a card, such as its orders, are kept on the clozes the card is made from
+    /// in its own right, not on a cloze in all groupings.
     pub grouping: ClozeGrouping,
     /// `inh:NOTE_ID/ORDER`: when the card produced by this cloze is *newly created*, copy SRS
     /// data from the card at the given note id and order, so it is scheduled as if it had been
@@ -252,6 +255,11 @@ pub struct ClozeGroupingSettings {
     /// Internal
     /// Will not serialize this grouping in the cloze settings string
     pub skip_serialization: bool,
+    /// Internal
+    /// Whether this is a copy of the settings of `g:*` for one of the note's groupings (see
+    /// `group_clozes`). A card's own settings, such as its orders, are never written on such a
+    /// copy, since it has no `g:` key of its own when its grouping is automatic.
+    pub from_all_groupings: bool,
 }
 
 #[derive(
@@ -515,6 +523,7 @@ impl ClozeGroupingSettings {
             back_emphasis: DEFAULT_BACK_EMPHASIS,
             type_answer: None,
             skip_serialization: false,
+            from_all_groupings: false,
         };
         if let Some((front_conceal, back_reveal, back_emphasis, type_answer)) = modify_defaults_fn {
             result.front_conceal = front_conceal;

@@ -283,6 +283,8 @@ fn test_get_cards_grouping_all_2() {
     // Tests:
     // 1. Grouping "*" specified first
     // 2. Grouping "*" and 1 is redundant, so it is truncated to just grouping "*"
+    // 3. The cards' orders are kept on the clozes the cards are made from in their own right, not
+    //    on the cloze in all groupings, which every card starts with
     let data = r"{{[g:*,1]a}}{{b}}{{[g:1]c}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
@@ -302,19 +304,19 @@ fn test_get_cards_grouping_all_2() {
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
-                    NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
+                    NotePart::ClozeStart("{{[g:*]".to_string()),
                     NotePart::ClozeData(
                         "a".to_string(),
                         ClozeHiddenReplacement::ToAnswer { hint: None },
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
-                    NotePart::ClozeStart("{{".to_string()),
+                    NotePart::ClozeStart("{{[o:1]".to_string()),
                     NotePart::ClozeData(
                         "b".to_string(),
                         ClozeHiddenReplacement::ToAnswer { hint: None },
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
-                    NotePart::SurroundingData("{{[g:1]c}}".to_string()),
+                    NotePart::SurroundingData("{{[g:1;o:2]c}}".to_string()),
                 ],
             },
             CardData {
@@ -330,14 +332,14 @@ fn test_get_cards_grouping_all_2() {
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
-                    NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
+                    NotePart::ClozeStart("{{[g:*]".to_string()),
                     NotePart::ClozeData(
                         "a".to_string(),
                         ClozeHiddenReplacement::ToAnswer { hint: None },
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
-                    NotePart::SurroundingData("{{b}}".to_string()),
-                    NotePart::ClozeStart("{{[g:1]".to_string()),
+                    NotePart::SurroundingData("{{[o:1]b}}".to_string()),
+                    NotePart::ClozeStart("{{[g:1;o:2]".to_string()),
                     NotePart::ClozeData(
                         "c".to_string(),
                         ClozeHiddenReplacement::ToAnswer { hint: None },
@@ -905,5 +907,91 @@ fn test_grouping_all_repeated_settings_are_cleaned_up() {
     assert_rewrites_to(
         r"{{a}}{{b}}{{[g:*;hide:; hide:; hide:; hide:; hide:]c}}",
         r"{{[o:1]a}}{{[o:2]b}}{{[g:*;hide:]c}}",
+    );
+}
+
+#[test]
+fn test_grouping_all_keeps_no_card_orders() {
+    // A cloze in all groupings that comes first in its cards used to keep their orders, written
+    // without `g:` keys, so they were read back as the orders of `g:*` for every card
+    assert_rewrites_to(
+        r"{{[g:*;hide:]c}}{{a}}{{b}}",
+        r"{{[g:*;hide:]c}}{{[o:1]a}}{{[o:2]b}}",
+    );
+    assert_rewrites_to(
+        r"{{a}}{{[g:*;hide:]b}}{{c}}{{[g:*;hide:]d}}",
+        r"{{[o:1]a}}{{[g:*;hide:]b}}{{[o:2]c}}{{[g:*;hide:]d}}",
+    );
+    // `g:*,1` is the same as `g:*`
+    assert_rewrites_to(r"{{[g:*,1]a}}{{b}}", r"{{[g:*]a}}{{[o:1]b}}");
+    // Orders notes written before kept on `g:*` move to the cards' own clozes
+    assert_rewrites_to(
+        r"{{[g:*;hide:; o:1;hide:; o:2;hide:]c}}{{a}}{{b}}",
+        r"{{[g:*;hide:]c}}{{[o:1]a}}{{[o:2]b}}",
+    );
+    assert_rewrites_to(
+        r"{{[g:*;o:2;hide:]c}}{{a}}{{b}}",
+        r"{{[g:*;hide:]c}}{{[o:1]a}}{{[o:2]b}}",
+    );
+    assert_rewrites_to(
+        r"{{[g:*,1;hide:]a}}{{b}}{{[g:1]c}}",
+        r"{{[g:*;hide:]a}}{{[o:1]b}}{{[g:1;o:2]c}}",
+    );
+}
+
+#[test]
+fn test_grouping_all_keeps_no_card_settings() {
+    // `r:` used to move onto the cloze in all groupings, so all of its cards were reversed and
+    // the note could not be read again
+    assert_rewrites_to(
+        r"{{[g:*;hide:]c}}{{[r:]a}}{{b}}",
+        r"{{[g:*;hide:]c}}{{[o:1,2;r:]a}}{{[o:3]b}}",
+    );
+    // The settings of `g:*` are kept for all groupings, and its cards' clozes repeat them
+    assert_rewrites_to(
+        r"{{[g:*;hide:;f:all;b:a]c}}{{a}}{{b}}",
+        r"{{[g:*;hide:;f:all;b:a]c}}{{[o:1;f:all;b:a]a}}{{[o:2;f:all;b:a]b}}",
+    );
+}
+
+/// The previous orders of a note's cards, by grouping
+fn previous_orders(data: &str) -> Vec<(ClozeGrouping, Option<usize>)> {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    get_cards(parser.as_ref(), None, data, false, MOVE_FILES)
+        .unwrap()
+        .into_iter()
+        .map(|card| (card.grouping, card.previous_order))
+        .collect()
+}
+
+#[test]
+fn test_adding_grouping_all_cloze_keeps_card_orders() {
+    // A cloze in all groupings added before a note's clozes is first in all of its cards. It used
+    // to be read for their orders, which it has none of, so all of the cards were made anew.
+    assert_eq!(
+        previous_orders(r"{{[g:*;hide:]t}}{{[o:1]a}}{{[o:2]b}}"),
+        vec![
+            (ClozeGrouping::Auto(1), Some(1)),
+            (ClozeGrouping::Auto(2), Some(2)),
+        ]
+    );
+}
+
+#[test]
+fn test_grouping_all_card_uids() {
+    // A card is known by the uid of its own cloze, not that of the cloze in all groupings
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let data = r"{{[id:aaaaaaaaaaaa;g:*;hide:]a}}{{[id:bbbbbbbbbbbb]b}}{{[id:cccccccccccc]c}}";
+    let uids = get_cards(parser.as_ref(), None, data, false, MOVE_FILES)
+        .unwrap()
+        .into_iter()
+        .map(|card| card.cloze_uid.map(|uid| uid.to_string()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        uids,
+        vec![
+            Some("bbbbbbbbbbbb".to_string()),
+            Some("cccccccccccc".to_string())
+        ]
     );
 }
