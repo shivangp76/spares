@@ -1606,3 +1606,57 @@ fn test_typst_image_occlusion_keeps_all_groupings_in_svg() {
     std::fs::remove_file(clozes_filepath).unwrap();
     std::fs::remove_file(original_image_filepath).unwrap();
 }
+
+/// An image occlusion cloze with `g:*;hide:` keeps exactly that in its clozes SVG. `g:*` is
+/// expanded into one grouping per card when the note is parsed, and writing each expansion back
+/// left a keyless `; hide:` per card, e.g. `g:*;hide:; hide:; hide:; hide:` for 3 cards.
+#[test]
+fn test_image_occlusion_all_groupings_not_repeated_per_card() {
+    use crate::parsers::ConstructImageOcclusionType;
+    use crate::parsers::impls::typst::TypstParser;
+
+    let dir = get_image_occlusion_directory();
+    let original_image_filepath = dir.join("test-all-groupings-repeated.png");
+    image::RgbaImage::from_pixel(100, 80, image::Rgba([249, 115, 22, 255]))
+        .save(&original_image_filepath)
+        .unwrap();
+    let clozes_filepath = dir.join("test-all-groupings-repeated_clozes.svg");
+    std::fs::write(
+        &clozes_filepath,
+        indoc! { r##"<?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="100" height="80">
+          <g class="layer" id="markup-group">
+            <title>Markup</title>
+          </g>
+          <g class="layer" id="clozes-group">
+            <title>Clozes</title>
+            <rect fill="#FFEBA2" height="10" width="30" y="0" id="svg_1" x="10" data-cloze-settings="" />
+            <rect fill="#FFEBA2" height="10" width="30" y="20" id="svg_2" x="10" data-cloze-settings="" />
+            <rect fill="#FFEBA2" height="10" width="30" y="40" id="svg_3" x="10" data-cloze-settings="g:*;hide:" />
+          </g>
+        </svg>"##},
+    )
+    .unwrap();
+    let parser = TypstParser::new();
+    let image_occlusion = parser.construct_image_occlusion(
+        &ImageOcclusionData {
+            original_image_filepath: original_image_filepath.clone(),
+            clozes_filepath: clozes_filepath.clone(),
+            front_conceal: FrontConceal::AllGroupings,
+            back_reveal: BackReveal::OnlyAnswered,
+            back_emphasis: true,
+        },
+        ConstructImageOcclusionType::Note,
+    );
+    let note_data = format!("a #cl[b] c\n\n{image_occlusion}\n");
+
+    // The settings must stay the same however often cards are made
+    for _ in 0..3 {
+        let cards = get_cards(&parser, None, &note_data, true, MOVE_FILES).unwrap();
+        assert_eq!(cards.len(), 3);
+        let svg = read_to_string(&clozes_filepath).unwrap();
+        assert!(svg.contains(r#"data-cloze-settings="g:*;hide:""#), "{svg}");
+    }
+    std::fs::remove_file(clozes_filepath).unwrap();
+    std::fs::remove_file(original_image_filepath).unwrap();
+}

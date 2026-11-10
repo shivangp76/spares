@@ -148,6 +148,20 @@ pub fn construct_cloze_string(
         if *skip_serialization {
             continue;
         }
+        // A cloze in all groupings is given one grouping per card (see `group_clozes`), each a
+        // copy of the settings of `g:*`. A copy that still matches them says nothing `g:*` does
+        // not. An `Auto` grouping is written without a grouping key, so it would only repeat the
+        // settings after `g:*`, once per card in the note, e.g. `g:*;hide:; hide:; hide:`.
+        if i > 0
+            && let Some(all_groupings_settings) = &global_settings.all_groupings
+            && grouping_settings_with_all[i].grouping != ClozeGrouping::All
+            && (ClozeGroupingSettings {
+                grouping: ClozeGrouping::All,
+                ..grouping_settings_with_all[i].clone()
+            }) == *all_groupings_settings
+        {
+            continue;
+        }
         let mut grouping_parts: Vec<String> = Vec::new();
         let parse_grouping = !matches!(grouping, ClozeGrouping::Auto(_));
         if parse_grouping {

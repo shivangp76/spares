@@ -502,7 +502,7 @@ fn test_get_cards_grouping_all_4() {
     // let data_1 = r"a{{[g:1]b}}c{{a}}{{[g:*;r:]f}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let (new_data, _) = add_order_to_note_data(parser.as_ref(), data_1, None).unwrap();
-    assert!(new_data.contains("g:*;hide:;"));
+    assert!(new_data.contains("{{[g:*;hide:]f}}"), "{new_data}");
     let data = r"a{{[g:1]b}}c{{d}}{{[g:*;hide:]f}}";
     let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
     assert!(cards_res.is_ok());
@@ -529,7 +529,7 @@ fn test_get_cards_grouping_all_4() {
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
                     NotePart::SurroundingData("c{{[o:2]d}}".to_string()),
-                    NotePart::ClozeStart("{{[g:*;hide:; g:1;hide:; hide:]".to_string()),
+                    NotePart::ClozeStart("{{[g:*;hide:]".to_string()),
                     NotePart::ClozeData("f".to_string(), ClozeHiddenReplacement::NotToAnswer),
                     NotePart::ClozeEnd("}}".to_string()),
                 ],
@@ -554,7 +554,7 @@ fn test_get_cards_grouping_all_4() {
                         ClozeHiddenReplacement::ToAnswer { hint: None },
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
-                    NotePart::ClozeStart("{{[g:*;hide:; g:1;hide:; hide:]".to_string()),
+                    NotePart::ClozeStart("{{[g:*;hide:]".to_string()),
                     NotePart::ClozeData("f".to_string(), ClozeHiddenReplacement::NotToAnswer),
                     NotePart::ClozeEnd("}}".to_string()),
                 ],
@@ -858,4 +858,52 @@ fn test_get_cards_grouping_multiple_times() {
         ];
         assert_eq!(cards, expected);
     }
+}
+
+/// Writes `data` back twice and checks that the first pass gives `expected` and the second
+/// changes neither the note nor its cards. Only the cards' previous orders differ, since the
+/// second pass reads the orders the first one wrote.
+fn assert_rewrites_to(data: &str, expected: &str) {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let (new_data, mut cards) = add_order_to_note_data(parser.as_ref(), data, None).unwrap();
+    assert_eq!(new_data, expected);
+    let (newer_data, mut newer_cards) =
+        add_order_to_note_data(parser.as_ref(), &new_data, None).unwrap();
+    assert_eq!(newer_data, expected);
+    for card in cards.iter_mut().chain(newer_cards.iter_mut()) {
+        card.previous_order = None;
+    }
+    assert_eq!(newer_cards, cards);
+}
+
+#[test]
+fn test_grouping_all_not_repeated_per_card() {
+    // Each card used to add a keyless `; hide:`, one per grouping `g:*` was expanded into
+    assert_rewrites_to(
+        r"{{a}}{{b}}{{[g:*;hide:]c}}",
+        r"{{[o:1]a}}{{[o:2]b}}{{[g:*;hide:]c}}",
+    );
+    assert_rewrites_to(r"{{a}}{{[g:*;hide:]c}}", r"{{[o:1]a}}{{[g:*;hide:]c}}");
+    assert_rewrites_to(
+        r"{{a}}{{b}}{{[h:x;g:*;hide:]c}}",
+        r"{{[o:1]a}}{{[o:2]b}}{{[h:x;g:*;hide:]c}}",
+    );
+}
+
+#[test]
+fn test_grouping_all_drops_grouping_with_same_settings() {
+    // `g:1;hide:` says nothing that `g:*;hide:` does not
+    assert_rewrites_to(
+        r"{{[g:1]a}}{{b}}{{[g:*;hide:; g:1;hide:]c}}",
+        r"{{[g:1;o:1]a}}{{[o:2]b}}{{[g:*;hide:]c}}",
+    );
+}
+
+#[test]
+fn test_grouping_all_repeated_settings_are_cleaned_up() {
+    // Notes written before the fix repeated the settings of `g:*` once per card
+    assert_rewrites_to(
+        r"{{a}}{{b}}{{[g:*;hide:; hide:; hide:; hide:; hide:]c}}",
+        r"{{[o:1]a}}{{[o:2]b}}{{[g:*;hide:]c}}",
+    );
 }
