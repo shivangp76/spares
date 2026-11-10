@@ -835,6 +835,21 @@ pub struct SparesExternalConfig {
     /// due, at most 10 new cards are shown, however high [`Self::new_cards_daily_limit`] is, so
     /// a backlog of reviews stops new cards from adding to it.
     pub new_cards_ignore_review_limit: bool,
+    /// The hour, 0 to 23, at which a new day of study starts, in local time. Defaults to 4, as
+    /// Anki's "Next day starts at" does, so that reviews late at night still count for the day
+    /// they belong to: with the default, a review at 1 AM counts for the day before.
+    ///
+    /// Everything that goes by days uses it: the daily limits, what is due today, burying siblings
+    /// until the next day, the random orders that change each day, the days of
+    /// [load balancing](Self::load_balance) and [easy days](Self::easy_days), the days between
+    /// reviews that the FSRS optimizer learns from, statistics and the review heatmap, and `today`
+    /// and dates in searches (`created_at=2026-10-17` is from 4 AM that day to 4 AM the day
+    /// after). Hours in statistics stay the hours of the clock.
+    ///
+    /// A card is due at the time of day it was last reviewed, a whole number of days later, so its
+    /// due day moves with this setting just like the day of its review. Changing it during the
+    /// day can unbury the cards buried today early, or leave them buried until the next day.
+    pub day_starts_at: u8,
     pub flagged_tag_name: String,
     /// The tag of notes that are never shared: `spares note export --share` leaves out the notes
     /// with it or a tag under it, such as `private:health`. Defaults to `"private"`.
@@ -897,6 +912,7 @@ impl Default for SparesExternalConfig {
             new_cards_daily_limit: 20,
             reviews_daily_limit: u32::MAX,
             new_cards_ignore_review_limit: false,
+            day_starts_at: 4,
             flagged_tag_name: "flagged".to_string(),
             private_tag_name: "private".to_string(),
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
@@ -929,6 +945,12 @@ impl SparesExternalConfig {
     pub(crate) fn validate(&mut self) -> Result<(), String> {
         validate_steps("learning_steps", &self.learning_steps)?;
         validate_steps("relearning_steps", &self.relearning_steps)?;
+        if self.day_starts_at > 23 {
+            return Err(format!(
+                "`day_starts_at` must be an hour from 0 to 23, not {}.",
+                self.day_starts_at
+            ));
+        }
         for (name, preset) in &self.queue.presets {
             let key = |setting: &str| format!("queue.presets.{name}.{setting}");
             if preset.tags.is_empty() {

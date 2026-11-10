@@ -51,7 +51,6 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Datelike;
-use chrono::Local;
 use chrono::NaiveDate;
 use chrono::Utc;
 use rand::Rng;
@@ -61,8 +60,8 @@ use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use crate::Error;
+use crate::api::statistics::local_time::Zone;
 use crate::config::SparesExternalConfig;
-use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::NoteId;
@@ -73,17 +72,12 @@ use crate::schedulers::state_ids_sql;
 use crate::schedulers::state_role;
 use crate::schema::review::StateRole;
 
-/// Converts an instant to the calendar day it falls on for the user.
-pub type LocalDate = fn(DateTime<Utc>) -> NaiveDate;
-
-fn local_date(instant: DateTime<Utc>) -> NaiveDate {
-    instant.with_timezone(&Local).date_naive()
-}
-
 /// The due dates that new placements must take into account.
 #[derive(Debug)]
 pub struct PlacementContext {
-    local_date: LocalDate,
+    /// The days cards are placed on, which start at
+    /// [`SparesExternalConfig::day_starts_at`].
+    zone: Zone,
     today: NaiveDate,
     /// Every card in review that competes for days, with its note and due date.
     cards: HashMap<CardId, (NoteId, DateTime<Utc>)>,
@@ -92,18 +86,22 @@ pub struct PlacementContext {
 }
 
 impl PlacementContext {
-    pub fn new(local_date: LocalDate, at: DateTime<Utc>) -> Self {
+    pub(crate) fn new(zone: Zone, at: DateTime<Utc>) -> Self {
         Self {
-            local_date,
-            today: local_date(at),
+            zone,
+            today: zone.date(at),
             cards: HashMap::new(),
             due_counts: HashMap::new(),
         }
     }
 
     /// Loads every card that competes for days.
-    pub async fn load_all(db: &SqlitePool, at: DateTime<Utc>) -> Result<Self, Error> {
-        Self::load(db, at, None, None).await
+    pub async fn load_all(
+        db: &SqlitePool,
+        at: DateTime<Utc>,
+        day_starts_at: u8,
+    ) -> Result<Self, Error> {
+        Self::load(db, Zone::server(day_starts_at), at, None, None).await
     }
 
     /// Loads what is needed to place `card` on one of `candidates`: the cards due on those days
@@ -113,22 +111,25 @@ impl PlacementContext {
         at: DateTime<Utc>,
         card: &Card,
         candidates: &[DateTime<Utc>],
+        day_starts_at: u8,
     ) -> Result<Self, Error> {
+        let zone = Zone::server(day_starts_at);
         let (Some(first), Some(last)) = (candidates.iter().min(), candidates.iter().max()) else {
-            return Ok(Self::new(local_date, at));
+            return Ok(Self::new(zone, at));
         };
         // Overdue cards count towards today, so a window that reaches today must include them.
-        let from = if local_date(*first) <= local_date(at) {
+        let from = if zone.date(*first) <= zone.date(at) {
             DateTime::<Utc>::MIN_UTC
         } else {
-            get_start_end_local_date(first).0
+            zone.bounds(*first).0
         };
-        let to = get_start_end_local_date(last).1;
-        Self::load(db, at, Some((from, to)), Some(card.note_id)).await
+        let to = zone.bounds(*last).1;
+        Self::load(db, zone, at, Some((from, to)), Some(card.note_id)).await
     }
 
     async fn load(
         db: &SqlitePool,
+        zone: Zone,
         at: DateTime<Utc>,
         due_between: Option<(DateTime<Utc>, DateTime<Utc>)>,
         note_id: Option<NoteId>,
@@ -152,7 +153,7 @@ impl PlacementContext {
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-        let mut context = Self::new(local_date, at);
+        let mut context = Self::new(zone, at);
         for (card_id, note_id, due) in rows {
             let due = DateTime::from_timestamp(due, 0).unwrap_or(DateTime::<Utc>::MIN_UTC);
             context.insert(card_id, note_id, due);
@@ -161,7 +162,7 @@ impl PlacementContext {
     }
 
     fn day_of(&self, due: DateTime<Utc>) -> NaiveDate {
-        (self.local_date)(due).max(self.today)
+        self.zone.date(due).max(self.today)
     }
 
     pub fn insert(&mut self, card_id: CardId, note_id: NoteId, due: DateTime<Utc>) {
@@ -313,7 +314,8 @@ pub async fn place_due(
         [] => Ok(card.due),
         [only] => Ok(*only),
         _ => {
-            let mut context = PlacementContext::load_for(db, at, card, &candidates).await?;
+            let mut context =
+                PlacementContext::load_for(db, at, card, &candidates, config.day_starts_at).await?;
             Ok(context.place(config, card, &candidates, &mut rand::rng()))
         }
     }
@@ -334,6 +336,11 @@ mod tests {
 
     fn utc_date(instant: DateTime<Utc>) -> NaiveDate {
         instant.date_naive()
+    }
+
+    /// Days from midnight UTC, which [`utc_date`] gives.
+    fn utc() -> Zone {
+        Zone::parse(Some("UTC"), 0).unwrap()
     }
 
     /// Noon on 2024-01-01 (a Monday) plus `days`.
@@ -366,7 +373,7 @@ mod tests {
     }
 
     fn context() -> PlacementContext {
-        PlacementContext::new(utc_date, day(0))
+        PlacementContext::new(utc(), day(0))
     }
 
     /// Places `card` `runs` times and returns how often each candidate was chosen.
@@ -527,7 +534,7 @@ mod tests {
 
         // A vacation day outranks a sibling: only the sibling constraint is dropped.
         config.easy_days.specific_dates = [utc_date(day(10))].into();
-        let mut context = PlacementContext::new(utc_date, day(0));
+        let mut context = PlacementContext::new(utc(), day(0));
         context.insert(2, note(1), day(11));
         context.insert(3, note(1), day(12));
         let chosen = histogram(&mut context, &config, &card(1, 1), &candidates, 300);

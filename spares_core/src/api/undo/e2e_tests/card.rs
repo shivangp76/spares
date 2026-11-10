@@ -1018,7 +1018,9 @@ async fn e2e_daily_unbury_is_skipped_by_plain_undo_and_redo(pool: SqlitePool) {
         .execute(&pool)
         .await
         .unwrap();
-    unbury_cards_and_update_config(&pool).await.unwrap();
+    unbury_cards_and_update_config(&pool, &crate::config::read_external_config().unwrap())
+        .await
+        .unwrap();
     assert_eq!(special_state().await, None);
     let unbury_id: i64 = sqlx::query_scalar("SELECT id FROM event WHERE kind = ?")
         .bind(EventType::DailyUnbury)

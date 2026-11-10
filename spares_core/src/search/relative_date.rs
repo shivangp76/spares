@@ -24,7 +24,9 @@ pub(crate) struct RelativeDate {
 pub(crate) enum Anchor {
     Note(NoteId, DateColumn),
     Card(CardId, DateColumn),
-    /// The start of the current local day.
+    /// The start of the current day, which starts at
+    /// [`SparesExternalConfig::day_starts_at`](crate::config::SparesExternalConfig::day_starts_at)
+    /// in local time.
     Today,
     Now,
 }
@@ -114,8 +116,10 @@ impl RelativeDate {
         Some(next)
     }
 
-    /// An SQL expression for the date as Unix time, matching how dates are stored.
-    pub(crate) fn to_sql(&self) -> String {
+    /// An SQL expression for the date as Unix time, matching how dates are stored. `today` is the
+    /// start of the day that is under way, with days starting `day_starts_at` hours after local
+    /// midnight.
+    pub(crate) fn to_sql(&self, day_starts_at: u8) -> String {
         let reference = |table: &str, column: DateColumn, id: i64| {
             format!("(SELECT {} FROM {table} WHERE id = {id})", column.name())
         };
@@ -135,14 +139,20 @@ impl RelativeDate {
                 }
                 (vec![sql, "'unixepoch'".to_string()], false)
             }
-            Anchor::Today => (
-                vec![
-                    "'now'".to_string(),
-                    "'localtime'".to_string(),
-                    "'start of day'".to_string(),
-                ],
-                true,
-            ),
+            Anchor::Today => {
+                let mut args = vec!["'now'".to_string(), "'localtime'".to_string()];
+                if day_starts_at == 0 {
+                    args.push("'start of day'".to_string());
+                } else {
+                    // Before the day's start, the day under way began on the date before.
+                    args.extend([
+                        format!("'-{day_starts_at} hours'"),
+                        "'start of day'".to_string(),
+                        format!("'+{day_starts_at} hours'"),
+                    ]);
+                }
+                (args, true)
+            }
             Anchor::Now => (vec!["'now'".to_string()], false),
         };
         for offset in &self.offsets {
@@ -176,15 +186,31 @@ impl RelativeDate {
     }
 }
 
-/// An SQL expression for the start of the local day `days` days after `date`, as Unix time.
-pub(crate) fn local_day_start_sql(date: NaiveDate, days: i64) -> String {
-    format!("(SELECT CAST(strftime('%s', '{date}', '{days:+} days', 'utc') AS INTEGER))")
+/// An SQL expression for the start of the day `days` days after `date`, as Unix time, with days
+/// starting `day_starts_at` hours after local midnight.
+pub(crate) fn local_day_start_sql(date: NaiveDate, days: i64, day_starts_at: u8) -> String {
+    format!(
+        "(SELECT CAST(strftime('%s', '{date}', '{days:+} days'{}, 'utc') AS INTEGER))",
+        hours_sql(day_starts_at)
+    )
 }
 
-/// An SQL expression for the start of the local month `months` months after the month starting on
-/// `month`, as Unix time.
-pub(crate) fn local_month_start_sql(month: NaiveDate, months: i64) -> String {
-    format!("(SELECT CAST(strftime('%s', '{month}', '{months:+} months', 'utc') AS INTEGER))")
+/// The `strftime` argument that moves midnight to the start of a day, if it is not midnight.
+fn hours_sql(day_starts_at: u8) -> String {
+    if day_starts_at == 0 {
+        String::new()
+    } else {
+        format!(", '+{day_starts_at} hours'")
+    }
+}
+
+/// An SQL expression for the start of the month `months` months after the month starting on
+/// `month`, as Unix time: the start of its first day (see [`local_day_start_sql`]).
+pub(crate) fn local_month_start_sql(month: NaiveDate, months: i64, day_starts_at: u8) -> String {
+    format!(
+        "(SELECT CAST(strftime('%s', '{month}', '{months:+} months'{}, 'utc') AS INTEGER))",
+        hours_sql(day_starts_at)
+    )
 }
 
 impl fmt::Display for RelativeDate {
@@ -355,8 +381,29 @@ mod tests {
     }
 
     #[test]
+    fn today_starts_at_the_hour_days_start() {
+        let sql = |input| RelativeDate::parse(input).unwrap().to_sql(4);
+        assert_eq!(
+            sql("today"),
+            "(SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', 'utc') AS INTEGER))"
+        );
+        assert_eq!(
+            sql("today-1d+2h"),
+            "(SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', '-1 days', 'utc', '+2 hours') AS INTEGER))"
+        );
+        assert_eq!(
+            local_day_start_sql(NaiveDate::from_ymd_opt(2026, 10, 17).unwrap(), 1, 4),
+            "(SELECT CAST(strftime('%s', '2026-10-17', '+1 days', '+4 hours', 'utc') AS INTEGER))"
+        );
+        assert_eq!(
+            local_month_start_sql(NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(), 1, 0),
+            "(SELECT CAST(strftime('%s', '2026-10-01', '+1 months', 'utc') AS INTEGER))"
+        );
+    }
+
+    #[test]
     fn compiles_to_sql() {
-        let sql = |input| RelativeDate::parse(input).unwrap().to_sql();
+        let sql = |input| RelativeDate::parse(input).unwrap().to_sql(0);
         assert_eq!(
             sql("note[gir].created_at"),
             "(SELECT created_at FROM note WHERE id = 76967537148)"

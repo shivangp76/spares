@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Datelike;
-use chrono::Local;
 use chrono::Utc;
 use indoc::formatdoc;
 use itertools::Itertools;
@@ -28,6 +27,7 @@ use crate::config::QueueConfig;
 use crate::config::QueuePreset;
 use crate::config::ReviewOrder;
 use crate::config::SparesExternalConfig;
+use crate::helpers::study_date;
 use crate::model::CardId;
 use crate::model::SpecialState;
 use crate::model::StateId;
@@ -112,9 +112,9 @@ fn desc(expr: impl Into<String>) -> Key {
 /// mixes them, and is still one-to-one, as 5 does not divide `p - 1`. The multiplier and offset
 /// come from a hash of the day, so the next day's have nothing in common with today's. Products
 /// stay below 2^40, so they cannot overflow.
-fn daily_hash(id_expr: &str, now: DateTime<Utc>) -> String {
+fn daily_hash(id_expr: &str, now: DateTime<Utc>, day_starts_at: u8) -> String {
     const PRIME: u64 = 1_000_003;
-    let day = now.with_timezone(&Local).date_naive().num_days_from_ce();
+    let day = study_date(now, day_starts_at).num_days_from_ce();
     let seed = splitmix64(u64::from(day.unsigned_abs()));
     let multiplier = seed % (PRIME - 1) + 1;
     let offset = (seed >> 32) % PRIME;
@@ -158,20 +158,20 @@ fn review_keys(config: &SparesExternalConfig, order: ReviewOrder, now: DateTime<
         ))],
         ReviewOrder::DifficultyDescending => vec![desc("c.difficulty")],
         ReviewOrder::DifficultyAscending => vec![asc("c.difficulty")],
-        ReviewOrder::Random => vec![asc(daily_hash("c.id", now))],
+        ReviewOrder::Random => vec![asc(daily_hash("c.id", now, config.day_starts_at))],
         ReviewOrder::NoteCreated => vec![asc("n.created_at"), asc("n.id"), asc("c.due")],
     }
 }
 
-fn new_keys(order: NewCardOrder, now: DateTime<Utc>) -> Vec<Key> {
+fn new_keys(order: NewCardOrder, now: DateTime<Utc>, day_starts_at: u8) -> Vec<Key> {
     match order {
         NewCardOrder::Created => vec![asc("n.created_at"), asc("n.id"), asc("c.\"order\"")],
         NewCardOrder::NewestFirst => {
             vec![desc("n.created_at"), desc("n.id"), asc("c.\"order\"")]
         }
-        NewCardOrder::Random => vec![asc(daily_hash("c.id", now))],
+        NewCardOrder::Random => vec![asc(daily_hash("c.id", now, day_starts_at))],
         NewCardOrder::RandomNote => vec![
-            asc(daily_hash("n.id", now)),
+            asc(daily_hash("n.id", now, day_starts_at)),
             asc("n.id"),
             asc("c.\"order\""),
         ],
@@ -297,7 +297,7 @@ pub(crate) fn queue_order_by(
             &config.presets,
             config.new_order,
             |preset| preset.new_order,
-            |order| new_keys(order, now),
+            |order| new_keys(order, now, external_config.day_starts_at),
         ),
     );
     within_kind.extend(only(
@@ -584,6 +584,7 @@ pub(crate) async fn ordered_queue(
 #[cfg(test)]
 pub(crate) mod tests {
     use chrono::Duration;
+    use chrono::Local;
     use sqlx::SqlitePool;
 
     use super::*;
@@ -599,6 +600,12 @@ pub(crate) mod tests {
     pub(crate) const LEARNING: i64 = 1;
     pub(crate) const REVIEW: i64 = 2;
     pub(crate) const RELEARNING: i64 = 3;
+
+    /// The hour days start at in tests: the default
+    /// [`SparesExternalConfig::day_starts_at`].
+    pub(crate) fn day_starts_at() -> u8 {
+        SparesExternalConfig::default().day_starts_at
+    }
 
     /// Noon today, local time, for tests that need hours of today on either side of now, which
     /// `Utc::now()` doesn't have late in the evening or just after midnight.
@@ -1164,6 +1171,51 @@ mod daily_limit_tests {
         );
     }
 
+    /// A review after midnight counts for the day before, until the hour days start at.
+    #[sqlx::test]
+    async fn a_review_before_the_day_starts_counts_for_the_day_before(pool: SqlitePool) {
+        use chrono::Local;
+        use chrono::TimeZone;
+
+        let today = Local::now().date_naive();
+        let at = |date: chrono::NaiveDate, hour: u32| {
+            Local
+                .from_local_datetime(&date.and_hms_opt(hour, 0, 0).unwrap())
+                .earliest()
+                .unwrap()
+                .to_utc()
+        };
+        let yesterday = today.pred_opt().unwrap();
+        let ids = create_cards(&pool, 1, at(today, 12) - Duration::days(30)).await;
+        set_card(
+            &pool,
+            ids[0],
+            REVIEW,
+            at(today, 12) + Duration::days(5),
+            5.0,
+            5.0,
+        )
+        .await;
+        add_review(&pool, ids[0], at(today, 1), REVIEW).await;
+        let reviews_left = async |day_starts_at: u8, now: DateTime<Utc>| {
+            let config = SparesExternalConfig {
+                day_starts_at,
+                ..limits(10, 5, true)
+            };
+            daily_limits_left_with(&pool, &config, now)
+                .await
+                .unwrap()
+                .reviews
+        };
+        // Days starting at 4 AM: the review at 1 AM is one of yesterday's
+        assert_eq!(reviews_left(4, at(yesterday, 23)).await, 4);
+        assert_eq!(reviews_left(4, at(today, 3)).await, 4);
+        assert_eq!(reviews_left(4, at(today, 5)).await, 5);
+        // Days starting at midnight: it is one of today's
+        assert_eq!(reviews_left(0, at(yesterday, 23)).await, 5);
+        assert_eq!(reviews_left(0, at(today, 5)).await, 4);
+    }
+
     /// The counts of what is left show no more than today's limits leave room for, and the time
     /// estimate shrinks with them.
     #[sqlx::test]
@@ -1191,6 +1243,7 @@ mod daily_limit_tests {
                 where_clause: "c.due <= ?".to_string(),
                 is_filtered_tag: false,
                 card_due_limit: now,
+                day_starts_at: super::tests::day_starts_at(),
                 caps,
                 preset_sql: "NULL".to_string(),
                 held_back_clause: None,
@@ -1584,7 +1637,7 @@ mod linked_note_tests {
         now: DateTime<Utc>,
         query_card_ids: Option<&str>,
     ) -> String {
-        let (_, card_due_limit) = get_start_end_local_date(&now);
+        let (_, card_due_limit) = get_start_end_local_date(&now, super::tests::day_starts_at());
         format!(
             "c.special_state IS NULL AND c.due <= ?{}",
             linked_notes_clause(config, card_due_limit, query_card_ids)
@@ -1598,7 +1651,7 @@ mod linked_note_tests {
         now: DateTime<Utc>,
         query_card_ids: Option<&str>,
     ) -> Vec<CardId> {
-        let (_, card_due_limit) = get_start_end_local_date(&now);
+        let (_, card_due_limit) = get_start_end_local_date(&now, super::tests::day_starts_at());
         sqlx::query_scalar(AssertSqlSafe(format!(
             "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
             where_clause(config, now, query_card_ids)
@@ -1775,12 +1828,13 @@ mod linked_note_tests {
         let shown = shown(&pool, &config, now).await;
         assert_eq!(shown, [a, b, d]);
 
-        let (_, card_due_limit) = get_start_end_local_date(&now);
+        let (_, card_due_limit) = get_start_end_local_date(&now, super::tests::day_starts_at());
         let filter = ReviewFilterQuery {
             cards: cards_with_preset(&IndexMap::new()),
             where_clause: where_clause(&config, now, None),
             is_filtered_tag: false,
             card_due_limit,
+            day_starts_at: super::tests::day_starts_at(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: None,
@@ -1812,7 +1866,7 @@ mod linked_note_tests {
         let matching = async |config: &QueueConfig, value: &str| -> Vec<CardId> {
             sqlx::query_scalar(AssertSqlSafe(format!(
                 "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
-                waiting_on_links_condition(config, value)
+                waiting_on_links_condition(config, super::tests::day_starts_at(), value)
             )))
             .fetch_all(&pool)
             .await
@@ -2194,7 +2248,7 @@ mod reschedule_tests {
         let history = get_review_history(&pool, ReviewHistoryRequest::default())
             .await
             .unwrap();
-        let today = now.with_timezone(&Local).date_naive();
+        let today = study_date(now, super::tests::day_starts_at());
         assert_eq!(history.cram_count_by_date.get(&today), Some(&2));
         assert_eq!(history.review_count_by_date.values().sum::<u32>(), 2);
 

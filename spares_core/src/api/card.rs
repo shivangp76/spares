@@ -1175,9 +1175,8 @@ mod forget_tests {
 
     #[sqlx::test]
     async fn review_history_counts_reviews_per_day(pool: SqlitePool) {
-        use chrono::Local;
-
         use crate::api::statistics::get_review_history;
+        use crate::helpers::study_date;
         use crate::schema::review::ReviewHistoryRequest;
 
         let card_id = create_single_card(&pool).await;
@@ -1191,7 +1190,8 @@ mod forget_tests {
         let history = get_review_history(&pool, ReviewHistoryRequest::default())
             .await
             .unwrap();
-        let local_date = |at: DateTime<Utc>| at.with_timezone(&Local).date_naive();
+        let local_date =
+            |at: DateTime<Utc>| study_date(at, crate::api::queue::tests::day_starts_at());
         assert_eq!(history.review_count_by_date.len(), 2);
         assert_eq!(history.review_count_by_date[&local_date(earlier)], 1);
         // Forgetting is not a review

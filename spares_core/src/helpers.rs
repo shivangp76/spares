@@ -6,14 +6,14 @@ use std::sync::OnceLock;
 
 use chrono::DateTime;
 use chrono::Duration;
-use chrono::Local;
-use chrono::TimeZone;
+use chrono::NaiveDate;
 use chrono::Utc;
 use indexmap::IndexMap;
 use serde_json::Value;
 
 #[cfg(test)]
 use crate::DelimiterErrorKind;
+use crate::api::statistics::local_time::Zone;
 pub(crate) use crate::collection::run_blocking;
 
 /// Converts a JSON Value (expected to be an array of strings) to a Vec<String>.
@@ -79,28 +79,20 @@ pub fn value_to_string_vec(value: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub fn get_start_end_local_date(requested_date: &DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
-    let lower_limit = Local
-        .from_local_datetime(
-            &requested_date
-                .with_timezone(&Local)
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
-        )
-        .unwrap()
-        .to_utc();
-    let upper_limit = Local
-        .from_local_datetime(
-            &requested_date
-                .with_timezone(&Local)
-                .date_naive()
-                .and_hms_opt(23, 59, 59)
-                .unwrap(),
-        )
-        .unwrap()
-        .to_utc();
-    (lower_limit, upper_limit)
+/// The first and last second of the day of study `requested_date` counts for, in the server's
+/// time zone, with days starting at `day_starts_at` (see
+/// [`SparesExternalConfig::day_starts_at`](crate::config::SparesExternalConfig::day_starts_at)).
+pub fn get_start_end_local_date(
+    requested_date: &DateTime<Utc>,
+    day_starts_at: u8,
+) -> (DateTime<Utc>, DateTime<Utc>) {
+    Zone::server(day_starts_at).bounds(*requested_date)
+}
+
+/// The day of study `at` counts for, in the server's time zone (see
+/// [`get_start_end_local_date`]).
+pub fn study_date(at: DateTime<Utc>, day_starts_at: u8) -> NaiveDate {
+    Zone::server(day_starts_at).date(at)
 }
 
 /// Merge 2 sorted lists into a new sorted list

@@ -344,7 +344,7 @@ async fn advance_and_postpone_accept_a_query(pool: SqlitePool) {
 fn distinct_local_days(cards: &[Card]) -> usize {
     cards
         .iter()
-        .map(|card| card.due.with_timezone(&chrono::Local).date_naive())
+        .map(|card| crate::helpers::study_date(card.due, crate::api::queue::tests::day_starts_at()))
         .collect::<std::collections::HashSet<_>>()
         .len()
 }

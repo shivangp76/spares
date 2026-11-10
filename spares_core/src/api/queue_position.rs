@@ -119,8 +119,8 @@ pub async fn queue_positions(
         ),
         None => None,
     };
-    unbury_cards_and_update_config(db).await?;
     let config = read_external_config()?;
+    unbury_cards_and_update_config(db, &config).await?;
     let review_filter = review_filter_of(db, &config, filter, requested_date).await?;
     let OrderedQueue { rows, skipped, .. } = ordered_queue(
         db,
@@ -281,7 +281,7 @@ async fn review_filter_of(
 ) -> Result<ReviewFilterQuery, Error> {
     let filter = match filter {
         Some(GetReviewCardFilterRequest::Query(query)) if query_has_limit(&query) => {
-            let tag_id = todays_review_snapshot(db, &query, requested_date)
+            let tag_id = todays_review_snapshot(db, &query, requested_date, config.day_starts_at)
                 .await?
                 .ok_or_else(|| {
                     invalid(format!(
@@ -640,7 +640,9 @@ mod tests {
         let now = Utc::now();
         let ids = setup(&pool, now).await;
         // As opening review today already has, so the card buried below stays buried
-        unbury_cards_and_update_config(&pool).await.unwrap();
+        unbury_cards_and_update_config(&pool, &SparesExternalConfig::default())
+            .await
+            .unwrap();
         set_special_state(&pool, ids[0], SpecialState::Suspended).await;
         set_special_state(&pool, ids[1], SpecialState::SchedulerBuried).await;
         set_card(&pool, ids[2], REVIEW, now + Duration::days(3), 5.0, 5.0).await;
@@ -681,12 +683,14 @@ mod tests {
             new_after_linked_notes: true,
             ..QueueConfig::default()
         };
-        let (_, card_due_limit) = get_start_end_local_date(&now);
+        let (_, card_due_limit) =
+            get_start_end_local_date(&now, crate::api::queue::tests::day_starts_at());
         let filter = ReviewFilterQuery {
             cards: cards_with_preset(&IndexMap::new()),
             where_clause: String::new(),
             is_filtered_tag: false,
             card_due_limit,
+            day_starts_at: crate::api::queue::tests::day_starts_at(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: None,

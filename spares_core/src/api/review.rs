@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 use chrono::DateTime;
 use chrono::Duration;
-use chrono::Local;
 use chrono::NaiveDate;
 use chrono::Utc;
 use indoc::formatdoc;
@@ -59,7 +58,6 @@ use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
 use crate::config::LeechAction;
 use crate::config::LeechConfig;
-use crate::config::QueueConfig;
 use crate::config::QueuePreset;
 use crate::config::SparesExternalConfig;
 use crate::config::get_files_dir;
@@ -68,6 +66,7 @@ use crate::config::read_internal_config;
 use crate::config::resolve_in_files_dir;
 use crate::config::write_internal_config;
 use crate::helpers::get_start_end_local_date;
+use crate::helpers::study_date;
 use crate::ids::IdTable;
 use crate::ids::next_id_in;
 use crate::model::Card;
@@ -404,7 +403,8 @@ pub(crate) struct DailyLimitsLeft {
     pub(crate) new: u32,
     pub(crate) reviews: u32,
     /// What is left of each [preset](crate::config::QueuePreset)'s own limits, by its index in
-    /// [`QueueConfig::presets`]. Empty when no preset has limits.
+    /// [`QueueConfig::presets`](crate::config::QueueConfig::presets). Empty when no preset has
+    /// limits.
     pub(crate) presets: Vec<PresetLimitsLeft>,
 }
 
@@ -422,7 +422,8 @@ pub(crate) async fn daily_limits_left_with(
     config: &SparesExternalConfig,
     requested_date: DateTime<Utc>,
 ) -> Result<DailyLimitsLeft, Error> {
-    let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
+    let (lower_limit, upper_limit) =
+        get_start_end_local_date(&requested_date, config.day_starts_at);
     // The preset is only needed for the presets' own limits
     let preset = limited_preset_sql(&config.queue);
     // `LEFT JOIN`, so that the reviews of a deleted card still count, with no preset
@@ -587,8 +588,8 @@ async fn review_eligibility_clause(
     query: &str,
     requested_date: DateTime<Utc>,
 ) -> Result<String, Error> {
-    let (_, card_due_limit) = get_start_end_local_date(&requested_date);
     let config = read_external_config()?;
+    let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.day_starts_at);
     let not_new_card_str = daily_limits_clause(
         &daily_limits_left_with(db, &config, requested_date).await?,
         &limited_preset_sql(&config.queue),
@@ -620,10 +621,10 @@ fn review_snapshot_tag_name(query: &str) -> String {
     format!("review-{}", &hash[..8])
 }
 
-/// Whether `tag`, a review snapshot, was built on the local day of `requested_date`, so review
-/// works through it as it is rather than rebuilding it.
-fn snapshot_built_today(tag: &Tag, requested_date: DateTime<Utc>) -> bool {
-    let (start_of_day, _) = get_start_end_local_date(&requested_date);
+/// Whether `tag`, a review snapshot, was built on the day of `requested_date`, so review works
+/// through it as it is rather than rebuilding it.
+fn snapshot_built_today(tag: &Tag, requested_date: DateTime<Utc>, day_starts_at: u8) -> bool {
+    let (start_of_day, _) = get_start_end_local_date(&requested_date, day_starts_at);
     tag.updated_at >= start_of_day
 }
 
@@ -632,6 +633,7 @@ pub(crate) async fn todays_review_snapshot(
     db: &SqlitePool,
     query: &str,
     requested_date: DateTime<Utc>,
+    day_starts_at: u8,
 ) -> Result<Option<TagId>, Error> {
     let tag: Option<Tag> = sqlx::query_as(r"SELECT * FROM tag WHERE name = ?")
         .bind(review_snapshot_tag_name(query))
@@ -639,7 +641,7 @@ pub(crate) async fn todays_review_snapshot(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     Ok(tag
-        .filter(|tag| snapshot_built_today(tag, requested_date))
+        .filter(|tag| snapshot_built_today(tag, requested_date, day_starts_at))
         .map(|tag| tag.id))
 }
 
@@ -656,6 +658,7 @@ pub async fn create_review_snapshot_tag(
     requested_date: DateTime<Utc>,
 ) -> Result<ReviewSnapshotResponse, Error> {
     let ReviewSnapshotRequest { query } = body;
+    let day_starts_at = read_external_config()?.day_starts_at;
     let tag_name = review_snapshot_tag_name(&query);
     let existing_tag: Option<Tag> = sqlx::query_as(r"SELECT * FROM tag WHERE name = ?")
         .bind(&tag_name)
@@ -664,7 +667,7 @@ pub async fn create_review_snapshot_tag(
         .map_err(|e| Error::Sqlx { source: e })?;
 
     let (tag_id, rebuilt) = match existing_tag {
-        Some(tag) if snapshot_built_today(&tag, requested_date) => (tag.id, false),
+        Some(tag) if snapshot_built_today(&tag, requested_date, day_starts_at) => (tag.id, false),
         Some(tag) => (tag.id, true),
         None => {
             // `auto_delete` stays off: if finishing the snapshot deleted the tag, running the
@@ -741,6 +744,8 @@ pub(crate) struct ReviewFilterQuery {
     pub(crate) where_clause: String,
     pub(crate) is_filtered_tag: bool,
     pub(crate) card_due_limit: DateTime<Utc>,
+    /// See [`SparesExternalConfig::day_starts_at`].
+    pub(crate) day_starts_at: u8,
     /// What is left of today's limits. Filtered tags have no limits.
     pub(crate) caps: QueueCaps,
     /// The SQL of a card's preset, for the presets' own limits in `caps`: `c.preset`, or `NULL`
@@ -781,7 +786,7 @@ pub(crate) async fn build_review_filter_query(
     requested_date: DateTime<Utc>,
     learn_ahead: bool,
 ) -> Result<Option<ReviewFilterQuery>, Error> {
-    let (_, card_due_limit) = get_start_end_local_date(&requested_date);
+    let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.day_starts_at);
     let limits_left = daily_limits_left_with(db, config, requested_date).await?;
     let cards = cards_with_preset(&config.queue.presets);
     let preset_sql = if limited_preset_sql(&config.queue) == "NULL" {
@@ -867,6 +872,7 @@ pub(crate) async fn build_review_filter_query(
         where_clause,
         is_filtered_tag,
         card_due_limit,
+        day_starts_at: config.day_starts_at,
         caps,
         preset_sql,
         held_back_clause,
@@ -912,7 +918,7 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     db: &SqlitePool,
     filter: &ReviewFilterQuery,
 ) -> Result<(HashMap<StateId, u32>, Duration), Error> {
-    let paces = StudyPaces::load(db, &filter.cards).await?;
+    let paces = StudyPaces::load(db, &filter.cards, filter.day_starts_at).await?;
     let bind = (!filter.is_filtered_tag).then(|| filter.card_due_limit.timestamp());
     let rows = card_times(db, filter, &paces, &filter.where_clause, bind).await?;
     // The preset of each row is the card's own, which caps the counts only if it has limits of
@@ -947,7 +953,7 @@ async fn card_times(
     where_clause: &str,
     bind: Option<i64>,
 ) -> Result<Vec<(StateId, Option<usize>, u32, f64)>, Error> {
-    let (day_start, _) = get_start_end_local_date(&filter.card_due_limit);
+    let (day_start, _) = get_start_end_local_date(&filter.card_due_limit, filter.day_starts_at);
     // These are the cards grouped by state, preset and whether they were reviewed today, with how
     // many have enough reviews of their own and the seconds those take. Note that this is _not_
     // equivalent to the cards by state in `get_statistics()` because that does not filter by
@@ -1008,15 +1014,20 @@ async fn card_times(
         .collect())
 }
 
-pub(crate) async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
+pub(crate) async fn unbury_cards_and_update_config(
+    db: &SqlitePool,
+    external: &SparesExternalConfig,
+) -> Result<(), Error> {
     let mut config = read_internal_config(db).await?;
     let now = Utc::now();
-    // Compare dates in local timezone to determine if cards should be unburied.
-    // This ensures that cards are unburied when the calendar date changes in the user's timezone,
+    // Compare days of study, which start at `day_starts_at` in the local time zone, to determine
+    // if cards should be unburied. This ensures that cards are unburied when a new day starts,
     // regardless of when reviews were performed (e.g., late at night vs. early morning).
     // For example, if a user reviews at 11 PM on day 1 and then at 6 AM on day 2, the cards
-    // will be unburied on day 2 even though less than 24 hours have passed.
-    let now_local_date = now.with_timezone(&Local).date_naive();
+    // will be unburied on day 2 even though less than 24 hours have passed. A review at 1 AM
+    // still belongs to day 1, so it does not unbury them.
+    let day_starts_at = external.day_starts_at;
+    let now_local_date = study_date(now, day_starts_at);
     // Handle the case where last_unburied might be MIN_UTC or out of range for local timezone
     // If it's MIN_UTC, treat it as never unburied, so we should always unbury
     let last_unburied_local_date = if config.last_unburied == DateTime::<Utc>::MIN_UTC {
@@ -1024,7 +1035,7 @@ pub(crate) async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<()
         // This ensures we always unbury on the first run
         NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
     } else {
-        config.last_unburied.with_timezone(&Local).date_naive()
+        study_date(config.last_unburied, day_starts_at)
     };
     if now_local_date > last_unburied_local_date {
         // Unbury
@@ -1046,10 +1057,10 @@ pub async fn get_review_card(
 ) -> Result<Option<GetReviewCardResponse>, Error> {
     let GetReviewCardRequest { filter } = body;
 
-    // Unbury cards, if needed
-    unbury_cards_and_update_config(db).await?;
-
     let config = read_external_config()?;
+    // Unbury cards, if needed
+    unbury_cards_and_update_config(db, &config).await?;
+
     // Build the filter query for matching cards
     let Some(review_filter) =
         build_review_filter_query(db, &config, filter.as_ref(), requested_date, true).await?
@@ -1654,10 +1665,10 @@ pub(crate) async fn rate_card_with_config(
 
     // Siblings are buried until the day is over, so a review of an earlier day, sent late by an
     // offline client, would bury them a day too long.
-    let reviewed_today = reviewed_at.with_timezone(&Local).date_naive()
-        >= Utc::now().with_timezone(&Local).date_naive();
+    let reviewed_today = study_date(reviewed_at, config.day_starts_at)
+        >= study_date(Utc::now(), config.day_starts_at);
     let buried_siblings = if filtered_tag_opt.is_none() && reviewed_today {
-        bury_siblings(db, &config.queue, &before_card, reviewed_at).await?
+        bury_siblings(db, config, &before_card, reviewed_at).await?
     } else {
         Vec::new()
     };
@@ -1881,14 +1892,16 @@ pub(crate) async fn tag_leech(
 }
 
 /// Buries the siblings of `card` (the other cards of its note) that
-/// [`QueueConfig::bury_new_siblings`] and [`QueueConfig::bury_review_siblings`] say to, now that it
-/// was rated at `reviewed_at`. Returns their changes, for the rating's undo event.
+/// [`QueueConfig::bury_new_siblings`](crate::config::QueueConfig::bury_new_siblings) and
+/// [`QueueConfig::bury_review_siblings`](crate::config::QueueConfig::bury_review_siblings) say
+/// to, now that it was rated at `reviewed_at`. Returns their changes, for the rating's undo event.
 async fn bury_siblings(
     db: &SqlitePool,
-    queue: &QueueConfig,
+    config: &SparesExternalConfig,
     card: &Card,
     reviewed_at: DateTime<Utc>,
 ) -> Result<Vec<UpdateCardPayload>, Error> {
+    let queue = &config.queue;
     let roles = [
         (queue.bury_new_siblings, StateRole::New),
         (queue.bury_review_siblings, StateRole::Review),
@@ -1900,7 +1913,7 @@ async fn bury_siblings(
     if states.is_empty() {
         return Ok(Vec::new());
     }
-    let (_, end_of_day) = get_start_end_local_date(&reviewed_at);
+    let (_, end_of_day) = get_start_end_local_date(&reviewed_at, config.day_starts_at);
     let sibling_ids: Vec<CardId> = sqlx::query_scalar(AssertSqlSafe(format!(
         r"UPDATE card SET special_state = ?, updated_at = ?
         WHERE note_id = ? AND id != ? AND special_state IS NULL AND due <= ? AND state IN ({states})
