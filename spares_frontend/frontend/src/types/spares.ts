@@ -582,6 +582,9 @@ export interface ReviewHistoryResponse {
   review_count_by_date: Record<string, number>;
   // Likewise for crams, which the heatmap adds to the reviews
   cram_count_by_date: Record<string, number>;
+  // The day under way as the counts tell days apart, `YYYY-MM-DD`: before the hour days start at
+  // (`day_starts_at`, 4 AM by default), the date before the calendar's. Missing from older servers.
+  today?: string | null;
 }
 
 export interface NoteResponse {

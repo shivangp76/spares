@@ -1335,6 +1335,11 @@ pub mod review {
         /// studied, and can show them apart.
         #[serde(default)]
         pub cram_count_by_date: HashMap<NaiveDate, u32>,
+        /// The day under way, as the counts tell days apart: before
+        /// [`SparesExternalConfig::day_starts_at`](crate::config::SparesExternalConfig::day_starts_at),
+        /// the date before the calendar's. `None` from a server older than it.
+        #[serde(default)]
+        pub today: Option<NaiveDate>,
     }
 
     /// Config values that review clients need to offer the same actions as the CLI.

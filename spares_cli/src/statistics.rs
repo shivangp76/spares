@@ -388,8 +388,10 @@ pub(crate) fn format_statistics(fetched: &Fetched, sections: &[Section], width: 
             Section::Calendar => {
                 if let Some(history) = &fetched.history {
                     write_title(&mut out, "Calendar");
-                    let today =
-                        graphs.map_or_else(|| chrono::Local::now().date_naive(), |g| g.date);
+                    let today = graphs
+                        .map(|g| g.date)
+                        .or(history.today)
+                        .unwrap_or_else(|| chrono::Local::now().date_naive());
                     out.push_str(&format_history(
                         &history.review_count_by_date,
                         &history.cram_count_by_date,

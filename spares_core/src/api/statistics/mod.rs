@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use chrono::Days;
 use chrono::Duration;
+use chrono::Utc;
 use graphs::CardFilter;
 use graphs::due_by_day;
 pub use graphs::get_statistics_graphs;
@@ -200,6 +201,7 @@ pub async fn get_review_history(
     let mut response = ReviewHistoryResponse {
         review_count_by_date: HashMap::new(),
         cram_count_by_date: HashMap::new(),
+        today: Some(zone.date(Utc::now())),
     };
     for (day, kind, count) in rows {
         let counts = match kind {

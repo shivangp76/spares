@@ -51,7 +51,9 @@ pub(crate) async fn print_history(
         return Ok(());
     }
     let weeks = weeks.unwrap_or_else(default_weeks).max(1);
-    let today = Local::now().date_naive();
+    // The host's day under way, which until the hour days start at is the date before the
+    // calendar's
+    let today = history.today.unwrap_or_else(|| Local::now().date_naive());
     print!(
         "{}",
         format_history(
