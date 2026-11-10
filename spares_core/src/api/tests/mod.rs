@@ -11,7 +11,6 @@ use std::rc::Weak;
 use chrono::DateTime;
 use chrono::Datelike;
 use chrono::Duration;
-use chrono::Local;
 use chrono::Utc;
 use chrono::Weekday;
 use fuzz_data::generate_notes;
@@ -524,10 +523,10 @@ async fn assert_reviews_follow_workload_percentage(pool: &SqlitePool) {
     let dates = reviewed_ats
         .into_iter()
         .map(|reviewed_at| {
-            DateTime::from_timestamp(reviewed_at, 0)
-                .unwrap()
-                .with_timezone(&Local)
-                .date_naive()
+            crate::helpers::study_date(
+                DateTime::from_timestamp(reviewed_at, 0).unwrap(),
+                config.day_starts_at,
+            )
         })
         .filter(|date| !config.easy_days.specific_dates.contains(date))
         .collect::<Vec<_>>();

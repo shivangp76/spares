@@ -725,20 +725,44 @@ async fn days_and_hours_follow_the_time_zone(pool: SqlitePool) {
     assert_eq!(tokyo.hourly[17].reviews, 3);
     assert_eq!(tokyo.hourly[9].reviews, 0);
 
-    // In Los Angeles, at UTC-7, noon UTC is 05:00 the same day, and 08:00 UTC is 01:00. So today
-    // there began at 07:00 UTC, and holds the same reviews.
-    let los_angeles = graphs(
-        &pool,
-        &config(21),
-        StatisticsGraphsRequest {
-            tz: Some("America/Los_Angeles".to_string()),
-            ..request(None, None)
-        },
-    )
+    // In Los Angeles, at UTC-7, noon UTC is 05:00 the same day, and 08:00 UTC is 01:00. So with
+    // days starting at midnight, today there began at 07:00 UTC, and holds the same reviews.
+    let los_angeles = async |config: &SparesExternalConfig| {
+        graphs(
+            &pool,
+            config,
+            StatisticsGraphsRequest {
+                tz: Some("America/Los_Angeles".to_string()),
+                ..request(None, None)
+            },
+        )
+        .await
+    };
+    let midnight = los_angeles(&SparesExternalConfig {
+        day_starts_at: 0,
+        ..config(21)
+    })
     .await;
-    assert_eq!(los_angeles.today.reviews, 4);
-    assert_eq!(los_angeles.hourly[1].reviews, 3);
-    assert_eq!(los_angeles.hourly[2].reviews, 4);
+    assert_eq!(midnight.today.reviews, 4);
+    assert_eq!(midnight.hourly[1].reviews, 3);
+    assert_eq!(midnight.hourly[2].reviews, 4);
+
+    // With days starting at 4 AM, today began at 11:00 UTC, so those reviews, from before 04:00
+    // there, count for yesterday. Their hours stay the hours of the clock.
+    let four_am = los_angeles(&config(21)).await;
+    assert_eq!(four_am.date, date(0));
+    assert_eq!(four_am.today.reviews, 0);
+    let yesterday = four_am
+        .reviews
+        .iter()
+        .find(|day| day.date == date(-1))
+        .unwrap();
+    assert_eq!(
+        yesterday.learning + yesterday.relearning + yesterday.young + yesterday.mature,
+        4
+    );
+    assert_eq!(four_am.hourly[1].reviews, 3);
+    assert_eq!(four_am.hourly[2].reviews, 4);
 }
 
 #[sqlx::test]

@@ -46,7 +46,8 @@ pub async fn get_statistics(
         tz,
     } = request;
     let scheduler = get_scheduler_from_string(scheduler_name.as_str())?;
-    let zone = Zone::parse(tz.as_deref())?;
+    let config = read_external_config()?;
+    let zone = Zone::parse(tz.as_deref(), config.day_starts_at)?;
     let today = zone.date(requested_date);
     let today_start = zone.start_of(today).timestamp();
     let tomorrow_start = zone.start_of(today + Days::new(1)).timestamp();
@@ -90,7 +91,6 @@ pub async fn get_statistics(
     // Cap new and review cards by what is left of today's limits, and of their presets', as
     // review does, so the counts are what is left to study today. See
     // `get_cards_left_by_state_and_time_estimate`.
-    let config = read_external_config()?;
     let due_today = async {
         let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
         // New cards are due from when they are created, and cards due before today are still
@@ -175,7 +175,7 @@ pub async fn get_review_history(
     db: &SqlitePool,
     request: ReviewHistoryRequest,
 ) -> Result<ReviewHistoryResponse, Error> {
-    let zone = Zone::parse(request.tz.as_deref())?;
+    let zone = Zone::parse(request.tz.as_deref(), read_external_config()?.day_starts_at)?;
     let cards = CardFilter::new(db, request.query.as_deref()).await?;
     // Reviews of since-deleted cards still count without a query, as they were studied all the
     // same

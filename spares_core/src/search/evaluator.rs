@@ -1242,6 +1242,11 @@ impl EvaluationContext {
         }
     }
 
+    /// See [`SparesExternalConfig::day_starts_at`].
+    fn day_starts_at(&self) -> Result<u8, Error> {
+        Ok(self.config()?.day_starts_at)
+    }
+
     fn config(&self) -> Result<&SparesExternalConfig, Error> {
         self.config
             .get_or_init(|| read_external_config().map_err(|e| e.to_string()))
@@ -1857,7 +1862,7 @@ fn evaluate_comparison(
         && RelativeDate::starts_with_word_anchor(s)
     {
         let date = RelativeDate::parse(s)?;
-        value_context.params = vec![date.to_sql()];
+        value_context.params = vec![date.to_sql(context.day_starts_at()?)];
         value_type = FieldType::DateTime;
         relative_date = Some(date);
     }
@@ -1904,21 +1909,34 @@ fn evaluate_comparison(
                 op
             ));
         }
-        (_, _, Some((start, months))) => Some((
-            local_month_start_sql(start, 0),
-            local_month_start_sql(start, months),
-        )),
+        (_, _, Some((start, months))) => {
+            let day_starts_at = context.day_starts_at()?;
+            Some((
+                local_month_start_sql(start, 0, day_starts_at),
+                local_month_start_sql(start, months, day_starts_at),
+            ))
+        }
         (TokenTree::Atom(Atom::Date(date), _), _, _)
             if matches!(field_type, FieldType::DateTime) =>
         {
-            Some((local_day_start_sql(*date, 0), local_day_start_sql(*date, 1)))
+            let day_starts_at = context.day_starts_at()?;
+            Some((
+                local_day_start_sql(*date, 0, day_starts_at),
+                local_day_start_sql(*date, 1, day_starts_at),
+            ))
         }
         (TokenTree::Atom(Atom::Date(date), _), _, _) => {
             value_context.params = vec![date.to_string()];
             value_type = FieldType::String;
             None
         }
-        (_, Some(date), _) => date.next_day().map(|next| (date.to_sql(), next.to_sql())),
+        (_, Some(date), _) => match date.next_day() {
+            Some(next) => {
+                let day_starts_at = context.day_starts_at()?;
+                Some((date.to_sql(day_starts_at), next.to_sql(day_starts_at)))
+            }
+            None => None,
+        },
         _ => None,
     };
 
@@ -2138,7 +2156,8 @@ fn evaluate_comparison(
 
     let sql_condition = match field {
         Field::Card(CardField::WaitingOnLinks) => {
-            waiting_on_links_condition(&context.config()?.queue, &value_str)
+            let config = context.config()?;
+            waiting_on_links_condition(&config.queue, config.day_starts_at, &value_str)
         }
         Field::Card(CardField::Leech) => leech_sql(context.config()?, &value_str),
         _ => field.to_sql_str(&value_str)?,
@@ -2332,8 +2351,12 @@ fn review_time_sql(field: &str, range: &str) -> Result<String, Error> {
 /// The SQL of `c.waiting_on_links` compared with `value_str`: the cards that
 /// [`QueueConfig::new_after_linked_notes`] and [`QueueConfig::reviews_after_linked_notes`] hold
 /// back today, so `true` matches nothing while both are off.
-pub(crate) fn waiting_on_links_condition(queue: &QueueConfig, value_str: &str) -> String {
-    let (_, card_due_limit) = get_start_end_local_date(&Utc::now());
+pub(crate) fn waiting_on_links_condition(
+    queue: &QueueConfig,
+    day_starts_at: u8,
+    value_str: &str,
+) -> String {
+    let (_, card_due_limit) = get_start_end_local_date(&Utc::now(), day_starts_at);
     let waiting = waiting_on_links(queue, card_due_limit, None).unwrap_or_else(|| "0".to_string());
     if value_str.contains("false") {
         format!("NOT {waiting}")
@@ -2738,7 +2761,8 @@ impl Evaluate for Atom<'_> {
             }
             Atom::Date(d) => {
                 context.value_type = Some(FieldType::DateTime);
-                context.params.push(local_day_start_sql(*d, 0));
+                let sql = local_day_start_sql(*d, 0, context.day_starts_at()?);
+                context.params.push(sql);
                 Ok(())
             }
             Atom::LocalDateTime(d) => {
@@ -2751,7 +2775,8 @@ impl Evaluate for Atom<'_> {
             }
             Atom::RelativeDate(d) => {
                 context.value_type = Some(FieldType::DateTime);
-                context.params.push(d.to_sql());
+                let sql = d.to_sql(context.day_starts_at()?);
+                context.params.push(sql);
                 Ok(())
             }
             Atom::Regex(r) => {
@@ -3171,8 +3196,7 @@ mod tests {
     #[allow(clippy::too_many_lines, reason = "test data is long")]
     fn test_relative_dates() {
         let gir = "(SELECT created_at FROM note WHERE id = 76967537148)";
-        let today =
-            "(SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', 'utc') AS INTEGER))";
+        let today = "(SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', 'utc') AS INTEGER))";
         let inputs = [
             (
                 "created_at<=note[gir].created_at",
@@ -3199,33 +3223,33 @@ mod tests {
             // A day stands for the whole day, so this is up to the end of the day 3 days from now.
             (
                 "c.due<=today+3d",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due < (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+3 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due < (SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', '+3 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "created_at=today",
-                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN {today} AND ((SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+1 days', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC"),
+                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN {today} AND ((SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', '+1 days', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC"),
             ),
             (
                 "created_at>today-1w",
-                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '-7 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', '-7 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
             ),
             // A fixed date is a local day too.
             (
                 "created_at=2026-10-17",
-                "SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', '+4 hours', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-17', '+1 days', '+4 hours', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "created_at<2026-10-17 c.due<=2026-10-17",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at < (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND c.due < (SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at < (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', '+4 hours', 'utc') AS INTEGER)) AND c.due < (SELECT CAST(strftime('%s', '2026-10-17', '+1 days', '+4 hours', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
             ),
             // So are a month and a year.
             (
                 "created_at=2026-10 c.due<2026",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-01', '+0 months', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-01', '+1 months', 'utc') AS INTEGER)) - 1) AND c.due < (SELECT CAST(strftime('%s', '2026-01-01', '+0 months', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-01', '+0 months', '+4 hours', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-01', '+1 months', '+4 hours', 'utc') AS INTEGER)) - 1) AND c.due < (SELECT CAST(strftime('%s', '2026-01-01', '+0 months', '+4 hours', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "created_at>2026",
-                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', '2026-01-01', '+12 months', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', '2026-01-01', '+12 months', '+4 hours', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
             ),
             // A time without a zone is local.
             (
@@ -3391,21 +3415,24 @@ mod tests {
                 .unwrap();
         };
         exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
-        let yesterday = chrono::Local::now().date_naive() - chrono::Days::new(1);
-        let start_of_yesterday = yesterday
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(chrono::Local)
-            .earliest()
-            .unwrap()
-            .timestamp();
+        // Days start at 4 AM, so before then, yesterday is the day before the calendar's.
+        let day_starts_at = crate::api::queue::tests::day_starts_at();
+        let today = crate::helpers::study_date(chrono::Utc::now(), day_starts_at);
+        let yesterday = today - chrono::Days::new(1);
+        let (start_of_yesterday, end_of_yesterday) = crate::helpers::get_start_end_local_date(
+            &(crate::helpers::get_start_end_local_date(&chrono::Utc::now(), day_starts_at).0
+                - chrono::Duration::seconds(1)),
+            day_starts_at,
+        );
+        let (start_of_yesterday, end_of_yesterday) =
+            (start_of_yesterday.timestamp(), end_of_yesterday.timestamp());
         // `a` to `c` have cards, `d` has none. `b` was created at the start of yesterday, `c` at
         // the end of it, and the others today.
         let now = chrono::Utc::now().timestamp();
         let notes = [
             ("a", "don't use snake_case", now),
             ("b", "dont use snakeXcase", start_of_yesterday),
-            ("c", "100% orbit", start_of_yesterday + 24 * 60 * 60 - 1),
+            ("c", "100% orbit", end_of_yesterday),
             ("d", "1000 or bit", now),
         ];
         for (letters, data, created_at) in notes {
@@ -3497,7 +3524,6 @@ mod tests {
         assert_eq!(search("c.desired_retention=0.9").await, ["a", "b", "c"]);
         // `a` and `d` were created this month and year, and `b` and `c` too unless yesterday was in
         // the last one.
-        let today = chrono::Local::now().date_naive();
         let this_month = search(&format!("created_at={}", today.format("%Y-%m"))).await;
         assert!(
             this_month.starts_with(&["a".to_string()]) && this_month.contains(&"d".to_string())
