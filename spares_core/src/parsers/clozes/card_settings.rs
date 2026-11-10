@@ -447,7 +447,9 @@ fn parse_grouping_settings(
                 })
             })?;
         } else if key == back_emphasis_key {
-            current_grouping_settings.back_emphasis = true;
+            // Written back as `be:true` or `be:false` (see `construct_cloze_string`). Like `s:n`,
+            // `be:n` turns it off too, e.g. on an image occlusion that emphasizes by default.
+            current_grouping_settings.back_emphasis = !matches!(*value, "false" | "n");
         } else if key == type_answer_key {
             current_grouping_settings.type_answer =
                 Some(TypeAnswer::from_str(value).map_err(|e| {

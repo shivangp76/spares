@@ -1019,3 +1019,16 @@ fn test_front_conceal_all_hides_a_cloze_once() {
         assert_eq!(clozes, 3, "{:?}", card.data);
     }
 }
+
+#[test]
+fn test_back_emphasis_value() {
+    // `be:false` is written back for a cloze that turns emphasis off, but was read as `be:`
+    let parser = MarkdownParser::new();
+    let emphasis =
+        |data: &str| get_cards(&parser, None, data, false, false).unwrap()[0].back_emphasis;
+    assert!(emphasis(r"{{[be:]a}}"));
+    assert!(emphasis(r"{{[be:true]a}}"));
+    assert!(!emphasis(r"{{[be:false]a}}"));
+    assert!(!emphasis(r"{{[be:n]a}}"));
+    assert_settings_rewrite_to(r"{{[be:false]a}}", r"{{[o:1]a}}");
+}
