@@ -1508,6 +1508,7 @@ export default function StatisticsPage() {
               <ReviewHeatmap
                 counts={history.review_count_by_date}
                 cramCounts={history.cram_count_by_date}
+                today={history.today}
               />
             </>
           )}

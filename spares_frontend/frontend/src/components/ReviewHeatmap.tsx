@@ -134,9 +134,18 @@ function Stat({ value, label }: { value: string; label: string }) {
 
 /**
  * Daily review counts as a scrollable calendar grid, opening centered on today, with streak statistics.
- * `cramCounts` are added to `counts`, and told apart in the cell titles and the total.
+ * `cramCounts` are added to `counts`, and told apart in the cell titles and the total. `today` is
+ * the server's day under way, which after midnight is still yesterday until the day starts.
  */
-export default function ReviewHeatmap({ counts: reviewCounts, cramCounts }: { counts: Record<string, number>; cramCounts: Record<string, number> }) {
+export default function ReviewHeatmap({
+  counts: reviewCounts,
+  cramCounts,
+  today: serverToday,
+}: {
+  counts: Record<string, number>;
+  cramCounts: Record<string, number>;
+  today?: string | null;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Cell | null>(null);
   const [atStart, setAtStart] = useState(false);
@@ -145,7 +154,7 @@ export default function ReviewHeatmap({ counts: reviewCounts, cramCounts }: { co
   const [viewWidth, setViewWidth] = useState(0);
   // Just enough future weeks to center today, so centered is as far forward as the grid scrolls
   const futureWeeks = Math.ceil(viewWidth / 2 / STEP);
-  const todayKey = dateKey(new Date());
+  const todayKey = serverToday ?? dateKey(new Date());
 
   const counts = useMemo(() => addCounts(reviewCounts, cramCounts), [reviewCounts, cramCounts]);
   const cramTotal = useMemo(() => Object.values(cramCounts).reduce((sum, n) => sum + n, 0), [cramCounts]);

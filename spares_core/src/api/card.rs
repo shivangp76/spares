@@ -1192,6 +1192,7 @@ mod forget_tests {
             .unwrap();
         let local_date =
             |at: DateTime<Utc>| study_date(at, crate::api::queue::tests::day_starts_at());
+        assert_eq!(history.today, Some(local_date(Utc::now())));
         assert_eq!(history.review_count_by_date.len(), 2);
         assert_eq!(history.review_count_by_date[&local_date(earlier)], 1);
         // Forgetting is not a review
