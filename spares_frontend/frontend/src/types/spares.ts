@@ -214,6 +214,17 @@ export interface ReviewConfig {
   set_card_due_date_duration: number; // seconds
   // How long a timebox lasts, in seconds (`queue.timebox`). Missing from older servers.
   timebox?: number | null;
+  // `queue.auto_advance`. Missing from older servers.
+  auto_advance?: AutoAdvance | null;
+}
+
+/** `[queue.auto_advance]`: when review shows the answer and acts on its own. */
+export interface AutoAdvance {
+  // Seconds, 0 to wait for the answer to be shown by hand
+  show_answer_after: number;
+  // Seconds, 0 to wait for a rating by hand
+  rate_after: number;
+  action: "again" | "hard" | "good" | "bury";
 }
 
 export interface TagResponse {

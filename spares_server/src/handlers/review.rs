@@ -149,6 +149,7 @@ pub(crate) async fn get_review_config_handler()
         flagged_tag_name: config.flagged_tag_name,
         set_card_due_date_duration: config.set_card_due_date_duration,
         timebox: config.queue.timebox,
+        auto_advance: config.queue.auto_advance,
     }))
 }
 
