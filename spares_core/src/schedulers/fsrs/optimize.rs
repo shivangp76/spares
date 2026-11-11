@@ -19,6 +19,7 @@ use super::utils::rating_to_number;
 use crate::Error;
 use crate::LibraryError;
 use crate::SchedulerErrorKind;
+use crate::api::statistics::local_time::Zone;
 use crate::helpers::study_date;
 use crate::model::CardId;
 use crate::model::NEW_CARD_STATE;
@@ -40,9 +41,8 @@ pub struct TrainingSet {
 ///
 /// `review_logs` must be ordered by `card_id, reviewed_at ASC, id ASC`, and include every
 /// [`ReviewLogKind`], so that forgets are seen. Reviews are told apart by the day of study they
-/// count for, which starts `day_starts_at` hours after local midnight (see
-/// [`SparesExternalConfig::day_starts_at`](crate::config::SparesExternalConfig::day_starts_at)).
-pub fn training_set(review_logs: &[ReviewLog], day_starts_at: u8) -> TrainingSet {
+/// count for in `zone` (see [`Zone::from_config`]).
+pub fn training_set(review_logs: &[ReviewLog], zone: Zone) -> TrainingSet {
     let mut training_set = TrainingSet::default();
     for (card_id, card_review_logs) in &review_logs.iter().chunk_by(|review_log| review_log.card_id)
     {
@@ -50,7 +50,7 @@ pub fn training_set(review_logs: &[ReviewLog], day_starts_at: u8) -> TrainingSet
             continue;
         };
         let card_review_logs = card_review_logs.cloned().collect::<Vec<_>>();
-        let items = card_items(&card_review_logs, day_starts_at);
+        let items = card_items(&card_review_logs, zone);
         if items.is_empty() {
             continue;
         }
@@ -64,7 +64,7 @@ pub fn training_set(review_logs: &[ReviewLog], day_starts_at: u8) -> TrainingSet
 }
 
 /// The training items for one card, one per review on a later day than the card's previous review.
-fn card_items(review_logs: &[ReviewLog], day_starts_at: u8) -> Vec<FSRSItem> {
+fn card_items(review_logs: &[ReviewLog], zone: Zone) -> Vec<FSRSItem> {
     // Reviews before a forget were discarded by the user and say nothing about the memory the card
     // has now.
     let reviews = effective_review_logs(review_logs)
@@ -102,7 +102,7 @@ fn card_items(review_logs: &[ReviewLog], day_starts_at: u8) -> Vec<FSRSItem> {
         };
         // Days as the user lives them, so that a review late in the evening and one the next
         // morning are a day apart, while one after midnight still counts for the evening before.
-        let day = study_date(review_log.reviewed_at, day_starts_at);
+        let day = study_date(review_log.reviewed_at, zone);
         let delta_t = previous_day.map_or(0, |previous_day| {
             u32::try_from((day - previous_day).num_days()).unwrap_or(0)
         });
@@ -191,6 +191,11 @@ mod tests {
     use chrono::DateTime;
     use chrono::Duration;
     use chrono::Local;
+
+    /// The server's zone, with days starting at `day_starts_at`.
+    fn hours(day_starts_at: u8) -> Zone {
+        Zone::parse(None, day_starts_at).unwrap()
+    }
     use chrono::TimeZone;
     use chrono::Utc;
     use serde_json::Map;
@@ -253,7 +258,7 @@ mod tests {
             review(1, 4, 1, 2),
             review(1, 10, 4, 3),
         ];
-        let set = training_set(&logs, 4);
+        let set = training_set(&logs, hours(4));
         assert_eq!(set.card_count, 1);
         assert_eq!(set.card_ids, vec![1, 1, 1]);
         assert_eq!(
@@ -277,7 +282,7 @@ mod tests {
             relearn,
             review(1, 8, 3, 2),
         ];
-        let set = training_set(&logs, 4);
+        let set = training_set(&logs, hours(4));
         assert_eq!(
             set.items.iter().map(deltas).collect::<Vec<_>>(),
             vec![vec![(1, 0), (1, 5)], vec![(1, 0), (1, 5), (4, 0), (3, 3)],],
@@ -294,7 +299,7 @@ mod tests {
         late.reviewed_at = at(0, 23);
         let mut early = review(1, 1, 3, 1);
         early.reviewed_at = at(1, 5);
-        let set = training_set(&[late, early], 4);
+        let set = training_set(&[late, early], hours(4));
         assert_eq!(
             deltas(&set.items[0]),
             vec![(3, 0), (3, 1)],
@@ -309,11 +314,11 @@ mod tests {
         let mut after_midnight = review(1, 1, 3, 1);
         after_midnight.reviewed_at = at(1, 1);
         assert_eq!(
-            training_set(&[late.clone(), after_midnight.clone()], 4).items,
+            training_set(&[late.clone(), after_midnight.clone()], hours(4)).items,
             Vec::new(),
             "the same day of study"
         );
-        let set = training_set(&[late, after_midnight], 0);
+        let set = training_set(&[late, after_midnight], hours(0));
         assert_eq!(deltas(&set.items[0]), vec![(3, 0), (3, 1)]);
     }
 
@@ -322,7 +327,7 @@ mod tests {
         let mut second = review(1, 0, 3, 1);
         second.id = 2;
         second.reviewed_at = at(0, 13);
-        let set = training_set(&[review(1, 0, 1, 0), second], 4);
+        let set = training_set(&[review(1, 0, 1, 0), second], hours(4));
         assert_eq!(set.items, Vec::new());
         assert_eq!(set.card_count, 0);
     }
@@ -336,7 +341,7 @@ mod tests {
             review(1, 7, 3, 0),
             review(1, 9, 2, 2),
         ];
-        let set = training_set(&logs, 4);
+        let set = training_set(&logs, hours(4));
         assert_eq!(
             set.items.iter().map(deltas).collect::<Vec<_>>(),
             vec![vec![(3, 0), (2, 2)]]
@@ -345,7 +350,7 @@ mod tests {
 
     #[test]
     fn a_history_without_its_first_review_is_skipped() {
-        let set = training_set(&[review(1, 0, 3, 2), review(1, 5, 3, 2)], 4);
+        let set = training_set(&[review(1, 0, 3, 2), review(1, 5, 3, 2)], hours(4));
         assert_eq!(set.items, Vec::new());
     }
 
@@ -353,7 +358,7 @@ mod tests {
     fn other_schedulers_reviews_are_skipped() {
         let mut other = review(1, 5, 3, 2);
         other.scheduler_name = "other".to_string();
-        let set = training_set(&[review(1, 0, 3, 0), other], 4);
+        let set = training_set(&[review(1, 0, 3, 0), other], hours(4));
         assert_eq!(set.items, Vec::new());
     }
 
@@ -365,7 +370,7 @@ mod tests {
             review(2, 1, 3, 0),
             review(2, 4, 3, 2),
         ];
-        let set = training_set(&logs, 4);
+        let set = training_set(&logs, hours(4));
         assert_eq!(set.card_count, 2);
         assert_eq!(set.card_ids, vec![1, 2]);
         assert_eq!(deltas(&set.items[1]), vec![(3, 0), (3, 3)]);

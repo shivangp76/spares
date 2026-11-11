@@ -38,6 +38,7 @@ use toml_edit::DocumentMut;
 use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::LibraryError;
+use crate::api::statistics::local_time::Zone;
 use crate::collection;
 use crate::parsers::image_occlusion::ImageOcclusionConfig;
 use crate::parsers::impls::markdown::MarkdownParserConfig;
@@ -849,7 +850,26 @@ pub struct SparesExternalConfig {
     /// A card is due at the time of day it was last reviewed, a whole number of days later, so its
     /// due day moves with this setting just like the day of its review. Changing it during the
     /// day can unbury the cards buried today early, or leave them buried until the next day.
+    ///
+    /// The hour is read in [`Self::time_zone`].
     pub day_starts_at: u8,
+    /// The time zone days of study are told apart in, as an IANA name such as
+    /// `America/New_York`. Unset by default, to use the zone of the machine the server runs on.
+    ///
+    /// It goes with [`Self::day_starts_at`]: a day starts at that hour in this zone. Everything
+    /// [`Self::day_starts_at`] lists follows it, including `today` and dates in searches and the
+    /// days of statistics, which then ignore the zone a client asks for.
+    ///
+    /// Without it, the laptop and a sync server only agree on days if their machines are set to
+    /// the same zone (`spares deploy` sets the server's to the laptop's), and a server of several
+    /// users counts days in one zone for all of them. `spares sync cloud` copies `config.toml` to
+    /// the server, so setting it on the laptop is enough, and each user of a server has their own. Anki follows the zone of the device studied on, so travelling
+    /// changes its days; this stays put until it is changed, which is the thing to do after a
+    /// move for good.
+    ///
+    /// As with [`Self::day_starts_at`], changing it during the day can unbury the cards buried
+    /// today early, or leave them buried until the next day.
+    pub time_zone: Option<String>,
     pub flagged_tag_name: String,
     /// The tag of notes that are never shared: `spares note export --share` leaves out the notes
     /// with it or a tag under it, such as `private:health`. Defaults to `"private"`.
@@ -913,6 +933,7 @@ impl Default for SparesExternalConfig {
             reviews_daily_limit: u32::MAX,
             new_cards_ignore_review_limit: false,
             day_starts_at: 4,
+            time_zone: None,
             flagged_tag_name: "flagged".to_string(),
             private_tag_name: "private".to_string(),
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
@@ -950,6 +971,9 @@ impl SparesExternalConfig {
                 "`day_starts_at` must be an hour from 0 to 23, not {}.",
                 self.day_starts_at
             ));
+        }
+        if let Some(name) = &self.time_zone {
+            Zone::parse(Some(name), self.day_starts_at).map_err(|e| format!("`time_zone`: {e}"))?;
         }
         for (name, preset) in &self.queue.presets {
             let key = |setting: &str| format!("queue.presets.{name}.{setting}");
@@ -1026,6 +1050,11 @@ impl SparesExternalConfig {
 }
 
 impl SparesExternalConfig {
+    /// The zone days of study are counted in. See [`Zone::from_config`].
+    pub(crate) fn zone(&self) -> Zone {
+        Zone::from_config(self)
+    }
+
     /// The settings a card of the preset at index `preset` of [`QueueConfig::presets`] is rated
     /// with: these, with the preset's steps and sibling burying in place of the top-level ones.
     /// Borrowed when nothing changes, as for `None` (a card matching no preset).

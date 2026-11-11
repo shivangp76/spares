@@ -1190,8 +1190,7 @@ mod forget_tests {
         let history = get_review_history(&pool, ReviewHistoryRequest::default())
             .await
             .unwrap();
-        let local_date =
-            |at: DateTime<Utc>| study_date(at, crate::api::queue::tests::day_starts_at());
+        let local_date = |at: DateTime<Utc>| study_date(at, crate::api::queue::tests::zone());
         assert_eq!(history.today, Some(local_date(Utc::now())));
         assert_eq!(history.review_count_by_date.len(), 2);
         assert_eq!(history.review_count_by_date[&local_date(earlier)], 1);

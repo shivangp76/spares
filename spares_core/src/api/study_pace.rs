@@ -81,17 +81,13 @@ impl StudyPaces {
     /// The paces of the reviews of `cards`, the card table with each card's preset as a `preset`
     /// column (see [`cards_with_preset`](crate::api::preset::cards_with_preset)), told apart by
     /// local day.
-    pub(crate) async fn load(
-        db: &SqlitePool,
-        cards: &str,
-        day_starts_at: u8,
-    ) -> Result<Self, Error> {
+    pub(crate) async fn load(db: &SqlitePool, cards: &str, zone: Zone) -> Result<Self, Error> {
         let (first, last): (Option<i64>, Option<i64>) =
             sqlx::query_as(r"SELECT MIN(reviewed_at), MAX(reviewed_at) FROM review_log")
                 .fetch_one(db)
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
-        let day = Zone::server(day_starts_at)
+        let day = zone
             .clock(first.unwrap_or_default(), last.unwrap_or_default())
             .day("rl.reviewed_at");
         let seconds = capped_review_seconds("rl");
@@ -256,7 +252,7 @@ mod tests {
             where_clause: "c.due <= ?".to_string(),
             is_filtered_tag: false,
             card_due_limit: now,
-            day_starts_at: crate::api::queue::tests::day_starts_at(),
+            zone: crate::api::queue::tests::zone(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: None,
@@ -377,8 +373,7 @@ mod tests {
 
         // Seen once today, so it has one more review of its learning steps to go, at the 30
         // seconds learning cards have taken
-        let (day_start, _) =
-            get_start_end_local_date(&now, crate::api::queue::tests::day_starts_at());
+        let (day_start, _) = get_start_end_local_date(&now, crate::api::queue::tests::zone());
         review(&pool, ids[1], day_start, NEW, 60).await;
         set_card(&pool, ids[1], LEARNING, day_start, 1.0, 5.0).await;
         assert_eq!(
@@ -399,7 +394,7 @@ mod tests {
             where_clause: "c.due <= ?".to_string(),
             is_filtered_tag: false,
             card_due_limit: now,
-            day_starts_at: crate::api::queue::tests::day_starts_at(),
+            zone: crate::api::queue::tests::zone(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: Some(format!(

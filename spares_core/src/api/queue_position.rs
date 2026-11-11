@@ -281,7 +281,7 @@ async fn review_filter_of(
 ) -> Result<ReviewFilterQuery, Error> {
     let filter = match filter {
         Some(GetReviewCardFilterRequest::Query(query)) if query_has_limit(&query) => {
-            let tag_id = todays_review_snapshot(db, &query, requested_date, config.day_starts_at)
+            let tag_id = todays_review_snapshot(db, &query, requested_date, config.zone())
                 .await?
                 .ok_or_else(|| {
                     invalid(format!(
@@ -683,14 +683,13 @@ mod tests {
             new_after_linked_notes: true,
             ..QueueConfig::default()
         };
-        let (_, card_due_limit) =
-            get_start_end_local_date(&now, crate::api::queue::tests::day_starts_at());
+        let (_, card_due_limit) = get_start_end_local_date(&now, crate::api::queue::tests::zone());
         let filter = ReviewFilterQuery {
             cards: cards_with_preset(&IndexMap::new()),
             where_clause: String::new(),
             is_filtered_tag: false,
             card_due_limit,
-            day_starts_at: crate::api::queue::tests::day_starts_at(),
+            zone: crate::api::queue::tests::zone(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: None,

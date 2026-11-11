@@ -79,20 +79,18 @@ pub fn value_to_string_vec(value: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The first and last second of the day of study `requested_date` counts for, in the server's
-/// time zone, with days starting at `day_starts_at` (see
-/// [`SparesExternalConfig::day_starts_at`](crate::config::SparesExternalConfig::day_starts_at)).
-pub fn get_start_end_local_date(
+/// The first and last second of the day of study `requested_date` counts for, in `zone` (see
+/// [`Zone::from_config`]).
+pub(crate) fn get_start_end_local_date(
     requested_date: &DateTime<Utc>,
-    day_starts_at: u8,
+    zone: Zone,
 ) -> (DateTime<Utc>, DateTime<Utc>) {
-    Zone::server(day_starts_at).bounds(*requested_date)
+    zone.bounds(*requested_date)
 }
 
-/// The day of study `at` counts for, in the server's time zone (see
-/// [`get_start_end_local_date`]).
-pub fn study_date(at: DateTime<Utc>, day_starts_at: u8) -> NaiveDate {
-    Zone::server(day_starts_at).date(at)
+/// The day of study `at` counts for, in `zone` (see [`get_start_end_local_date`]).
+pub(crate) fn study_date(at: DateTime<Utc>, zone: Zone) -> NaiveDate {
+    zone.date(at)
 }
 
 /// Merge 2 sorted lists into a new sorted list

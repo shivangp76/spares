@@ -75,8 +75,8 @@ use crate::schema::review::StateRole;
 /// The due dates that new placements must take into account.
 #[derive(Debug)]
 pub struct PlacementContext {
-    /// The days cards are placed on, which start at
-    /// [`SparesExternalConfig::day_starts_at`].
+    /// The days cards are placed on, which start at [`SparesExternalConfig::day_starts_at`] in
+    /// [`SparesExternalConfig::time_zone`].
     zone: Zone,
     today: NaiveDate,
     /// Every card in review that competes for days, with its note and due date.
@@ -96,12 +96,8 @@ impl PlacementContext {
     }
 
     /// Loads every card that competes for days.
-    pub async fn load_all(
-        db: &SqlitePool,
-        at: DateTime<Utc>,
-        day_starts_at: u8,
-    ) -> Result<Self, Error> {
-        Self::load(db, Zone::server(day_starts_at), at, None, None).await
+    pub async fn load_all(db: &SqlitePool, at: DateTime<Utc>, zone: Zone) -> Result<Self, Error> {
+        Self::load(db, zone, at, None, None).await
     }
 
     /// Loads what is needed to place `card` on one of `candidates`: the cards due on those days
@@ -111,9 +107,8 @@ impl PlacementContext {
         at: DateTime<Utc>,
         card: &Card,
         candidates: &[DateTime<Utc>],
-        day_starts_at: u8,
+        zone: Zone,
     ) -> Result<Self, Error> {
-        let zone = Zone::server(day_starts_at);
         let (Some(first), Some(last)) = (candidates.iter().min(), candidates.iter().max()) else {
             return Ok(Self::new(zone, at));
         };
@@ -315,7 +310,7 @@ pub async fn place_due(
         [only] => Ok(*only),
         _ => {
             let mut context =
-                PlacementContext::load_for(db, at, card, &candidates, config.day_starts_at).await?;
+                PlacementContext::load_for(db, at, card, &candidates, config.zone()).await?;
             Ok(context.place(config, card, &candidates, &mut rand::rng()))
         }
     }
@@ -428,6 +423,29 @@ mod tests {
         let candidates = (3..=7).map(day).collect::<Vec<_>>();
         let chosen = histogram(&mut context(), &config, &card(1, 1), &candidates, 200);
         assert!(!chosen.contains_key(&day(5)));
+    }
+
+    /// Easy days are the weekdays of [`SparesExternalConfig::time_zone`], not of UTC.
+    #[test]
+    fn easy_weekdays_are_the_configured_zones() {
+        let mut config = SparesExternalConfig {
+            time_zone: Some("Asia/Tokyo".to_string()),
+            ..SparesExternalConfig::default()
+        };
+        config
+            .easy_days
+            .days_to_workload_percentage
+            .insert(Weekday::Sat, 0.0);
+        config.validate().unwrap();
+        // 20:00 UTC is 05:00 the next day in Tokyo: day(4) is a Saturday there, and day(5),
+        // Saturday in UTC, is a Sunday.
+        let candidates = (3..=7)
+            .map(|d| day(d) + Duration::hours(8))
+            .collect::<Vec<_>>();
+        let mut context = PlacementContext::new(config.zone(), day(0));
+        let chosen = histogram(&mut context, &config, &card(1, 1), &candidates, 200);
+        assert!(!chosen.contains_key(&candidates[1]), "{chosen:?}");
+        assert!(chosen.contains_key(&candidates[2]), "{chosen:?}");
     }
 
     #[test]

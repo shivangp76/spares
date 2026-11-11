@@ -48,7 +48,7 @@ pub async fn get_statistics(
     } = request;
     let scheduler = get_scheduler_from_string(scheduler_name.as_str())?;
     let config = read_external_config()?;
-    let zone = Zone::parse(tz.as_deref(), config.day_starts_at)?;
+    let zone = Zone::for_client(tz.as_deref(), &config)?;
     let today = zone.date(requested_date);
     let today_start = zone.start_of(today).timestamp();
     let tomorrow_start = zone.start_of(today + Days::new(1)).timestamp();
@@ -176,7 +176,7 @@ pub async fn get_review_history(
     db: &SqlitePool,
     request: ReviewHistoryRequest,
 ) -> Result<ReviewHistoryResponse, Error> {
-    let zone = Zone::parse(request.tz.as_deref(), read_external_config()?.day_starts_at)?;
+    let zone = Zone::for_client(request.tz.as_deref(), &read_external_config()?)?;
     let cards = CardFilter::new(db, request.query.as_deref()).await?;
     // Reviews of since-deleted cards still count without a query, as they were studied all the
     // same

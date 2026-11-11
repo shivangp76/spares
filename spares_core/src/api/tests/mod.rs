@@ -525,7 +525,7 @@ async fn assert_reviews_follow_workload_percentage(pool: &SqlitePool) {
         .map(|reviewed_at| {
             crate::helpers::study_date(
                 DateTime::from_timestamp(reviewed_at, 0).unwrap(),
-                config.day_starts_at,
+                config.zone(),
             )
         })
         .filter(|date| !config.easy_days.specific_dates.contains(date))

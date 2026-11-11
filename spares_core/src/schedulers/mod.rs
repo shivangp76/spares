@@ -366,7 +366,7 @@ pub trait SrsScheduler: Send + Sync {
         )?;
         cards_with_review_logs.sort_by_key(|(card, _)| (card.due, card.id));
 
-        let mut context = PlacementContext::load_all(db, at, configs.base().day_starts_at).await?;
+        let mut context = PlacementContext::load_all(db, at, configs.base().zone()).await?;
         // `ThreadRng` is not `Send`, and this future is held across awaits.
         let mut rng = StdRng::from_rng(&mut rand::rng());
         for (card, review_logs) in &mut cards_with_review_logs {

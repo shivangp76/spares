@@ -194,7 +194,7 @@ pub(crate) async fn get_statistics_graphs_with(
     request: StatisticsGraphsRequest,
 ) -> Result<StatisticsGraphsResponse, Error> {
     let scheduler = get_scheduler_from_string(&request.scheduler_name)?;
-    let zone = Zone::parse(request.tz.as_deref(), config.day_starts_at)?;
+    let zone = Zone::for_client(request.tz.as_deref(), config)?;
     let cards = CardFilter::new(db, request.query.as_deref()).await?;
     let now = request.date;
     let today = zone.date(now);
