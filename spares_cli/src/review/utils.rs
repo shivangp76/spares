@@ -577,6 +577,20 @@ pub(crate) fn format_duration(duration: chrono::Duration) -> String {
     result.join(" ")
 }
 
+/// Says how many cards were rated in the timebox just over and how long it took (see
+/// `QueueConfig::timebox`), and asks whether to go on. `false` to end the session.
+pub(super) fn continue_after_timebox(cards: u32, elapsed: Duration) -> bool {
+    let elapsed = chrono::Duration::from_std(elapsed).unwrap_or_default();
+    let message = format!(
+        "Timebox over: {cards} card{} in {}.",
+        if cards == 1 { "" } else { "s" },
+        format_duration(elapsed)
+    );
+    let mut select = inquire::Select::new(&message, vec!["Continue", "End session"]);
+    select.vim_mode = true;
+    matches!(select.prompt(), Ok("Continue"))
+}
+
 pub(super) fn print_recall_duration(recall_duration: Duration) {
     let duration =
         chrono::Duration::from_std(recall_duration).expect("recall_duration fits chrono::Duration");

@@ -1349,6 +1349,11 @@ pub mod review {
         pub flagged_tag_name: String,
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub set_card_due_date_duration: Duration,
+        /// See [`QueueConfig::timebox`](crate::config::QueueConfig::timebox). `None` from a server
+        /// older than it.
+        #[serde(default)]
+        #[serde_as(as = "Option<serde_with::DurationSeconds<i64>>")]
+        pub timebox: Option<Duration>,
     }
 }
 

@@ -148,6 +148,7 @@ pub(crate) async fn get_review_config_handler()
     Ok(Json(ReviewConfigResponse {
         flagged_tag_name: config.flagged_tag_name,
         set_card_due_date_duration: config.set_card_due_date_duration,
+        timebox: config.queue.timebox,
     }))
 }
 

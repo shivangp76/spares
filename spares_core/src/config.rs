@@ -375,6 +375,16 @@ pub struct QueueConfig {
     /// Filtered tags are not affected: they show every card in them, whenever it is due.
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub learn_ahead_limit: Duration,
+    /// How long a timebox of review lasts, in seconds, like Anki's "Timebox time limit". Unset
+    /// by default, for no timeboxes.
+    ///
+    /// Each time a timebox is over, `spares card review` and the web app's review say how many
+    /// cards were rated in it and how long it took, as "25 cards in 15m 3s", after the rating
+    /// that ended it. They wait for you to go on, or to end the session, before showing the next
+    /// card, and the next timebox starts then. Nothing is stored: timeboxes are only about the
+    /// session under way, and a new session starts a new one.
+    #[serde_as(as = "Option<serde_with::DurationSeconds<i64>>")]
+    pub timebox: Option<Duration>,
     /// Whether rating a card buries the new cards of its note until the next day. Defaults to
     /// `false`.
     ///
@@ -466,6 +476,7 @@ impl Default for QueueConfig {
             new_review_mix: NewReviewMix::default(),
             interleave_by: InterleaveBy::default(),
             learn_ahead_limit: Duration::minutes(20),
+            timebox: None,
             bury_new_siblings: false,
             bury_review_siblings: false,
             new_after_linked_notes: false,
@@ -1031,6 +1042,13 @@ impl SparesExternalConfig {
         {
             return Err("`maximum_answer_time` must be more than 0 seconds.".to_string());
         }
+        if self
+            .queue
+            .timebox
+            .is_some_and(|timebox| timebox <= Duration::zero())
+        {
+            return Err("`queue.timebox` must be more than 0 seconds, or unset.".to_string());
+        }
         if self.queue.learn_ahead_limit < Duration::zero() {
             return Err("`queue.learn_ahead_limit` must not be negative.".to_string());
         }
@@ -1369,6 +1387,18 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 1, 31)
         );
         assert_eq!(parse("").fsrs_optimizer_ignore_reviews_before, None);
+    }
+
+    #[test]
+    fn timebox_is_in_seconds_and_unset_by_default() {
+        assert_eq!(parse("").queue.timebox, None);
+        assert_eq!(
+            parse("[queue]\ntimebox = 900\n").queue.timebox,
+            Some(Duration::minutes(15))
+        );
+        let mut config: SparesExternalConfig =
+            toml_edit::de::from_str("[queue]\ntimebox = 0\n").unwrap();
+        assert!(config.validate().is_err());
     }
 
     #[test]
