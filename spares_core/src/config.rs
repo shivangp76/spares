@@ -385,6 +385,9 @@ pub struct QueueConfig {
     /// session under way, and a new session starts a new one.
     #[serde_as(as = "Option<serde_with::DurationSeconds<i64>>")]
     pub timebox: Option<Duration>,
+    /// Whether the web app's review shows the answer, and then rates or buries the card, on its
+    /// own after some seconds, like Anki's auto advance. Unset by default. See [`AutoAdvance`].
+    pub auto_advance: Option<AutoAdvance>,
     /// Whether rating a card buries the new cards of its note until the next day. Defaults to
     /// `false`.
     ///
@@ -468,6 +471,65 @@ pub struct QueueConfig {
     pub presets: IndexMap<String, QueuePreset>,
 }
 
+/// A `[queue.auto_advance]` table of `config.toml`: see [`QueueConfig::auto_advance`]. For
+/// example, to show the answer after 15 seconds, and rate the card Again if it is still not rated
+/// 10 seconds later:
+///
+/// ```toml
+/// [queue.auto_advance]
+/// show_answer_after = 15
+/// rate_after = 10
+/// action = "again"
+/// ```
+///
+/// Only the web app's review advances on its own: `spares card review` waits at its prompt. The
+/// timers only run while the page has the focus, and start again from the beginning when it gets
+/// it back, so a card nobody looks at is never rated. They also wait while a note, a date picker
+/// or the keybindings are open, and `a` turns auto advance off and on for the session. An action
+/// goes through the same requests as pressing its button, so undo works as usual, and its time
+/// is logged like a rating by hand (see [`SparesExternalConfig::maximum_answer_time`]).
+#[serde_with::serde_as]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct AutoAdvance {
+    /// How long the front of a card is shown before the answer, in seconds. 0 to wait for the
+    /// answer to be shown by hand. Defaults to 0.
+    #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+    pub show_answer_after: Duration,
+    /// How long the answer is shown before [`Self::action`], in seconds. 0 to wait for a rating
+    /// by hand. Defaults to 0.
+    #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+    pub rate_after: Duration,
+    /// What is done to a card whose answer was shown for [`Self::rate_after`]. Defaults to
+    /// [`AutoAdvanceAction::Bury`], as in Anki.
+    pub action: AutoAdvanceAction,
+}
+
+impl Default for AutoAdvance {
+    fn default() -> Self {
+        Self {
+            show_answer_after: Duration::zero(),
+            rate_after: Duration::zero(),
+            action: AutoAdvanceAction::default(),
+        }
+    }
+}
+
+/// See [`AutoAdvance::action`].
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoAdvanceAction {
+    /// Rate the card Again.
+    Again,
+    /// Rate the card Hard.
+    Hard,
+    /// Rate the card Good.
+    Good,
+    /// Bury the card until the next day, without rating it.
+    #[default]
+    Bury,
+}
+
 impl Default for QueueConfig {
     fn default() -> Self {
         Self {
@@ -477,6 +539,7 @@ impl Default for QueueConfig {
             interleave_by: InterleaveBy::default(),
             learn_ahead_limit: Duration::minutes(20),
             timebox: None,
+            auto_advance: None,
             bury_new_siblings: false,
             bury_review_siblings: false,
             new_after_linked_notes: false,
@@ -1049,6 +1112,15 @@ impl SparesExternalConfig {
         {
             return Err("`queue.timebox` must be more than 0 seconds, or unset.".to_string());
         }
+        if let Some(auto_advance) = &self.queue.auto_advance
+            && (auto_advance.show_answer_after < Duration::zero()
+                || auto_advance.rate_after < Duration::zero())
+        {
+            return Err(
+                "`queue.auto_advance.show_answer_after` and `rate_after` must not be negative."
+                    .to_string(),
+            );
+        }
         if self.queue.learn_ahead_limit < Duration::zero() {
             return Err("`queue.learn_ahead_limit` must not be negative.".to_string());
         }
@@ -1398,6 +1470,23 @@ mod tests {
         );
         let mut config: SparesExternalConfig =
             toml_edit::de::from_str("[queue]\ntimebox = 0\n").unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn auto_advance_is_a_table() {
+        assert_eq!(parse("").queue.auto_advance, None);
+        let config = parse("[queue.auto_advance]\nshow_answer_after = 15\naction = \"again\"\n");
+        assert_eq!(
+            config.queue.auto_advance,
+            Some(AutoAdvance {
+                show_answer_after: Duration::seconds(15),
+                rate_after: Duration::zero(),
+                action: AutoAdvanceAction::Again,
+            })
+        );
+        let mut config: SparesExternalConfig =
+            toml_edit::de::from_str("[queue.auto_advance]\nrate_after = -1\n").unwrap();
         assert!(config.validate().is_err());
     }
 

@@ -1354,6 +1354,10 @@ pub mod review {
         #[serde(default)]
         #[serde_as(as = "Option<serde_with::DurationSeconds<i64>>")]
         pub timebox: Option<Duration>,
+        /// See [`QueueConfig::auto_advance`](crate::config::QueueConfig::auto_advance). `None`
+        /// from a server older than it.
+        #[serde(default)]
+        pub auto_advance: Option<crate::config::AutoAdvance>,
     }
 }
 

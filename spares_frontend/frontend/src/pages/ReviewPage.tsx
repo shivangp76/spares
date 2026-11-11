@@ -482,6 +482,10 @@ export default function ReviewPage() {
   const [summaryFade, setSummaryFade] = useState<"shown" | "fading" | "gone">(
     "shown",
   );
+  // Whether auto advance (`queue.auto_advance`) is on for this session, which `a` turns off and on
+  const [autoAdvanceOn, setAutoAdvanceOn] = useState(true);
+  // Whether the page has the focus, without which auto advance waits
+  const [pageFocused, setPageFocused] = useState(() => document.hasFocus());
   // The timebox under way (`queue.timebox`): when it started and the cards rated in it
   const timebox = useRef({ start: 0, cards: 0 });
   // The timebox just over, shown until the next is started
@@ -1409,6 +1413,13 @@ export default function ReviewPage() {
       description: `Tag note to modify later${config ? ` (${config.flagged_tag_name})` : ""}`,
       available: cardShown && config !== null,
     },
+    {
+      keys: ["a"],
+      description: autoAdvanceOn
+        ? "Turn auto advance off for this session"
+        : "Turn auto advance back on",
+      available: reviewing && !!config?.auto_advance,
+    },
     { keys: ["q"], description: "Switch query", available: reviewing },
     {
       keys: ["Q"],
@@ -1445,6 +1456,68 @@ export default function ReviewPage() {
       available: phase === "front" && !!card?.typed_answer,
     })),
   ];
+
+  // Auto advance waits while the page is not focused, so it never acts on a card nobody looks at,
+  // and starts again from the beginning when it is
+  useEffect(() => {
+    const update = () =>
+      setPageFocused(document.hasFocus() && !document.hidden);
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+  // What auto advance does next, from the current render's state
+  const autoAdvanceStep = useRef<() => void>(() => {});
+  useEffect(() => {
+    autoAdvanceStep.current = () => {
+      if (phase === "front") {
+        showAnswer();
+        return;
+      }
+      const action = config?.auto_advance?.action;
+      if (phase !== "back" || !action) return;
+      if (action === "bury") {
+        buryCard();
+        return;
+      }
+      const rating = ratings.find(
+        (r) => r.description.toLowerCase() === action,
+      );
+      if (rating) rate(rating.id);
+    };
+  });
+  const autoAdvance = autoAdvanceOn ? (config?.auto_advance ?? null) : null;
+  const autoAdvanceWaits =
+    !pageFocused ||
+    panelNote !== null ||
+    dueDatePicker !== null ||
+    buryUntilPicker !== null ||
+    showKeybindings;
+  useEffect(() => {
+    if (!autoAdvance || autoAdvanceWaits || !card) return;
+    const seconds =
+      phase === "front"
+        ? autoAdvance.show_answer_after
+        : phase === "back"
+          ? autoAdvance.rate_after
+          : 0;
+    if (seconds <= 0) return;
+    const timer = setTimeout(() => autoAdvanceStep.current(), seconds * 1000);
+    return () => clearTimeout(timer);
+  }, [autoAdvance, autoAdvanceWaits, card, cardVersion, phase]);
+  function toggleAutoAdvance() {
+    setAutoAdvanceOn((on) => !on);
+    setStatus(
+      autoAdvanceOn
+        ? "Auto advance is off for this session."
+        : "Auto advance is on.",
+    );
+  }
 
   // Re-bound on every render so closures are current
   useEffect(() => {
@@ -1494,6 +1567,7 @@ export default function ReviewPage() {
         e: toggleCardNote,
         R: reloadCard,
         f: flagNote,
+        a: toggleAutoAdvance,
         q: switchQuery,
         Q: () => setShowFindInQueue((v) => !v),
         r: replayAudio,
