@@ -100,6 +100,21 @@ fn test_hint_unclosed_quote() {
     assert!(description.contains("no closing"), "{description}");
 }
 
+/// A setting after a hint that fails names the hint, as it may have been meant as part of it
+#[test]
+fn test_hint_note_on_error() {
+    let description = error("{{[h:it is;b] x }}");
+    assert!(description.contains("The card back"), "{description}");
+    assert!(description.contains(r#"`h:"it is;b"`"#), "{description}");
+    let description = error("{{[h:a;zz:1] x }}");
+    assert!(description.contains(r#"`h:"a;zz:1"`"#), "{description}");
+    // A quoted hint did not end at the delimiter, nor does a setting not right after a hint
+    let description = error(r#"{{[h:"a";b] x }}"#);
+    assert!(!description.contains("A hint ends"), "{description}");
+    let description = error("{{[h:a;t;b] x }}");
+    assert!(!description.contains("A hint ends"), "{description}");
+}
+
 /// A hint written by `quote_setting_value` reads back as itself, and the note's rewrite keeps it
 #[test]
 fn test_hint_round_trip() {

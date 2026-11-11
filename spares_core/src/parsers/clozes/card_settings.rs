@@ -380,6 +380,20 @@ fn parse_card_source(
     Ok(ReadableCardIdentifier { note_id, order })
 }
 
+/// Adds to the error of a setting that follows a hint that a hint ends at `;`, since the setting
+/// may have been meant as part of it, as in `h:it is;b`.
+fn hint_note(description: &str, hint: &str, key: &str, value: &str, hint_key: &str) -> String {
+    let setting = if value.is_empty() {
+        key.to_string()
+    } else {
+        format!("{key}:{value}")
+    };
+    format!(
+        "{description} A hint ends at `;`, so `{setting}` after `{hint_key}:{hint}` was read as a \
+         setting. To keep it in the hint, quote the hint, as in `{hint_key}:\"{hint};{setting}\"`."
+    )
+}
+
 #[expect(clippy::too_many_lines, reason = "One branch per key")]
 fn parse_grouping_settings(
     grouping_settings: &mut Vec<(&str, &str)>,
@@ -411,108 +425,142 @@ fn parse_grouping_settings(
     // We don't want to increment `current_grouping_number` here, so we clone it first.
     let mut current_grouping_settings =
         ClozeGroupingSettings::default(&mut current_grouping_number.clone(), modify_defaults_fn);
+    // The hint written before the current setting, unless it was quoted
+    let mut previous_hint: Option<&str> = None;
     for (key, value) in grouping_settings {
-        if key == include_reverse_key {
-            include_reverse = true;
-        } else if key == reverse_only_key {
-            reverse_only = true;
-        } else if key == is_suspended_key {
-            // A negative option is provided to allow unsuspending a card when updating a note.
-            current_grouping_settings.is_suspended = Some(*value != "n");
-        } else if key == hint_key {
-            settings.hint = Some(unquote_setting_value(value));
-        } else if key == tts_key {
-            settings.tts = Some(TtsSetting::from_str(value).map_err(|e| {
-                LibraryError::Card(CardErrorKind::InvalidSettings {
-                    description: format!(
-                        "The text to speech setting `{}` is invalid. {}",
-                        value, e
-                    ),
-                    src: data.to_string(),
-                    at: card_settings_indices.clone().into(),
-                })
-            })?);
-        } else if key == hidden_no_answer_key {
-            current_grouping_settings.hidden_no_answer = true;
-        } else if key == front_conceal_key {
-            current_grouping_settings.front_conceal =
-                FrontConceal::from_str(value).map_err(|e| {
+        let after_hint = previous_hint.take();
+        if key == hint_key && !value.starts_with('"') {
+            previous_hint = Some(*value);
+        }
+        let parsed = (|| -> Result<(), LibraryError> {
+            if key == include_reverse_key {
+                include_reverse = true;
+            } else if key == reverse_only_key {
+                reverse_only = true;
+            } else if key == is_suspended_key {
+                // A negative option is provided to allow unsuspending a card when updating a note.
+                current_grouping_settings.is_suspended = Some(*value != "n");
+            } else if key == hint_key {
+                settings.hint = Some(unquote_setting_value(value));
+            } else if key == tts_key {
+                settings.tts = Some(TtsSetting::from_str(value).map_err(|e| {
                     LibraryError::Card(CardErrorKind::InvalidSettings {
-                        description: format!("The card front `{}` is invalid. Error: {}", value, e),
-                        src: data.to_string(),
-                        at: card_settings_indices.clone().into(),
-                    })
-                })?;
-        } else if key == back_reveal_key {
-            current_grouping_settings.back_reveal = BackReveal::from_str(value).map_err(|e| {
-                LibraryError::Card(CardErrorKind::InvalidSettings {
-                    description: format!("The card back `{}` is invalid. Error: {}", value, e),
-                    src: data.to_string(),
-                    at: card_settings_indices.clone().into(),
-                })
-            })?;
-        } else if key == back_emphasis_key {
-            // Written back as `be:true` or `be:false` (see `construct_cloze_string`). Like `s:n`,
-            // `be:n` turns it off too, e.g. on an image occlusion that emphasizes by default.
-            current_grouping_settings.back_emphasis = !matches!(*value, "false" | "n");
-        } else if key == type_answer_key {
-            current_grouping_settings.type_answer =
-                Some(TypeAnswer::from_str(value).map_err(|e| {
-                    LibraryError::Card(CardErrorKind::InvalidSettings {
-                        description: format!("The typed answer `{}` is invalid. {}", value, e),
+                        description: format!(
+                            "The text to speech setting `{}` is invalid. {}",
+                            value, e
+                        ),
                         src: data.to_string(),
                         at: card_settings_indices.clone().into(),
                     })
                 })?);
-        } else if key == overlapper_key {
-            settings.is_overlapper = true;
-        } else if key == inherit_key || key == move_card_key {
-            if current_grouping_settings.inherit.is_some() {
+            } else if key == hidden_no_answer_key {
+                current_grouping_settings.hidden_no_answer = true;
+            } else if key == front_conceal_key {
+                current_grouping_settings.front_conceal =
+                    FrontConceal::from_str(value).map_err(|e| {
+                        LibraryError::Card(CardErrorKind::InvalidSettings {
+                            description: format!(
+                                "The card front `{}` is invalid. Error: {}",
+                                value, e
+                            ),
+                            src: data.to_string(),
+                            at: card_settings_indices.clone().into(),
+                        })
+                    })?;
+            } else if key == back_reveal_key {
+                current_grouping_settings.back_reveal =
+                    BackReveal::from_str(value).map_err(|e| {
+                        LibraryError::Card(CardErrorKind::InvalidSettings {
+                            description: format!(
+                                "The card back `{}` is invalid. Error: {}",
+                                value, e
+                            ),
+                            src: data.to_string(),
+                            at: card_settings_indices.clone().into(),
+                        })
+                    })?;
+            } else if key == back_emphasis_key {
+                // Written back as `be:true` or `be:false` (see `construct_cloze_string`). Like `s:n`,
+                // `be:n` turns it off too, e.g. on an image occlusion that emphasizes by default.
+                current_grouping_settings.back_emphasis = !matches!(*value, "false" | "n");
+            } else if key == type_answer_key {
+                current_grouping_settings.type_answer =
+                    Some(TypeAnswer::from_str(value).map_err(|e| {
+                        LibraryError::Card(CardErrorKind::InvalidSettings {
+                            description: format!("The typed answer `{}` is invalid. {}", value, e),
+                            src: data.to_string(),
+                            at: card_settings_indices.clone().into(),
+                        })
+                    })?);
+            } else if key == overlapper_key {
+                settings.is_overlapper = true;
+            } else if key == inherit_key || key == move_card_key {
+                if current_grouping_settings.inherit.is_some() {
+                    return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
+                        description: format!(
+                            "A cloze takes one of `{inherit_key}:` and `{move_card_key}:`, once."
+                        ),
+                        src: data.to_string(),
+                        at: card_settings_indices.clone().into(),
+                    }));
+                }
+                current_grouping_settings.inherit = Some(CardInheritance {
+                    source: parse_card_source(key, value, data, card_settings_indices)?,
+                    mode: if key == inherit_key {
+                        InheritMode::Copy
+                    } else {
+                        InheritMode::Move
+                    },
+                });
+            } else if key == orders_key {
+                let orders = value
+                    .split(',')
+                    .map(|x| {
+                        x.trim().parse::<usize>().map_err(|e| {
+                            LibraryError::Card(CardErrorKind::InvalidSettings {
+                                description: format!(
+                                    "The card order `{}` is invalid. Error: {}",
+                                    x, e
+                                ),
+                                src: data.to_string(),
+                                at: card_settings_indices.clone().into(),
+                            })
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                current_grouping_settings.orders = Some(orders);
+            } else if key == id_key {
+                settings.cloze_uid = Some(ClozeUid::try_from(*value).map_err(|_| {
+                    LibraryError::Card(CardErrorKind::InvalidSettings {
+                        description: format!("The cloze uid `{}` is invalid.", value),
+                        src: data.to_string(),
+                        at: card_settings_indices.clone().into(),
+                    })
+                })?);
+            } else {
                 return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
-                    description: format!(
-                        "A cloze takes one of `{inherit_key}:` and `{move_card_key}:`, once."
-                    ),
+                    description: format!("The key `{}` is not supported.", key),
                     src: data.to_string(),
                     at: card_settings_indices.clone().into(),
                 }));
             }
-            current_grouping_settings.inherit = Some(CardInheritance {
-                source: parse_card_source(key, value, data, card_settings_indices)?,
-                mode: if key == inherit_key {
-                    InheritMode::Copy
-                } else {
-                    InheritMode::Move
-                },
-            });
-        } else if key == orders_key {
-            let orders = value
-                .split(',')
-                .map(|x| {
-                    x.trim().parse::<usize>().map_err(|e| {
-                        LibraryError::Card(CardErrorKind::InvalidSettings {
-                            description: format!("The card order `{}` is invalid. Error: {}", x, e),
-                            src: data.to_string(),
-                            at: card_settings_indices.clone().into(),
-                        })
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            current_grouping_settings.orders = Some(orders);
-        } else if key == id_key {
-            settings.cloze_uid = Some(ClozeUid::try_from(*value).map_err(|_| {
+            Ok(())
+        })();
+        parsed.map_err(|e| match (e, after_hint) {
+            (
                 LibraryError::Card(CardErrorKind::InvalidSettings {
-                    description: format!("The cloze uid `{}` is invalid.", value),
-                    src: data.to_string(),
-                    at: card_settings_indices.clone().into(),
-                })
-            })?);
-        } else {
-            return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
-                description: format!("The key `{}` is not supported.", key),
-                src: data.to_string(),
-                at: card_settings_indices.clone().into(),
-            }));
-        }
+                    description,
+                    src,
+                    at,
+                }),
+                Some(hint),
+            ) => LibraryError::Card(CardErrorKind::InvalidSettings {
+                description: hint_note(&description, hint, key, value, hint_key),
+                src,
+                at,
+            }),
+            (e, _) => e,
+        })?;
     }
 
     // Validate settings
