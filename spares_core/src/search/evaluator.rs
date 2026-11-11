@@ -17,6 +17,7 @@ use sqlx::SqlitePool;
 
 use crate::LibraryError;
 use crate::api::queue::waiting_on_links;
+use crate::api::statistics::local_time::Zone;
 use crate::config::QueueConfig;
 use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
@@ -1242,9 +1243,9 @@ impl EvaluationContext {
         }
     }
 
-    /// See [`SparesExternalConfig::day_starts_at`].
-    fn day_starts_at(&self) -> Result<u8, Error> {
-        Ok(self.config()?.day_starts_at)
+    /// The zone days are told apart in. See [`Zone::from_config`].
+    fn zone(&self) -> Result<Zone, Error> {
+        Ok(Zone::from_config(self.config()?))
     }
 
     fn config(&self) -> Result<&SparesExternalConfig, Error> {
@@ -1862,7 +1863,7 @@ fn evaluate_comparison(
         && RelativeDate::starts_with_word_anchor(s)
     {
         let date = RelativeDate::parse(s)?;
-        value_context.params = vec![date.to_sql(context.day_starts_at()?)];
+        value_context.params = vec![date.to_sql(context.zone()?)];
         value_type = FieldType::DateTime;
         relative_date = Some(date);
     }
@@ -1910,19 +1911,19 @@ fn evaluate_comparison(
             ));
         }
         (_, _, Some((start, months))) => {
-            let day_starts_at = context.day_starts_at()?;
+            let zone = context.zone()?;
             Some((
-                local_month_start_sql(start, 0, day_starts_at),
-                local_month_start_sql(start, months, day_starts_at),
+                local_month_start_sql(start, 0, zone),
+                local_month_start_sql(start, months, zone),
             ))
         }
         (TokenTree::Atom(Atom::Date(date), _), _, _)
             if matches!(field_type, FieldType::DateTime) =>
         {
-            let day_starts_at = context.day_starts_at()?;
+            let zone = context.zone()?;
             Some((
-                local_day_start_sql(*date, 0, day_starts_at),
-                local_day_start_sql(*date, 1, day_starts_at),
+                local_day_start_sql(*date, 0, zone),
+                local_day_start_sql(*date, 1, zone),
             ))
         }
         (TokenTree::Atom(Atom::Date(date), _), _, _) => {
@@ -1932,8 +1933,8 @@ fn evaluate_comparison(
         }
         (_, Some(date), _) => match date.next_day() {
             Some(next) => {
-                let day_starts_at = context.day_starts_at()?;
-                Some((date.to_sql(day_starts_at), next.to_sql(day_starts_at)))
+                let zone = context.zone()?;
+                Some((date.to_sql(zone), next.to_sql(zone)))
             }
             None => None,
         },
@@ -2157,7 +2158,7 @@ fn evaluate_comparison(
     let sql_condition = match field {
         Field::Card(CardField::WaitingOnLinks) => {
             let config = context.config()?;
-            waiting_on_links_condition(&config.queue, config.day_starts_at, &value_str)
+            waiting_on_links_condition(&config.queue, Zone::from_config(config), &value_str)
         }
         Field::Card(CardField::Leech) => leech_sql(context.config()?, &value_str),
         _ => field.to_sql_str(&value_str)?,
@@ -2353,10 +2354,10 @@ fn review_time_sql(field: &str, range: &str) -> Result<String, Error> {
 /// back today, so `true` matches nothing while both are off.
 pub(crate) fn waiting_on_links_condition(
     queue: &QueueConfig,
-    day_starts_at: u8,
+    zone: Zone,
     value_str: &str,
 ) -> String {
-    let (_, card_due_limit) = get_start_end_local_date(&Utc::now(), day_starts_at);
+    let (_, card_due_limit) = get_start_end_local_date(&Utc::now(), zone);
     let waiting = waiting_on_links(queue, card_due_limit, None).unwrap_or_else(|| "0".to_string());
     if value_str.contains("false") {
         format!("NOT {waiting}")
@@ -2761,21 +2762,26 @@ impl Evaluate for Atom<'_> {
             }
             Atom::Date(d) => {
                 context.value_type = Some(FieldType::DateTime);
-                let sql = local_day_start_sql(*d, 0, context.day_starts_at()?);
+                let sql = local_day_start_sql(*d, 0, context.zone()?);
                 context.params.push(sql);
                 Ok(())
             }
             Atom::LocalDateTime(d) => {
                 context.value_type = Some(FieldType::DateTime);
-                context.params.push(format!(
-                    "(SELECT CAST(strftime('%s', '{}', 'utc') AS INTEGER))",
-                    d.format("%Y-%m-%d %H:%M:%S")
-                ));
+                let zone = context.zone()?;
+                context.params.push(if zone.is_server() {
+                    format!(
+                        "(SELECT CAST(strftime('%s', '{}', 'utc') AS INTEGER))",
+                        d.format("%Y-%m-%d %H:%M:%S")
+                    )
+                } else {
+                    zone.to_utc(*d).timestamp().to_string()
+                });
                 Ok(())
             }
             Atom::RelativeDate(d) => {
                 context.value_type = Some(FieldType::DateTime);
-                let sql = d.to_sql(context.day_starts_at()?);
+                let sql = d.to_sql(context.zone()?);
                 context.params.push(sql);
                 Ok(())
             }
@@ -3416,13 +3422,13 @@ mod tests {
         };
         exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
         // Days start at 4 AM, so before then, yesterday is the day before the calendar's.
-        let day_starts_at = crate::api::queue::tests::day_starts_at();
-        let today = crate::helpers::study_date(chrono::Utc::now(), day_starts_at);
+        let zone = crate::api::queue::tests::zone();
+        let today = crate::helpers::study_date(chrono::Utc::now(), zone);
         let yesterday = today - chrono::Days::new(1);
         let (start_of_yesterday, end_of_yesterday) = crate::helpers::get_start_end_local_date(
-            &(crate::helpers::get_start_end_local_date(&chrono::Utc::now(), day_starts_at).0
+            &(crate::helpers::get_start_end_local_date(&chrono::Utc::now(), zone).0
                 - chrono::Duration::seconds(1)),
-            day_starts_at,
+            zone,
         );
         let (start_of_yesterday, end_of_yesterday) =
             (start_of_yesterday.timestamp(), end_of_yesterday.timestamp());
