@@ -1276,6 +1276,7 @@ mod daily_limit_tests {
                 is_filtered_tag: false,
                 card_due_limit: now,
                 zone: super::tests::zone(),
+                maximum_answer_seconds: SparesExternalConfig::default().maximum_answer_seconds(),
                 caps,
                 preset_sql: "NULL".to_string(),
                 held_back_clause: None,
@@ -1529,6 +1530,48 @@ mod sibling_tests {
         )
         .await
         .unwrap();
+    }
+
+    /// An answer is logged with its time capped by
+    /// [`SparesExternalConfig::maximum_answer_time`], and as it was when that is unset.
+    #[sqlx::test]
+    async fn rating_logs_the_capped_answer_time(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = super::tests::create_cards(&pool, 2, now - Duration::days(1)).await;
+        let capped = SparesExternalConfig {
+            maximum_answer_time: Some(Duration::seconds(30)),
+            ..SparesExternalConfig::default()
+        };
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        for (card_id, config, expected) in [
+            (ids[0], &capped, (25, 5)),
+            (ids[1], &SparesExternalConfig::default(), (25, 3600)),
+        ] {
+            rate_card_with_config(
+                &pool,
+                scheduler.as_ref(),
+                config,
+                RatingSubmission {
+                    card_id,
+                    rating: 3,
+                    recall_duration: Duration::seconds(25),
+                    rate_duration: Duration::seconds(3600),
+                    tag_id: None,
+                },
+                now,
+                true,
+            )
+            .await
+            .unwrap();
+            let logged: (i64, i64) = sqlx::query_as(
+                "SELECT recall_duration, rate_duration FROM review_log WHERE card_id = ?",
+            )
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(logged, expected);
+        }
     }
 
     fn burying(new: bool, review: bool) -> SparesExternalConfig {
@@ -1867,6 +1910,7 @@ mod linked_note_tests {
             is_filtered_tag: false,
             card_due_limit,
             zone: super::tests::zone(),
+            maximum_answer_seconds: SparesExternalConfig::default().maximum_answer_seconds(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: None,

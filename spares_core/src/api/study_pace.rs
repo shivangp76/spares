@@ -17,8 +17,10 @@ use crate::model::StateId;
 /// The time of a review when there is nothing to go on, as on a new collection.
 const DEFAULT_SECONDS_PER_REVIEW: f64 = 30.0;
 
-/// The longest a review counts for. Longer ones are most likely of a card left open while away,
-/// which would make every estimate after it too long.
+/// The longest a review counts for in study pace and the time estimates of review when
+/// [`SparesExternalConfig::maximum_answer_time`](crate::config::SparesExternalConfig::maximum_answer_time)
+/// is unset. Longer ones are most likely of a card left open while away, which would make every
+/// estimate after it too long.
 pub(crate) const MAX_REVIEW_SECONDS: i64 = 15 * 60;
 
 /// How many of the latest days a card was studied, of each preset and state, the pace is
@@ -35,12 +37,71 @@ const MIN_PRESET_CARD_DAYS: u32 = 10;
 /// than its preset's pace. One review could be an outlier.
 pub(crate) const MIN_CARD_REVIEWS: u32 = 2;
 
-/// SQL for the seconds a review took, capped at [`MAX_REVIEW_SECONDS`], from `review_log` columns
-/// prefixed with `alias`.
-pub(crate) fn capped_review_seconds(alias: &str) -> String {
-    format!(
-        "MIN(COALESCE({alias}.recall_duration, 0) + COALESCE({alias}.rate_duration, 0), {MAX_REVIEW_SECONDS})"
+/// The `recall_duration` and `rate_duration` columns of `review_log` as `alias` (none if empty).
+fn raw_duration_columns(alias: &str) -> (String, String) {
+    let column = |name: &str| {
+        if alias.is_empty() {
+            name.to_string()
+        } else {
+            format!("{alias}.{name}")
+        }
+    };
+    (column("recall_duration"), column("rate_duration"))
+}
+
+/// [`raw_duration_columns`] with `NULL` read as 0.
+fn duration_columns(alias: &str) -> (String, String) {
+    let (recall, rate) = raw_duration_columns(alias);
+    (
+        format!("COALESCE({recall}, 0)"),
+        format!("COALESCE({rate}, 0)"),
     )
+}
+
+/// SQL for the seconds a review took, capped at `maximum` (see
+/// [`SparesExternalConfig::maximum_answer_time`](crate::config::SparesExternalConfig::maximum_answer_time)),
+/// from `review_log` columns of `alias` (none if empty). Reviews logged before the cap may be
+/// longer, so it is applied on read. With no `maximum`, the stored seconds, `NULL` when either
+/// column is.
+pub(crate) fn capped_answer_seconds(alias: &str, maximum: Option<i64>) -> String {
+    let Some(maximum) = maximum else {
+        let (recall, rate) = raw_duration_columns(alias);
+        return format!("({recall} + {rate})");
+    };
+    let (recall, rate) = duration_columns(alias);
+    format!("MIN(MAX({recall}, 0) + MAX({rate}, 0), {maximum})")
+}
+
+/// SQL for the seconds of recall of a review, capped as
+/// [`SparesExternalConfig::cap_answer_time`](crate::config::SparesExternalConfig::cap_answer_time)
+/// caps them (see [`capped_answer_seconds`]).
+pub(crate) fn capped_recall_seconds(alias: &str, maximum: Option<i64>) -> String {
+    let Some(maximum) = maximum else {
+        return raw_duration_columns(alias).0;
+    };
+    let (recall, _) = duration_columns(alias);
+    format!("MIN(MAX({recall}, 0), {maximum})")
+}
+
+/// SQL for the seconds of rating of a review: what the recall leaves of `maximum` (see
+/// [`capped_recall_seconds`]).
+pub(crate) fn capped_rate_seconds(alias: &str, maximum: Option<i64>) -> String {
+    let Some(maximum) = maximum else {
+        return raw_duration_columns(alias).1;
+    };
+    let (recall, rate) = duration_columns(alias);
+    format!("MIN(MAX({rate}, 0), {maximum} - MIN(MAX({recall}, 0), {maximum}))")
+}
+
+/// SQL for the seconds a review counts for in study pace and the time estimates of review:
+/// [`capped_answer_seconds`], or with no `maximum`, at most [`MAX_REVIEW_SECONDS`] with `NULL`
+/// read as 0.
+pub(crate) fn pace_answer_seconds(alias: &str, maximum: Option<i64>) -> String {
+    if maximum.is_some() {
+        return capped_answer_seconds(alias, maximum);
+    }
+    let (recall, rate) = duration_columns(alias);
+    format!("MIN({recall} + {rate}, {MAX_REVIEW_SECONDS})")
 }
 
 /// How long studying a card in some state takes on a day.
@@ -81,7 +142,12 @@ impl StudyPaces {
     /// The paces of the reviews of `cards`, the card table with each card's preset as a `preset`
     /// column (see [`cards_with_preset`](crate::api::preset::cards_with_preset)), told apart by
     /// local day.
-    pub(crate) async fn load(db: &SqlitePool, cards: &str, zone: Zone) -> Result<Self, Error> {
+    pub(crate) async fn load(
+        db: &SqlitePool,
+        cards: &str,
+        zone: Zone,
+        maximum_answer_seconds: Option<i64>,
+    ) -> Result<Self, Error> {
         let (first, last): (Option<i64>, Option<i64>) =
             sqlx::query_as(r"SELECT MIN(reviewed_at), MAX(reviewed_at) FROM review_log")
                 .fetch_one(db)
@@ -90,7 +156,7 @@ impl StudyPaces {
         let day = zone
             .clock(first.unwrap_or_default(), last.unwrap_or_default())
             .day("rl.reviewed_at");
-        let seconds = capped_review_seconds("rl");
+        let seconds = pace_answer_seconds("rl", maximum_answer_seconds);
         let review = ReviewLogKind::Review as u8;
         // The state and preset are the same for every review of a card's day
         let query = format!(
@@ -170,6 +236,7 @@ mod tests {
     use crate::api::review::ReviewFilterQuery;
     use crate::api::review::get_cards_left_by_state_and_time_estimate;
     use crate::config::QueuePreset;
+    use crate::config::SparesExternalConfig;
     use crate::helpers::get_start_end_local_date;
     use crate::model::CardId;
     use crate::parsers::get_all_parsers;
@@ -253,6 +320,7 @@ mod tests {
             is_filtered_tag: false,
             card_due_limit: now,
             zone: crate::api::queue::tests::zone(),
+            maximum_answer_seconds: SparesExternalConfig::default().maximum_answer_seconds(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: None,
@@ -395,6 +463,7 @@ mod tests {
             is_filtered_tag: false,
             card_due_limit: now,
             zone: crate::api::queue::tests::zone(),
+            maximum_answer_seconds: SparesExternalConfig::default().maximum_answer_seconds(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: Some(format!(
@@ -412,7 +481,58 @@ mod tests {
         assert_eq!(time, Duration::seconds(30));
     }
 
-    /// A card left open for an hour counts for 15 minutes.
+    /// Reviews logged before the cap are capped when read, as [`SparesExternalConfig::cap_answer_time`]
+    /// caps them when they are logged.
+    #[sqlx::test]
+    async fn answer_seconds_are_capped_on_read(pool: SqlitePool) {
+        for (recall, rate, expected) in [
+            ("5", "2", (5, 2, 7)),
+            ("50", "30", (50, 10, 60)),
+            ("600", "30", (60, 0, 60)),
+            ("NULL", "90", (0, 60, 60)),
+            ("NULL", "NULL", (0, 0, 0)),
+        ] {
+            let sql = format!(
+                "SELECT {}, {}, {} FROM (SELECT {recall} AS recall_duration, {rate} AS rate_duration) rl",
+                capped_recall_seconds("rl", Some(60)),
+                capped_rate_seconds("rl", Some(60)),
+                capped_answer_seconds("rl", Some(60)),
+            );
+            let row: (i64, i64, i64) = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(row, expected, "{recall} {rate}");
+        }
+    }
+
+    /// With no cap, the stored times are read as they are, `NULL` when either is, and study
+    /// pace counts a review for at most [`MAX_REVIEW_SECONDS`].
+    #[sqlx::test]
+    async fn answer_seconds_are_not_capped_when_unset(pool: SqlitePool) {
+        for (recall, rate, expected) in [
+            ("600", "3000", (Some(600), Some(3000), Some(3600), 900)),
+            ("-5", "2", (Some(-5), Some(2), Some(-3), -3)),
+            ("NULL", "90", (None, Some(90), None, 90)),
+        ] {
+            let sql = format!(
+                "SELECT {}, {}, {}, {} FROM (SELECT {recall} AS recall_duration, {rate} AS rate_duration) rl",
+                capped_recall_seconds("rl", None),
+                capped_rate_seconds("rl", None),
+                capped_answer_seconds("rl", None),
+                pace_answer_seconds("rl", None),
+            );
+            let row: (Option<i64>, Option<i64>, Option<i64>, i64) =
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(row, expected, "{recall} {rate}");
+        }
+    }
+
+    /// A card left open for an hour counts for [`MAX_REVIEW_SECONDS`] with no
+    /// [`SparesExternalConfig::maximum_answer_time`].
     #[sqlx::test]
     async fn long_reviews_are_capped(pool: SqlitePool) {
         let now = Utc::now();

@@ -690,6 +690,7 @@ mod tests {
             is_filtered_tag: false,
             card_due_limit,
             zone: crate::api::queue::tests::zone(),
+            maximum_answer_seconds: SparesExternalConfig::default().maximum_answer_seconds(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: None,

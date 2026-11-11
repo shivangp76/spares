@@ -24,6 +24,9 @@ use crate::api::preset::cap_counts;
 use crate::api::preset::limited_preset_sql;
 use crate::api::queue::QueueCaps;
 use crate::api::review::daily_limits_left_with;
+use crate::api::study_pace::capped_answer_seconds;
+use crate::api::study_pace::capped_rate_seconds;
+use crate::api::study_pace::capped_recall_seconds;
 use crate::config::read_external_config;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
@@ -57,12 +60,14 @@ pub async fn get_statistics(
     // rows, whose card has been deleted.
     let studied = async {
         sqlx::query_as::<_, (u32, i64, i64)>(AssertSqlSafe(format!(
-            r"SELECT COUNT(DISTINCT card_id), COALESCE(SUM(recall_duration), 0),
-                     COALESCE(SUM(rate_duration), 0)
+            r"SELECT COUNT(DISTINCT card_id), COALESCE(SUM({recall}), 0),
+                     COALESCE(SUM({rate}), 0)
               FROM review_log
               WHERE reviewed_at >= {today_start} AND reviewed_at < {tomorrow_start}
                 AND kind = {review} AND card_id IS NOT NULL",
             review = ReviewLogKind::Review as u8,
+            recall = capped_recall_seconds("", config.maximum_answer_seconds()),
+            rate = capped_rate_seconds("", config.maximum_answer_seconds()),
         )))
         .fetch_one(db)
         .await
@@ -71,10 +76,11 @@ pub async fn get_statistics(
     // Crams are counted apart from reviews, one per rating, and so are the minutes spent on them.
     let crams = async {
         sqlx::query_as::<_, (u32, i64)>(AssertSqlSafe(format!(
-            r"SELECT COUNT(*), COALESCE(SUM(recall_duration + rate_duration), 0) FROM review_log
+            r"SELECT COUNT(*), COALESCE(SUM({seconds}), 0) FROM review_log
               WHERE reviewed_at >= {today_start} AND reviewed_at < {tomorrow_start}
                 AND kind = {cram} AND card_id IS NOT NULL",
             cram = ReviewLogKind::Cram as u8,
+            seconds = capped_answer_seconds("", config.maximum_answer_seconds()),
         )))
         .fetch_one(db)
         .await
