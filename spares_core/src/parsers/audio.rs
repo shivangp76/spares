@@ -60,6 +60,7 @@ use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::NotePart;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
+use crate::parsers::SettingsSyntax;
 use crate::parsers::get_settings_pairs;
 use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 use crate::parsers::tts::TtsSetting;
@@ -296,7 +297,7 @@ fn speech_runs(
                 &cloze.settings_match,
                 settings_delim,
                 settings_key_value_delim,
-                true,
+                SettingsSyntax::Cloze,
             )
             .into_iter()
             .filter_map(Result::ok)

@@ -114,7 +114,14 @@ pub fn syntax_examples(
         ),
         (
             "Hint",
-            format!("`{}` shows a hint in place of the hidden text.", keys.hint),
+            format!(
+                "`{hint}` shows a hint in place of the hidden text. A hint ends at `{delim}` unless \
+                 it is quoted, as in `{hint}{kv}\"north{delim} then east\"`. Write `\\[` and `\\]` \
+                 for brackets in it, quoted or not, and `\\\"` for a `\"` in a quoted one.",
+                hint = keys.hint,
+                delim = note_keys.settings_delim,
+                kv = note_keys.settings_key_value_delim,
+            ),
             format!(
                 "The capital of France is {}.",
                 cloze("Paris", &[(keys.hint, "city")])

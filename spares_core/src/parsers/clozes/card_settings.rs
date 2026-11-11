@@ -20,8 +20,11 @@ use crate::helpers::GroupByInsertion;
 use crate::helpers::split_inclusive_following;
 use crate::model::NoteId;
 use crate::parsers::NoteSettingsKeys;
+use crate::parsers::SettingsSyntax;
 use crate::parsers::get_settings_pairs;
+use crate::parsers::quote_setting_value;
 use crate::parsers::tts::TtsSetting;
+use crate::parsers::unquote_setting_value;
 
 #[derive(Clone, Debug)]
 pub struct ClozeSettingsKeys {
@@ -87,7 +90,9 @@ pub fn construct_cloze_string(
     if let Some(ref hint) = global_settings.hint {
         parts.push(format!(
             "{}{}{}",
-            cloze_settings_keys.hint, settings_key_value_delim, hint
+            cloze_settings_keys.hint,
+            settings_key_value_delim,
+            quote_setting_value(hint, settings_delim)
         ));
     }
     if global_settings.is_overlapper {
@@ -415,7 +420,7 @@ fn parse_grouping_settings(
             // A negative option is provided to allow unsuspending a card when updating a note.
             current_grouping_settings.is_suspended = Some(*value != "n");
         } else if key == hint_key {
-            settings.hint = Some((**value).to_string());
+            settings.hint = Some(unquote_setting_value(value));
         } else if key == tts_key {
             settings.tts = Some(TtsSetting::from_str(value).map_err(|e| {
                 LibraryError::Card(CardErrorKind::InvalidSettings {
@@ -563,7 +568,7 @@ pub fn parse_card_settings(
         card_settings_indices,
         settings_delim,
         settings_key_value_delim,
-        true,
+        SettingsSyntax::Cloze,
     )
     .into_iter()
     .collect::<Result<Vec<_>, _>>()
