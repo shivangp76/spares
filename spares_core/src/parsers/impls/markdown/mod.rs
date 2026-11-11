@@ -328,10 +328,10 @@ impl Parseable for MarkdownParser {
             ClozeReplacement::Hidden(cloze_replacement) => match cloze_replacement {
                 ClozeHiddenReplacement::ToAnswer { hint } => match (hint, id) {
                     (Some(hint), Some(id)) => {
-                        format!("[{id} _____({hint})]{{.mark}}")
+                        format!("[{id} _____({})]{{.mark}}", escape_brackets(hint))
                     }
                     (Some(hint), None) => {
-                        format!("[_____({hint})]{{.mark}}")
+                        format!("[_____({})]{{.mark}}", escape_brackets(hint))
                     }
                     (None, Some(id)) => {
                         format!("[{id} _____]{{.mark}}")
@@ -538,6 +538,37 @@ impl Drop for PandocInput<'_> {
 
 /// Optional pandoc defaults file for the HTML for web clients. Devices that keep a copy get it too
 /// (`spares_core::sync::devices::DeviceConfig`), for the cards they convert themselves.
+/// `text` with its unmatched square brackets escaped, so that it can go inside a span such as
+/// `[text]{.mark}`, which an unmatched `]` would end, or an unmatched `[` take the `]` of. A hint
+/// can hold one, written as `\]` in its cloze's settings. Brackets already escaped, and those in
+/// math, are left as they are.
+fn escape_brackets(text: &str) -> String {
+    let mut unmatched = Vec::new();
+    let mut open = Vec::new();
+    let mut in_math = false;
+    let mut chars = text.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '$' => in_math = !in_math,
+            '[' if !in_math => open.push(i),
+            ']' if !in_math && open.pop().is_none() => unmatched.push(i),
+            _ => {}
+        }
+    }
+    unmatched.extend(open);
+    let mut escaped = String::with_capacity(text.len() + unmatched.len());
+    for (i, c) in text.char_indices() {
+        if unmatched.contains(&i) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
 pub fn web_defaults_filepath() -> PathBuf {
     get_config_dir().join("markdown").join("web-defaults.yaml")
 }
@@ -1216,5 +1247,17 @@ pub mod tests {
             );
             assert!(result.unwrap_err().starts_with("pandoc exited"));
         }
+    }
+
+    #[test]
+    fn test_escape_brackets() {
+        use super::escape_brackets;
+        assert_eq!(escape_brackets("a]b"), r"a\]b");
+        assert_eq!(escape_brackets("a[b"), r"a\[b");
+        // Matched, escaped and math brackets are kept
+        assert_eq!(escape_brackets("[a] [[b]]"), "[a] [[b]]");
+        assert_eq!(escape_brackets(r"a\]b"), r"a\]b");
+        assert_eq!(escape_brackets("$[0,1)$ and ]"), r"$[0,1)$ and \]");
+        assert_eq!(escape_brackets("]["), r"\]\[");
     }
 }

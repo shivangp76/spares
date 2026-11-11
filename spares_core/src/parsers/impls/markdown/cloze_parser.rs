@@ -53,7 +53,15 @@ impl<'a> ClozeParser<'a> {
                     let mut settings = None;
                     if self.s.eat_if('[') {
                         let settings_start_idx = self.s.cursor();
-                        self.s.eat_until(']');
+                        // A `\]` does not end the settings (see `SettingsSyntax::Cloze`)
+                        while let Some(c) = self.s.peek()
+                            && c != ']'
+                        {
+                            self.s.eat();
+                            if c == '\\' {
+                                self.s.eat();
+                            }
+                        }
                         settings = Some(settings_start_idx..self.s.cursor());
                     }
                     let cursor_end = self.s.cursor();
