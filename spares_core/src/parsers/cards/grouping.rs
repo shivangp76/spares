@@ -179,6 +179,8 @@ pub(super) fn settings_cloze_position(clozes: &[(ClozeData, ClozeGroupingSetting
 
 /// Boil up settings to first cloze within the grouping.
 /// Note that clozes in the same grouping can have different settings for convenience. Rather than be forced to copy and paste the settings for all clozes, they can be declared on each cloze where subsequent clozes override the previous one.
+/// The settings a cloze in all groupings (`g:*`) gives a card it does not name are overridden by
+/// those of the card's own clozes, before or after it.
 #[expect(clippy::too_many_lines)]
 pub(super) fn boil_up_settings(
     cards_raw: &mut Vec<Vec<(ClozeData, ClozeGroupingSettings)>>,
@@ -197,7 +199,18 @@ pub(super) fn boil_up_settings(
             )
         });
         let mut boiled_cloze_settings = ClozeGroupingSettings::default(&mut 0, modify_defaults);
-        for (cloze_data, grouping_settings) in &mut *clozes {
+        // The copies of a cloze in all groupings (`g:*`) are boiled up first, so that a card's own
+        // clozes override them wherever they are. Otherwise which one wins would depend on their
+        // positions, and those change once the card's settings are moved onto the cloze at
+        // `settings_cloze_position`, so a rewritten note could read back differently.
+        let (all_groupings_copies, own_clozes): (Vec<_>, Vec<_>) = clozes
+            .iter_mut()
+            .partition(|(_, settings)| settings.from_all_groupings);
+        for (cloze_data, grouping_settings) in all_groupings_copies
+            .into_iter()
+            .chain(own_clozes)
+            .map(|(cloze_data, grouping_settings)| (&*cloze_data, grouping_settings))
+        {
             let modify_defaults = cloze_data.image_occlusion.as_ref().map(|d| {
                 (
                     d.data.front_conceal,

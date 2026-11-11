@@ -108,3 +108,62 @@ fn test_ov_notes_diverge_without_overlapper_reparse() {
         "overlapper cards should group clozes; the no-overlapper re-parse must not match"
     );
 }
+
+/// Rewrites `data` twice and returns each card's typed answer after each rewrite, asserting that
+/// the second rewrite leaves the note as the first wrote it.
+fn type_answers_over_rewrites(
+    data: &str,
+) -> (
+    Vec<Option<crate::parsers::TypeAnswer>>,
+    Vec<Option<crate::parsers::TypeAnswer>>,
+) {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let (first_data, first_cards) = add_order_to_note_data(parser.as_ref(), data, None).unwrap();
+    let (second_data, second_cards) =
+        add_order_to_note_data(parser.as_ref(), &first_data, None).unwrap();
+    assert_eq!(
+        second_data, first_data,
+        "rewrite is not stable for note: {data}"
+    );
+    let type_answers =
+        |cards: &[crate::parsers::CardData]| cards.iter().map(|c| c.type_answer).collect();
+    (type_answers(&first_cards), type_answers(&second_cards))
+}
+
+/// A grouping's own `t:` beats that of a `g:*` cloze, wherever the `g:*` cloze is. The rewrite
+/// moves the grouping's settings onto its first cloze, before the `g:*` cloze here, which used
+/// to hand the card to `g:*` on the next parse.
+#[test]
+fn test_grouping_type_answer_beats_all_groupings_across_rewrites() {
+    use crate::parsers::TypeAnswer;
+    let diff = Some(TypeAnswer::Diff {
+        ignore_case: false,
+        ignore_combining: false,
+    });
+    for data in [
+        "{{[g:1;t:m] x }} {{[g:*;t] y }} {{[g:1;t:m] z }}",
+        "{{[g:1] x }} {{[g:*;t] y }} {{[g:1;t:m] z }}",
+        "{{[g:1;t:m] x }} {{[g:*;t] y }}",
+        "{{[g:*;t] y }} {{[g:1;t:m] x }}",
+    ] {
+        let (first, second) = type_answers_over_rewrites(data);
+        assert_eq!(
+            first,
+            vec![Some(TypeAnswer::Manual)],
+            "first parse of {data}"
+        );
+        assert_eq!(second, first, "second parse of {data}");
+    }
+    // The `g:*` cloze's `t:` still reaches a card whose grouping sets none
+    let (first, second) =
+        type_answers_over_rewrites("{{[g:1] x }} {{[g:*;t] y }} {{[g:1,2;t:m] z }}");
+    assert_eq!(
+        first,
+        vec![Some(TypeAnswer::Manual), Some(TypeAnswer::Manual)]
+    );
+    assert_eq!(second, first);
+    let (first, second) =
+        type_answers_over_rewrites("{{[g:1;t:m] x }} {{[g:*;t] y }} {{[g:2] z }}");
+    assert_eq!(first, vec![Some(TypeAnswer::Manual), diff]);
+    assert_eq!(second, first);
+}
