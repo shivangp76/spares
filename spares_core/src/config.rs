@@ -906,6 +906,17 @@ pub struct SparesExternalConfig {
     /// people's reviews. `spares card optimize --apply` sets these from your review history. Run
     /// `spares card reschedule` after changing them by hand.
     pub fsrs_parameters: Vec<f32>,
+    /// The first day of study whose reviews `spares card optimize` learns from, as `"2026-01-31"`,
+    /// like Anki's "Ignore reviews before". Unset by default, to learn from every review.
+    ///
+    /// Use it to leave out reviews from before a change of habits, or of a deck imported from
+    /// elsewhere. Days are days of study (see [`Self::day_starts_at`] and [`Self::time_zone`]).
+    /// The optimizer only learns from a card's history from its first review as a new card, so a
+    /// card first studied before this day is left out, not only its early reviews.
+    ///
+    /// It only changes the parameters fitted. The memory state of each card, when rescheduling or
+    /// in its review log, is still worked out from all of its reviews.
+    pub fsrs_optimizer_ignore_reviews_before: Option<NaiveDate>,
     /// Spread reviews so that each day has a similar number of cards due, in proportion to its
     /// easy-day workload percentage.
     pub load_balance: bool,
@@ -957,6 +968,7 @@ impl Default for SparesExternalConfig {
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
             relearning_steps: vec![Duration::minutes(10)],
             fsrs_parameters: Vec::new(),
+            fsrs_optimizer_ignore_reviews_before: None,
             load_balance: true,
             disperse_siblings: true,
             easy_days: EasyDaysConfig::default(),
@@ -1348,6 +1360,16 @@ pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ignore_reviews_before_is_a_quoted_date() {
+        let config = parse("fsrs_optimizer_ignore_reviews_before = \"2026-01-31\"\n");
+        assert_eq!(
+            config.fsrs_optimizer_ignore_reviews_before,
+            NaiveDate::from_ymd_opt(2026, 1, 31)
+        );
+        assert_eq!(parse("").fsrs_optimizer_ignore_reviews_before, None);
+    }
 
     #[test]
     fn answer_time_is_capped() {
