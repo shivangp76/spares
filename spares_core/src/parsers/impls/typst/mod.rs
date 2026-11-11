@@ -294,10 +294,10 @@ impl Parseable for TypstParser {
             ClozeReplacement::Hidden(cloze_replacement) => match cloze_replacement {
                 ClozeHiddenReplacement::ToAnswer { hint } => match (hint, id) {
                     (Some(hint), Some(id)) => {
-                        format!("#cloze(hint: \"{hint}\", id: \"{id}\")")
+                        format!("#cloze(hint: {}, id: \"{id}\")", hint_string(hint))
                     }
                     (Some(hint), None) => {
-                        format!("#cloze(hint: \"{hint}\")")
+                        format!("#cloze(hint: {})", hint_string(hint))
                     }
                     (None, Some(id)) => {
                         format!("#cloze(id: \"{id}\")")
@@ -472,6 +472,24 @@ impl Parseable for TypstParser {
     fn renders_in_browser(&self) -> bool {
         true
     }
+}
+
+/// A hint as the Typst string literal `#cloze` takes. A cloze's settings are Typst markup, so a
+/// hint escapes characters such as `*` there, as in `h:5\*3`. Those escapes are removed, as the
+/// string is shown as it is.
+fn hint_string(hint: &str) -> String {
+    let mut text = String::with_capacity(hint.len());
+    let mut chars = hint.chars().peekable();
+    while let Some(c) = chars.next() {
+        match chars.peek() {
+            Some(&next) if c == '\\' && next.is_ascii_punctuation() => {
+                text.push(next);
+                chars.next();
+            }
+            _ => text.push(c),
+        }
+    }
+    typst_string(&text)
 }
 
 /// `s` as a Typst string literal.
@@ -805,5 +823,14 @@ pub mod tests {
             }];
             assert_eq!(cards, expected);
         }
+    }
+
+    #[test]
+    fn test_hint_string() {
+        use super::hint_string;
+        assert_eq!(hint_string(r#"say "hi""#), r#""say \"hi\"""#);
+        // Markup escapes are removed, and a `\` left is escaped
+        assert_eq!(hint_string(r"5\*3"), r#""5*3""#);
+        assert_eq!(hint_string(r"a\b"), r#""a\\b""#);
     }
 }
