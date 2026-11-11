@@ -508,7 +508,11 @@ impl SrsScheduler for Fsrs {
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-        let training_set = optimize::training_set(&review_logs, config.zone());
+        let training_set = optimize::training_set(
+            &review_logs,
+            config.zone(),
+            config.fsrs_optimizer_ignore_reviews_before,
+        );
         let current_parameters = config.fsrs_parameters.clone();
         let num_relearning_steps = config.relearning_steps.len();
         // Training is CPU-bound, so it runs on the rayon pool rather than blocking the executor.
