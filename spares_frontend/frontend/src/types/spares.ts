@@ -212,6 +212,8 @@ export interface ReviewSnapshotResponse {
 export interface ReviewConfig {
   flagged_tag_name: string;
   set_card_due_date_duration: number; // seconds
+  // How long a timebox lasts, in seconds (`queue.timebox`). Missing from older servers.
+  timebox?: number | null;
 }
 
 export interface TagResponse {

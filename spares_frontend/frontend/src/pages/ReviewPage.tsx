@@ -114,7 +114,15 @@ function formatWait(ms: number): string {
 }
 
 type Phase =
-  "landing" | "loading" | "front" | "back" | "waiting" | "done" | "error";
+  | "landing"
+  | "loading"
+  | "front"
+  | "back"
+  | "waiting"
+  // A timebox is over (`queue.timebox`), until the next one is started
+  | "timebox"
+  | "done"
+  | "error";
 type FilterMode = "query" | "tagName" | "tagId";
 const filterInputStyle: React.CSSProperties = {
   padding: "8px 12px",
@@ -474,6 +482,13 @@ export default function ReviewPage() {
   const [summaryFade, setSummaryFade] = useState<"shown" | "fading" | "gone">(
     "shown",
   );
+  // The timebox under way (`queue.timebox`): when it started and the cards rated in it
+  const timebox = useRef({ start: 0, cards: 0 });
+  // The timebox just over, shown until the next is started
+  const [timeboxOver, setTimeboxOver] = useState<{
+    cards: number;
+    ms: number;
+  } | null>(null);
   // When the next learning card can be shown, while waiting for it with nothing else to review
   const [waitingUntil, setWaitingUntil] = useState<number | null>(null);
   const [, setWaitTick] = useState(0);
@@ -736,6 +751,8 @@ export default function ReviewPage() {
     setSessionRecallMs(0);
     setSessionRateMs(0);
     setSessionStart(Date.now());
+    timebox.current = { start: Date.now(), cards: 0 };
+    setTimeboxOver(null);
     setSessionEnd(null);
     setSessionShowedCard(false);
     setSummaryFade("shown");
@@ -807,11 +824,27 @@ export default function ReviewPage() {
           ? `Previous card: Recall ${formatDuration(recallSeconds)} · Rate ${formatDuration(rateSeconds)}`
           : `Previous card — Recall Duration: ${formatDuration(recallSeconds)} · Rate Duration: ${formatDuration(rateSeconds)}`,
       );
+      // At the end of a timebox, wait to go on before loading the next card, so its recall time
+      // starts when it is shown
+      timebox.current.cards += 1;
+      const timeboxMs = Date.now() - timebox.current.start;
+      if (config?.timebox && timeboxMs >= config.timebox * 1000) {
+        setTimeboxOver({ cards: timebox.current.cards, ms: timeboxMs });
+        setPhase("timebox");
+        return;
+      }
       loadCard(activeFilter);
     } catch (e) {
       setError(errorMessage(e));
       setPhase("error");
     }
+  }
+
+  /** Starts the next timebox and shows the next card. */
+  function continueAfterTimebox() {
+    timebox.current = { start: Date.now(), cards: 0 };
+    setTimeboxOver(null);
+    loadCard(activeFilter);
   }
 
   /** Runs an action that removes the current card from today's queue, then advances. */
@@ -1431,6 +1464,13 @@ export default function ReviewPage() {
       }
       // The popup covers the card, so nothing should change behind it
       if (showKeybindings) return;
+      if (phase === "timebox") {
+        if (e.code === "Space" || e.key === "Enter") {
+          e.preventDefault();
+          continueAfterTimebox();
+        }
+        return;
+      }
       if (phase !== "front" && phase !== "back") return;
       // Space shows the answer, so it must not also click a button (or toggle a section) left
       // focused by a mouse click, e.g. Bury Card when pressed on the back
@@ -1863,6 +1903,36 @@ export default function ReviewPage() {
               justifyContent: "center",
             }}
           >
+            <button onClick={switchQuery}>End session</button>
+          </p>
+        </div>
+      )}
+
+      {phase === "timebox" && timeboxOver && (
+        <div
+          style={{
+            textAlign: "center",
+            marginTop: 80,
+            color: "var(--text-secondary)",
+          }}
+        >
+          <p style={{ fontSize: 18, color: "var(--text)" }}>
+            {timeboxOver.cards} {timeboxOver.cards === 1 ? "card" : "cards"} in{" "}
+            {formatDuration(msToSeconds(timeboxOver.ms))}
+          </p>
+          <p>The timebox is over.</p>
+          {status && <p style={{ fontSize: 13 }}>{status}</p>}
+          <p
+            style={{
+              marginTop: 24,
+              display: "flex",
+              gap: 16,
+              justifyContent: "center",
+            }}
+          >
+            <button onClick={continueAfterTimebox} autoFocus>
+              Continue (Space)
+            </button>
             <button onClick={switchQuery}>End session</button>
           </p>
         </div>
