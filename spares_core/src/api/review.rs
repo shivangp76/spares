@@ -46,7 +46,7 @@ use crate::api::queue::waiting_on_links;
 use crate::api::statistics::local_time::Zone;
 use crate::api::study_pace::MIN_CARD_REVIEWS;
 use crate::api::study_pace::StudyPaces;
-use crate::api::study_pace::capped_review_seconds;
+use crate::api::study_pace::pace_answer_seconds;
 use crate::api::tag::create_tag;
 use crate::api::tag::restore_review_tags;
 use crate::api::undo::insert_events;
@@ -746,6 +746,8 @@ pub(crate) struct ReviewFilterQuery {
     pub(crate) card_due_limit: DateTime<Utc>,
     /// The zone days are counted in. See [`Zone::from_config`].
     pub(crate) zone: Zone,
+    /// See [`SparesExternalConfig::maximum_answer_time`].
+    pub(crate) maximum_answer_seconds: Option<i64>,
     /// What is left of today's limits. Filtered tags have no limits.
     pub(crate) caps: QueueCaps,
     /// The SQL of a card's preset, for the presets' own limits in `caps`: `c.preset`, or `NULL`
@@ -873,6 +875,7 @@ pub(crate) async fn build_review_filter_query(
         is_filtered_tag,
         card_due_limit,
         zone: config.zone(),
+        maximum_answer_seconds: config.maximum_answer_seconds(),
         caps,
         preset_sql,
         held_back_clause,
@@ -891,7 +894,8 @@ pub(crate) async fn build_review_filter_query(
 /// own reviews in the state it is in now, once it has [`MIN_CARD_REVIEWS`], since a card's first
 /// sight as a new card can take minutes while its later reviews take seconds, or else that of
 /// the pace. A card already reviewed today counts one more review, as it is through part of its
-/// day. Each review counts for at most [`MAX_REVIEW_SECONDS`].
+/// day. Each review counts for at most `filter.maximum_answer_seconds`, or [`MAX_REVIEW_SECONDS`]
+/// when it is unset.
 ///
 /// New and review cards are capped by `filter.caps`, what is left of today's limits, since the
 /// queue shows no more than that. For example, with `reviews_daily_limit = 200`, 600 reviews due
@@ -918,7 +922,13 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     db: &SqlitePool,
     filter: &ReviewFilterQuery,
 ) -> Result<(HashMap<StateId, u32>, Duration), Error> {
-    let paces = StudyPaces::load(db, &filter.cards, filter.zone).await?;
+    let paces = StudyPaces::load(
+        db,
+        &filter.cards,
+        filter.zone,
+        filter.maximum_answer_seconds,
+    )
+    .await?;
     let bind = (!filter.is_filtered_tag).then(|| filter.card_due_limit.timestamp());
     let rows = card_times(db, filter, &paces, &filter.where_clause, bind).await?;
     // The preset of each row is the card's own, which caps the counts only if it has limits of
@@ -983,7 +993,7 @@ async fn card_times(
         GROUP BY 1, 2, 3",
         cards = filter.cards,
         day_start = day_start.timestamp(),
-        seconds = capped_review_seconds("rl"),
+        seconds = pace_answer_seconds("rl", filter.maximum_answer_seconds),
         review = ReviewLogKind::Review as u8,
     };
     let mut query = sqlx::query_as(AssertSqlSafe(query_str));
@@ -1543,6 +1553,7 @@ pub(crate) async fn rate_card_with_config(
     reviewed_at: DateTime<Utc>,
     log: bool,
 ) -> Result<Option<i64>, Error> {
+    let (recall_duration, rate_duration) = config.cap_answer_time(recall_duration, rate_duration);
     // Validate input
     let filtered_tag_opt = if let Some(tag_id) = tag_id {
         let tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")

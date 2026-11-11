@@ -870,6 +870,23 @@ pub struct SparesExternalConfig {
     /// As with [`Self::day_starts_at`], changing it during the day can unbury the cards buried
     /// today early, or leave them buried until the next day.
     pub time_zone: Option<String>,
+    /// The longest an answer counts for, in seconds. Unset by default, which caps nothing: answers
+    /// are logged, counted in statistics and shown in a card's review log as long as they took,
+    /// and only study pace and the time estimates of review count a review for at most 15
+    /// minutes. Anki's "Maximum answer seconds" is the same setting, with a default of 60.
+    ///
+    /// A card left on screen while you are away would otherwise count for all that time, and
+    /// inflate the time spent in statistics and the time estimates of review. When set, the time
+    /// to recall a card counts for at most this, and the time to rate it for what is left of it,
+    /// so the two together never count for more. Negative times count as 0.
+    ///
+    /// Answers are then logged capped, which loses the time they really took for good. The time
+    /// of reviews logged before this setting, or under a higher one, is capped when it is read, so
+    /// changing it changes the time of every review counted, old ones included. The review log of
+    /// a card shows the capped times too. Unsetting it shows the old reviews' stored times again,
+    /// but not the time capped off answers logged while it was set.
+    #[serde_as(as = "Option<serde_with::DurationSeconds<i64>>")]
+    pub maximum_answer_time: Option<Duration>,
     pub flagged_tag_name: String,
     /// The tag of notes that are never shared: `spares note export --share` leaves out the notes
     /// with it or a tag under it, such as `private:health`. Defaults to `"private"`.
@@ -934,6 +951,7 @@ impl Default for SparesExternalConfig {
             new_cards_ignore_review_limit: false,
             day_starts_at: 4,
             time_zone: None,
+            maximum_answer_time: None,
             flagged_tag_name: "flagged".to_string(),
             private_tag_name: "private".to_string(),
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
@@ -995,6 +1013,12 @@ impl SparesExternalConfig {
                 }
             }
         }
+        if self
+            .maximum_answer_time
+            .is_some_and(|maximum| maximum <= Duration::zero())
+        {
+            return Err("`maximum_answer_time` must be more than 0 seconds.".to_string());
+        }
         if self.queue.learn_ahead_limit < Duration::zero() {
             return Err("`queue.learn_ahead_limit` must not be negative.".to_string());
         }
@@ -1053,6 +1077,23 @@ impl SparesExternalConfig {
     /// The zone days of study are counted in. See [`Zone::from_config`].
     pub(crate) fn zone(&self) -> Zone {
         Zone::from_config(self)
+    }
+
+    /// The times to recall and rate a card, capped as [`Self::maximum_answer_time`] says: as they
+    /// are when it is unset.
+    pub(crate) fn cap_answer_time(&self, recall: Duration, rate: Duration) -> (Duration, Duration) {
+        let Some(maximum) = self.maximum_answer_time else {
+            return (recall, rate);
+        };
+        let recall = recall.clamp(Duration::zero(), maximum);
+        let rate = rate.clamp(Duration::zero(), maximum - recall);
+        (recall, rate)
+    }
+
+    /// [`Self::maximum_answer_time`] in seconds.
+    pub(crate) fn maximum_answer_seconds(&self) -> Option<i64> {
+        self.maximum_answer_time
+            .map(|maximum| maximum.num_seconds())
     }
 
     /// The settings a card of the preset at index `preset` of [`QueueConfig::presets`] is rated
@@ -1307,6 +1348,34 @@ pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answer_time_is_capped() {
+        let unset = SparesExternalConfig::default();
+        assert_eq!(
+            unset.cap_answer_time(Duration::seconds(-5), Duration::hours(2)),
+            (Duration::seconds(-5), Duration::hours(2))
+        );
+        let config = SparesExternalConfig {
+            maximum_answer_time: Some(Duration::seconds(60)),
+            ..SparesExternalConfig::default()
+        };
+        let cap = |recall, rate| {
+            let (recall, rate) =
+                config.cap_answer_time(Duration::seconds(recall), Duration::seconds(rate));
+            (recall.num_seconds(), rate.num_seconds())
+        };
+        assert_eq!(cap(5, 2), (5, 2));
+        // The rating gets what the recall leaves of the 60 seconds.
+        assert_eq!(cap(50, 30), (50, 10));
+        assert_eq!(cap(600, 30), (60, 0));
+        assert_eq!(cap(-5, 2), (0, 2));
+        let mut config = SparesExternalConfig {
+            maximum_answer_time: Some(Duration::zero()),
+            ..SparesExternalConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
 
     fn parse(toml: &str) -> SparesExternalConfig {
         let mut config: SparesExternalConfig = toml_edit::de::from_str(toml).unwrap();

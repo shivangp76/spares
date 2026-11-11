@@ -59,11 +59,24 @@ pub async fn get_card(db: &SqlitePool, id: CardId) -> Result<CardResponse, Error
 
 /// The card's review log, oldest first, including forget markers and crams. Each entry carries the
 /// memory state the card had after it, replayed with the scheduler's current parameters. A cram
-/// leaves the memory state as it was, so it carries the same one as the row before it.
+/// leaves the memory state as it was, so it carries the same one as the row before it. Times are
+/// capped by [`SparesExternalConfig::maximum_answer_time`] when it is set, as statistics count them.
 pub async fn get_card_reviews(
     db: &SqlitePool,
     card_id: CardId,
 ) -> Result<Vec<CardReviewEntry>, Error> {
+    let config = read_external_config()?;
+    let entry = |review_log: crate::model::ReviewLog, memory_state, lapse| {
+        let mut entry = CardReviewEntry::new(review_log, memory_state, lapse);
+        if entry.recall_duration.is_some() || entry.rate_duration.is_some() {
+            let seconds = |d: Option<i64>| chrono::Duration::seconds(d.unwrap_or(0));
+            let (recall, rate) = config
+                .cap_answer_time(seconds(entry.recall_duration), seconds(entry.rate_duration));
+            entry.recall_duration = entry.recall_duration.map(|_| recall.num_seconds());
+            entry.rate_duration = entry.rate_duration.map(|_| rate.num_seconds());
+        }
+        entry
+    };
     let card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(db)
@@ -86,12 +99,11 @@ pub async fn get_card_reviews(
             .into_iter()
             .map(|review_log| {
                 let lapse = lapses.contains(&review_log.id);
-                CardReviewEntry::new(review_log, None, lapse)
+                entry(review_log, None, lapse)
             })
             .collect());
     };
     let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
-    let config = read_external_config()?;
     // With the steps of the card's preset, as it was rated with
     let configs = CardConfigs::load(db, &config, Some(&[card_id])).await?;
     let history = scheduler.memory_state_history(
@@ -106,7 +118,7 @@ pub async fn get_card_reviews(
             let memory_state =
                 (card.state != NEW_CARD_STATE).then_some((card.stability, card.difficulty));
             let lapse = lapses.contains(&review_log.id);
-            CardReviewEntry::new(review_log, memory_state, lapse)
+            entry(review_log, memory_state, lapse)
         })
         .collect())
 }

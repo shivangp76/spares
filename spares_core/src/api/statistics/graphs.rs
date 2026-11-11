@@ -21,6 +21,7 @@ use super::local_time::Zone;
 use super::local_time::date_of_day_number;
 use super::local_time::day_number;
 use crate::Error;
+use crate::api::study_pace::capped_answer_seconds;
 use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::model::CardId;
@@ -139,6 +140,9 @@ struct Context<'a> {
     period_first_day: NaiveDate,
     period_start: i64,
     mature_seconds: i64,
+    /// The seconds of a review, capped by
+    /// [`SparesExternalConfig::maximum_answer_time`].
+    answer_seconds: String,
 }
 
 impl Context<'_> {
@@ -219,6 +223,7 @@ pub(crate) async fn get_statistics_graphs_with(
         period_first_day,
         period_start: zone.start_of(period_first_day).timestamp(),
         mature_seconds: i64::from(mature_threshold_days) * SECONDS_PER_DAY,
+        answer_seconds: capped_answer_seconds("", config.maximum_answer_seconds()),
     };
     let forecast_days = request.forecast_days.clamp(1, MAX_FORECAST_DAYS);
     let (
@@ -285,13 +290,14 @@ async fn today_stats(context: &Context<'_>) -> Result<TodayStats, Error> {
     let rows: Vec<(u8, u8, bool, u32, i64)> = context
         .fetch_all(&format!(
             "SELECT kind, {class} AS class, {passed} AS passed, COUNT(*),
-                    COALESCE(SUM(recall_duration + rate_duration), 0)
+                    COALESCE(SUM({answer_seconds}), 0)
              FROM review_log
              WHERE reviewed_at >= {start} AND reviewed_at < {end} AND kind IN ({REVIEW}, {CRAM}){cards}
              GROUP BY kind, class, passed",
             class = context.class(),
             passed = context.passed(),
             start = context.today_start,
+            answer_seconds = context.answer_seconds,
             end = context.tomorrow_start,
             cards = context.cards.sql("card_id"),
         ))
@@ -396,12 +402,13 @@ async fn reviews(context: &Context<'_>) -> Result<(Vec<ReviewDay>, ReviewsSummar
     let rows: Vec<(i64, u8, u8, u32, i64)> = context
         .fetch_all(&format!(
             "SELECT {day} AS day, kind, {class} AS class, COUNT(*),
-                    COALESCE(SUM(recall_duration + rate_duration), 0)
+                    COALESCE(SUM({answer_seconds}), 0)
              FROM review_log{hint}
              WHERE reviewed_at >= {start} AND reviewed_at < {end} AND kind IN ({REVIEW}, {CRAM}){cards}
              GROUP BY day, kind, class",
             day = clock.day("reviewed_at"),
             class = context.class(),
+            answer_seconds = context.answer_seconds,
             hint = context.cards.scan_hint(context.period_first_day < context.today - Days::new(180)),
             start = context.period_start,
             end = context.tomorrow_start,
