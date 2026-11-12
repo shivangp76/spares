@@ -11,9 +11,6 @@
 //! formats they record are not ones clips can use. Recording needs the web app to be served over
 //! HTTPS or from localhost, as browsers only allow the microphone there.
 
-use std::fs::create_dir_all;
-use std::fs::rename;
-use std::fs::write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -26,11 +23,15 @@ use crate::api::image_occlusion::HASH_LENGTH;
 use crate::api::image_occlusion::other_error;
 use crate::api::image_occlusion::sanitized_stem;
 use crate::api::parser::get_parser_name;
-use crate::config::get_data_dir;
+use crate::config::get_media_dir;
 use crate::parsers::Parseable;
 use crate::parsers::audio::AUDIO_EXTENSIONS;
 use crate::parsers::audio::is_audio_path;
 use crate::parsers::find_parser;
+use crate::platform::create_dir_all;
+use crate::platform::is_file;
+use crate::platform::rename;
+use crate::platform::write;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CreateAudioResponse {
@@ -43,9 +44,14 @@ pub struct CreateAudioResponse {
 /// The largest clip accepted. Recordings are short, but uncompressed ones are large.
 pub const MAX_AUDIO_SIZE: usize = 64 * 1024 * 1024;
 
-/// Where clips recorded for notes are stored.
+/// Where clips recorded for notes are stored. In a browser, where the server stores them (see
+/// [`crate::platform`]).
 pub fn get_audio_directory() -> PathBuf {
-    get_data_dir().join("audio")
+    #[cfg(target_family = "wasm")]
+    if let Some(dirs) = crate::platform::media_dirs() {
+        return dirs.audio;
+    }
+    get_media_dir().join("audio")
 }
 
 /// Stores `audio` in the audio directory and returns its path. `audio_filename` is only used for
@@ -71,7 +77,7 @@ fn store_audio(audio: &[u8], audio_filename: &str) -> Result<PathBuf, Error> {
         source: e,
     })?;
     let path = directory.join(format!("{stem}-{}.{extension}", &hash[..HASH_LENGTH]));
-    if !path.exists() {
+    if !is_file(&path) {
         // Write then rename so a partially written clip is never played
         let temp_path = path.with_extension(format!("{extension}.tmp"));
         write(&temp_path, audio)

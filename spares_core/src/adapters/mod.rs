@@ -1,6 +1,8 @@
 //! Adapters let spares interface with different spaced repetition software. Spares ships with an
 //! adapter for Anki and for spares itself ([`impls`]).
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
@@ -17,7 +19,8 @@ use crate::parsers::Parseable;
 pub mod impls;
 pub mod migration;
 
-#[async_trait]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
 pub trait SrsAdapter: Send + Sync {
     fn get_adapter_name(&self) -> &'static str;
 
@@ -53,6 +56,13 @@ pub trait SrsAdapter: Send + Sync {
         Ok(None)
     }
 
+    /// The notes of the live sync group `live_sync_name`, by block order. Default returns none
+    /// (non-spares adapters don't support live notes).
+    #[allow(unused_variables)]
+    async fn live_notes(&self, live_sync_name: &str) -> Result<BTreeMap<i64, NoteId>, Error> {
+        Ok(BTreeMap::new())
+    }
+
     /// The `live_sync_name` of note `note_id`, or `None` if it is not a live note. Default returns
     /// `None` (non-spares adapters don't support live notes).
     #[allow(unused_variables)]
@@ -80,13 +90,15 @@ pub fn get_adapter_from_string(adapter_str: &str) -> Result<Box<dyn SrsAdapter>,
 
 pub fn get_all_adapters() -> Vec<fn() -> Box<dyn SrsAdapter>> {
     // NOTE: Add adapter here
-    let all_adapters: Vec<fn() -> Box<dyn SrsAdapter>> =
-        vec![|| Box::new(impls::anki::AnkiAdapter::new()), || {
+    vec![
+        #[cfg(not(target_family = "wasm"))]
+        || Box::new(impls::anki::AnkiAdapter::new()),
+        || {
             Box::new(impls::spares::SparesAdapter::new(
                 impls::spares::SparesRequestProcessor::Server,
             ))
-        }];
-    all_adapters
+        },
+    ]
 }
 
 #[cfg(test)]

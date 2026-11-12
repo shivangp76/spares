@@ -14,9 +14,6 @@ use serde::Deserialize;
 
 use crate::Error;
 use crate::LibraryError;
-use crate::ParserErrorKind;
-use crate::config::get_cache_dir;
-use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
@@ -28,8 +25,8 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
-use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
+use crate::parsers::RenderedFile;
 use crate::parsers::audio::AudioRef;
 use crate::parsers::audio::find_audio_refs;
 use crate::parsers::audio::regex_ranges;
@@ -38,11 +35,14 @@ use crate::parsers::generate_files::CardSide;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::parsers::image_occlusion::image_occlusion_caption;
+use crate::parsers::image_occlusion::image_occlusion_overlay;
 use crate::parsers::render_command_output;
-use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 mod data_parser;
+#[cfg(all(feature = "typst-render", not(target_family = "wasm")))]
+pub(crate) mod worker;
 
 /// Separates notes in a note file, and the metadata from the card data in a card file.
 /// Code and comments, where audio links are not found and text is not spoken.
@@ -70,19 +70,16 @@ impl Parseable for TypstParser {
     fn get_linked_notes(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // We cannot use regex here since then braces won't properly match up. For example, `#lin("test(a)") ( )` or `#lin[test[a]]` or `#lin[a [b]] a #test[]`.
         // Regex::new(r"(?s)#lin\(([^,\n]*)(?:, note_link: ([^\n\)]*))?\)").unwrap()
-        let parser = TypstDataParser::new(data);
-        Ok(parser.linked_notes)
+        Ok(TypstDataParser::cached(data).linked_notes.clone())
     }
 
     fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
-        let parser = TypstDataParser::new(data);
-        Ok(parser.keywords)
+        Ok(TypstDataParser::cached(data).keywords.clone())
     }
 
     fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
         // Regex is not used here due to nested braces. For example, `#se[keywords: Test [data]] See [2]`.
-        let parser = TypstDataParser::new(data);
-        Ok(parser.settings)
+        Ok(TypstDataParser::cached(data).settings.clone())
     }
 
     fn note_settings_keys(&self) -> NoteSettingsKeys {
@@ -94,8 +91,12 @@ impl Parseable for TypstParser {
 
     fn get_clozes(&self, data: &str) -> Result<Vec<ClozeMatch>, LibraryError> {
         // Note that a regex approach will not work for nested clozes.
-        let parser = TypstDataParser::new(data);
-        Ok(parser.clozes.into_iter().flatten().collect::<Vec<_>>())
+        Ok(TypstDataParser::cached(data)
+            .clozes
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>())
     }
 
     fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String) {
@@ -248,7 +249,12 @@ impl Parseable for TypstParser {
                     // "\n".to_string(),
                     "\n".to_string(),
                     action_string,
-                    self.construct_setting(&note_id_string),
+                    // A note to add has no id yet: importing one with an id is an error.
+                    if matches!(note_import_action, NoteImportAction::Add) {
+                        String::new()
+                    } else {
+                        self.construct_setting(&note_id_string)
+                    },
                     self.construct_setting(&keywords_string),
                     self.construct_setting(&tags_string),
                     custom_data_str,
@@ -269,27 +275,10 @@ impl Parseable for TypstParser {
                 note_file_data
             }
             ConstructFileDataType::Card(card_order, card_data, side) => {
-                let card_data_str =
+                // The note's id, keywords and tags are shown beside the card instead of in it, so
+                // changing them leaves the card's render up to date.
+                let card_file_data =
                     construct_card_data(self, card_order, card_data, side, *note_id);
-                let mut lines = vec![format!(
-                    "- note-id{} {}",
-                    settings_key_value_delim,
-                    note_id.letters()
-                )];
-                if !keywords_str.is_empty() {
-                    lines.push(format!(
-                        "- keywords{} {}",
-                        settings_key_value_delim, keywords_str
-                    ));
-                }
-                lines.extend(vec![
-                    format!("- tags{} {}", settings_key_value_delim, tags_str),
-                    String::new(),
-                    SEPARATOR.to_string(),
-                    String::new(),
-                    card_data_str,
-                ]);
-                let card_file_data = lines.join("\n");
                 card_file_data
             }
         }
@@ -305,10 +294,10 @@ impl Parseable for TypstParser {
             ClozeReplacement::Hidden(cloze_replacement) => match cloze_replacement {
                 ClozeHiddenReplacement::ToAnswer { hint } => match (hint, id) {
                     (Some(hint), Some(id)) => {
-                        format!("#cloze(hint: \"{hint}\", id: \"{id}\")")
+                        format!("#cloze(hint: {}, id: \"{id}\")", hint_string(hint))
                     }
                     (Some(hint), None) => {
-                        format!("#cloze(hint: \"{hint}\")")
+                        format!("#cloze(hint: {})", hint_string(hint))
                     }
                     (None, Some(id)) => {
                         format!("#cloze(id: \"{id}\")")
@@ -327,7 +316,7 @@ impl Parseable for TypstParser {
     fn construct_image_occlusion(
         &self,
         image_occlusion_data: &ImageOcclusionData,
-        output_type: ConstructImageOcclusionType,
+        output_type: ConstructImageOcclusionType<'_>,
     ) -> String {
         fn construct_image(file_path: &Path, caption: &str) -> String {
             format!(
@@ -340,12 +329,48 @@ impl Parseable for TypstParser {
                 caption,
             )
         }
+        if let ConstructImageOcclusionType::Card {
+            side,
+            cloze_indices,
+            ..
+        } = output_type
+        {
+            // The clozes over the original image, scaled to the same width (see
+            // `image_occlusion_overlay`). In the source, so that a web client that compiles the
+            // card fetches only the original image, which the note's cards share. `std` in case a
+            // note or preamble shadows these.
+            let overlay = match image_occlusion_overlay(cloze_indices, image_occlusion_data, side) {
+                Ok(svg) => format!(
+                    r#"std.image(bytes({}), format: "svg", width: 100%)"#,
+                    typst_string(&String::from_utf8_lossy(&svg))
+                ),
+                // The card fails to compile with the reason, where it would show the clozes
+                Err(e) => format!("std.panic({})", typst_string(&e.to_string())),
+            };
+            return format!(
+                indoc! { r#"#figure(
+                  std.box(width: 80%, {{
+                    std.image("{}", width: 100%)
+                    std.place(std.top + std.left, {})
+                  }}),
+                  caption: [{}],
+                )
+                "#},
+                image_occlusion_data.original_image_filepath.display(),
+                overlay,
+                image_occlusion_caption(image_occlusion_data),
+            );
+        }
         construct_image_occlusion_from_image(
             self,
             construct_image,
             image_occlusion_data,
             output_type,
         )
+    }
+
+    fn image_occlusion_overlays(&self) -> bool {
+        true
     }
 
     fn construct_image(&self, file_path: &Path) -> String {
@@ -367,17 +392,6 @@ impl Parseable for TypstParser {
         Some(format!("#{KEYWORD_FUNC_NAME}[{keyword}]"))
     }
 
-    fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if is_test_mode() {
-            return get_cache_dir();
-        }
-        std::env::var("TYPST_OUT_DIR")
-            .ok()
-            .map(PathBuf::from)
-            .filter(|dir| dir.exists())
-            .unwrap_or_else(get_cache_dir)
-    }
-
     fn file_extension(&self) -> &'static str {
         "typ"
     }
@@ -392,12 +406,11 @@ impl Parseable for TypstParser {
         output_text_filepath: &Path,
         _output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
-    ) -> Result<std::process::Output, Error> {
-        let typst_root_dir = std::env::var("TYPST_ROOT").map_err(|_| {
-            Error::Library(LibraryError::Parser(ParserErrorKind::NotFound(
-                "TYPST_ROOT environment variable is not set".to_string(),
-            )))
-        })?;
+    ) -> Result<RenderedFile, Error> {
+        // Notes import and include files by their absolute paths, which Typst resolves in its
+        // root, so the root is `/`. What a render may read is the sandbox's to limit (see
+        // `crate::render`).
+        let typst_root_dir = Path::new("/");
         let to_absolute = |path: &Path| {
             std::path::absolute(path).map_err(|e| Error::Io {
                 description: format!("Failed to make {} absolute", path.display()),
@@ -405,14 +418,30 @@ impl Parseable for TypstParser {
             })
         };
         let output_text_filepath = to_absolute(output_text_filepath)?;
-        let dependencies_filepath =
-            render_dependencies_filepath(&to_absolute(output_rendered_filepath)?);
-        let mut raw_dependencies_filepath = dependencies_filepath.clone();
-        raw_dependencies_filepath.set_extension("raw.json");
+        #[cfg(all(feature = "typst-render", not(target_family = "wasm")))]
+        if let Some(result) = worker::render(
+            &output_text_filepath,
+            &to_absolute(output_rendered_filepath)?,
+        ) {
+            let (output, dependencies) = result?;
+            return Ok(RenderedFile {
+                output,
+                dependencies: summarize_dependency_paths(dependencies, &output_text_filepath),
+            });
+        }
+        // Read right after, then removed
+        let raw_dependencies_filepath =
+            to_absolute(output_rendered_filepath)?.with_extension("deps.raw.json");
+        let config = crate::render::config();
         let mut command = Command::new("typst");
+        command.arg("compile").arg("--no-pdf-tags"); // To reduce output filesize
+        for dir in &config.typst_font_dirs {
+            command.arg("--font-path").arg(dir);
+        }
+        if !config.typst_system_fonts {
+            command.arg("--ignore-system-fonts");
+        }
         command
-            .arg("compile")
-            .arg("--no-pdf-tags") // To reduce output filesize
             .arg("--root")
             .arg(typst_root_dir)
             // Typst writes dependencies relative to the working directory.
@@ -421,25 +450,64 @@ impl Parseable for TypstParser {
             .arg(&output_text_filepath)
             .arg(output_rendered_filepath)
             .current_dir("/");
-        let output = render_command_output(&mut command, "typst")?;
+        let output = render_command_output(&mut command, "typst");
         // The raw dependency list holds every file of every package, so only a summary is kept.
-        if let Err(e) = summarize_dependencies(
-            &raw_dependencies_filepath,
-            &output_text_filepath,
-            &dependencies_filepath,
-        ) {
-            warn!(
-                "Failed to record dependencies of {}: {e}",
-                output_text_filepath.display()
-            );
-        }
+        let dependencies = output.as_ref().ok().map(|_| {
+            summarize_dependencies(&raw_dependencies_filepath, &output_text_filepath)
+                .unwrap_or_else(|e| {
+                    warn!(
+                        "Failed to record dependencies of {}: {e}",
+                        output_text_filepath.display()
+                    );
+                    RenderDependencies::default()
+                })
+        });
         let _ = remove_file(&raw_dependencies_filepath);
-        Ok(output)
+        Ok(RenderedFile {
+            output: output?,
+            dependencies: dependencies.unwrap_or_default(),
+        })
     }
 
     fn renders_in_browser(&self) -> bool {
         true
     }
+}
+
+/// A hint as the Typst string literal `#cloze` takes. A cloze's settings are Typst markup, so a
+/// hint escapes characters such as `*` there, as in `h:5\*3`. Those escapes are removed, as the
+/// string is shown as it is.
+fn hint_string(hint: &str) -> String {
+    let mut text = String::with_capacity(hint.len());
+    let mut chars = hint.chars().peekable();
+    while let Some(c) = chars.next() {
+        match chars.peek() {
+            Some(&next) if c == '\\' && next.is_ascii_punctuation() => {
+                text.push(next);
+                chars.next();
+            }
+            _ => text.push(c),
+        }
+    }
+    typst_string(&text)
+}
+
+/// `s` as a Typst string literal.
+pub(crate) fn typst_string(s: &str) -> String {
+    let mut literal = String::with_capacity(s.len() + 2);
+    literal.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => literal.push_str("\\\\"),
+            '"' => literal.push_str("\\\""),
+            '\n' => literal.push_str("\\n"),
+            '\r' => literal.push_str("\\r"),
+            '\t' => literal.push_str("\\t"),
+            c => literal.push(c),
+        }
+    }
+    literal.push('"');
+    literal
 }
 
 #[derive(Deserialize)]
@@ -451,13 +519,22 @@ struct TypstDependencies {
 fn summarize_dependencies(
     raw_dependencies_filepath: &Path,
     main_filepath: &Path,
-    dependencies_filepath: &Path,
-) -> Result<(), String> {
+) -> Result<RenderDependencies, String> {
     let raw = read_to_string(raw_dependencies_filepath).map_err(|e| e.to_string())?;
     let TypstDependencies { inputs } = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    // Relative to the working directory, `/`
+    let inputs = inputs.into_iter().map(|input| Path::new("/").join(input));
+    Ok(summarize_dependency_paths(inputs, main_filepath))
+}
+
+/// The files `inputs` (absolute paths) that a render of `main_filepath` read, as
+/// [`RenderDependencies`]: packages by their spec, other files by path
+fn summarize_dependency_paths(
+    inputs: impl IntoIterator<Item = PathBuf>,
+    main_filepath: &Path,
+) -> RenderDependencies {
     let mut dependencies = RenderDependencies::default();
     for input in inputs {
-        let input = Path::new("/").join(input);
         if input == main_filepath {
             continue;
         }
@@ -468,7 +545,7 @@ fn summarize_dependencies(
             None => dependencies.files.push(input),
         }
     }
-    dependencies.write(dependencies_filepath)
+    dependencies
 }
 
 /// Returns `namespace/name/version` if `path` is inside a Typst package directory, which are laid
@@ -746,5 +823,14 @@ pub mod tests {
             }];
             assert_eq!(cards, expected);
         }
+    }
+
+    #[test]
+    fn test_hint_string() {
+        use super::hint_string;
+        assert_eq!(hint_string(r#"say "hi""#), r#""say \"hi\"""#);
+        // Markup escapes are removed, and a `\` left is escaped
+        assert_eq!(hint_string(r"5\*3"), r#""5*3""#);
+        assert_eq!(hint_string(r"a\b"), r#""a\\b""#);
     }
 }

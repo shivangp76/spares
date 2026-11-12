@@ -1,5 +1,8 @@
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use crate::CardErrorKind;
 use crate::LibraryError;
@@ -7,6 +10,7 @@ use crate::NoteErrorKind;
 use crate::adapters::impls::spares::SparesAdapter;
 use crate::adapters::impls::spares::SparesRequestProcessor;
 use crate::api::note::RenderNoteData;
+use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::helpers::value_to_string_vec;
 use crate::model::CustomData;
@@ -21,8 +25,43 @@ use crate::parsers::generate_files::construct_note_file_contents;
 use crate::parsers::get_file_notes;
 use crate::schema::note::LinkedNote;
 
+/// What reading and writing note files takes from outside the notes: `config.toml` (for parsing)
+/// and each parser's note template. Each is read the first time it is needed, then kept, so that
+/// the files of a push or a reconcile share one read of each rather than reading them for every
+/// note. Make one per operation: a later one sees changes to the files.
+#[derive(Default)]
+pub struct NoteFileContext {
+    config: OnceLock<Option<SparesExternalConfig>>,
+    /// `(template, body placeholder)` by parser name
+    templates: Mutex<HashMap<&'static str, Arc<(String, String)>>>,
+}
+
+impl NoteFileContext {
+    fn config(&self) -> Option<&SparesExternalConfig> {
+        self.config
+            .get_or_init(|| read_external_config().ok())
+            .as_ref()
+    }
+
+    /// The parser's note template and its body placeholder (see
+    /// [`Parseable::get_template_data`]).
+    fn note_template(&self, parser: &dyn Parseable) -> std::io::Result<Arc<(String, String)>> {
+        let name = parser.get_parser_name();
+        let mut templates = self
+            .templates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(template) = templates.get(name) {
+            return Ok(Arc::clone(template));
+        }
+        let template = Arc::new(parser.get_template_data(TemplateType::Note)?);
+        templates.insert(name, Arc::clone(&template));
+        Ok(template)
+    }
+}
+
 /// What importing a note file sets on the note. Two files describing the same note are equal here
-/// even if they differ in formatting, the hash line or the linked-notes section.
+/// even if they differ in formatting or the linked-notes section.
 #[derive(Debug, PartialEq)]
 pub struct NoteFields {
     pub data: String,
@@ -32,7 +71,7 @@ pub struct NoteFields {
     pub custom_data: CustomData,
 }
 
-/// A note file that holds exactly one valid note updating `note_id`.
+/// A valid note updating `note_id`, from its file
 #[derive(Debug)]
 pub struct ParsedNoteFile {
     pub note_id: NoteId,
@@ -70,8 +109,14 @@ impl NoteFields {
     /// The note as the parser writes it, without linked notes. Link references in the data are
     /// numbered when a file shows linked notes (`[li1]` in markdown) and not in the database
     /// (`[li]`), so they are renumbered the same way for both.
-    fn normalized(&self, parser: &dyn Parseable, note_id: NoteId) -> Option<String> {
-        let (template, placeholder) = parser.get_template_data(TemplateType::Note).ok()?;
+    fn normalized(
+        &self,
+        context: &NoteFileContext,
+        parser: &dyn Parseable,
+        note_id: NoteId,
+    ) -> Option<String> {
+        let template = context.note_template(parser).ok()?;
+        let (template, placeholder) = &*template;
         let request = GenerateNoteFilesRequest {
             note_id,
             keywords: self.keywords.iter().cloned().collect(),
@@ -82,18 +127,24 @@ impl NoteFields {
         };
         Some(construct_note_file_contents(
             parser,
-            &template,
-            &placeholder,
+            template,
+            placeholder,
             &request,
         ))
     }
 }
 
 /// Whether `a` and `b` describe the same note: importing either would store the same thing.
-pub fn same_note(parser: &dyn Parseable, note_id: NoteId, a: &NoteFields, b: &NoteFields) -> bool {
+pub fn same_note(
+    context: &NoteFileContext,
+    parser: &dyn Parseable,
+    note_id: NoteId,
+    a: &NoteFields,
+    b: &NoteFields,
+) -> bool {
     a == b
-        || a.normalized(parser, note_id)
-            .is_some_and(|a| Some(a) == b.normalized(parser, note_id))
+        || a.normalized(context, parser, note_id)
+            .is_some_and(|a| Some(a) == b.normalized(context, parser, note_id))
 }
 
 pub fn db_note_fields(row: &RenderNoteData) -> NoteFields {
@@ -112,12 +163,13 @@ pub fn db_note_fields(row: &RenderNoteData) -> NoteFields {
 /// data, a note that would be created (`action: add`) or deleted (`action: delete`), a note id
 /// that differs from the file name, and parse errors. Warnings (see [`is_warning`]) are allowed.
 pub fn parse_note_file(
+    context: &NoteFileContext,
     parser: &dyn Parseable,
     contents: &str,
     expected_id: NoteId,
     move_files: bool,
 ) -> Result<ParsedNoteFile, Vec<String>> {
-    let (settings, data, mut errors) = parse_one_note(parser, contents, move_files)?;
+    let (settings, data, mut errors) = parse_one_note(context, parser, contents, move_files)?;
     match settings.action {
         NoteImportAction::Update(id) if id == expected_id => {}
         NoteImportAction::Update(id) => errors.push(format!(
@@ -140,8 +192,8 @@ pub fn parse_note_file(
     })
 }
 
-/// A new note's file (see [`super::parse_new_note_rel_path`]): exactly one valid note, without a
-/// note id.
+/// A valid note to create, without a note id: the one note of a new note's file (see
+/// [`super::parse_new_note_rel_path`]), or one of the notes of a pushed file.
 #[derive(Debug)]
 pub struct ParsedNewNoteFile {
     pub settings: NoteSettings,
@@ -151,11 +203,12 @@ pub struct ParsedNewNoteFile {
 /// Parses `contents` as the file of a note to create, with the same rules as [`parse_note_file`],
 /// except that the note must not name a note id.
 pub fn parse_new_note_file(
+    context: &NoteFileContext,
     parser: &dyn Parseable,
     contents: &str,
     move_files: bool,
 ) -> Result<ParsedNewNoteFile, Vec<String>> {
-    let (settings, data, mut errors) = parse_one_note(parser, contents, move_files)?;
+    let (settings, data, mut errors) = parse_one_note(context, parser, contents, move_files)?;
     match settings.action {
         NoteImportAction::Add => {}
         NoteImportAction::Update(id) => errors.push(format!(
@@ -168,45 +221,187 @@ pub fn parse_new_note_file(
         .map(|(settings, data)| ParsedNewNoteFile { settings, data })
 }
 
+/// A note file pushed to `main`, which may hold several notes: a note's file
+/// (`<parser>/<id>.<ext>`) holds that note and any number of notes without a note id, and a new
+/// note's file (`new-*`) holds one or more notes without one. Spares gives each note its own file
+/// when it imports the push, so files spares writes always hold one note.
+#[derive(Debug)]
+pub struct ParsedPushedFile {
+    /// The note the file belongs to, for a note's file
+    pub own: Option<ParsedNoteFile>,
+    /// The notes the file creates, in file order
+    pub new: Vec<ParsedNewNoteFile>,
+    /// The notes' warnings (see [`is_warning`]), which do not stop the file from being imported
+    pub warnings: Vec<String>,
+}
+
+impl ParsedPushedFile {
+    /// Each note's settings and data, the file's own note first, with whether it is the own note
+    pub fn notes(&self) -> impl Iterator<Item = (&NoteSettings, &str, bool)> {
+        self.own
+            .iter()
+            .map(|own| (&own.settings, own.data.as_str(), true))
+            .chain(
+                self.new
+                    .iter()
+                    .map(|new| (&new.settings, new.data.as_str(), false)),
+            )
+    }
+}
+
+/// Parses a file pushed to `main` (see [`ParsedPushedFile`]): the file of note `file_id`, or a
+/// new note's file if `file_id` is `None`. Errors are those of [`parse_note_file`] and
+/// [`parse_new_note_file`], for each note, and a note's file must still hold its note. Notes that
+/// name another existing note are refused: they are edited in their own file, so that a push's
+/// base check can compare each note with the file it was pushed from.
+pub fn parse_pushed_file(
+    context: &NoteFileContext,
+    parser: &dyn Parseable,
+    contents: &str,
+    file_id: Option<NoteId>,
+    move_files: bool,
+) -> Result<ParsedPushedFile, Vec<String>> {
+    let notes = parse_notes(context, parser, contents, move_files)?;
+    let count = notes.len();
+    let mut own = None;
+    let mut found_own = false;
+    let mut new = Vec::new();
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let label = |i: usize, message: &dyn std::fmt::Display| {
+        if count == 1 {
+            message.to_string()
+        } else {
+            format!("note {} of {count}: {message}", i + 1)
+        }
+    };
+    for (i, (settings, data, mut note_errors)) in notes.into_iter().enumerate() {
+        warnings.extend(
+            settings
+                .errors_and_warnings
+                .iter()
+                .filter(|e| is_warning(e))
+                .map(|e| label(i, e)),
+        );
+        let is_own = match (settings.action, file_id) {
+            (NoteImportAction::Update(id), Some(file_id)) if id == file_id => {
+                if found_own {
+                    note_errors.push(format!(
+                        "names note {} too; only one note in its file can",
+                        id.letters()
+                    ));
+                }
+                found_own = true;
+                true
+            }
+            (NoteImportAction::Update(id), Some(file_id)) => {
+                note_errors.push(format!(
+                    "names note {}, but the file belongs to note {}; edit note {} in its own file",
+                    id.letters(),
+                    file_id.letters(),
+                    id.letters()
+                ));
+                false
+            }
+            (NoteImportAction::Update(id), None) => {
+                note_errors.push(format!(
+                    "names note {}; a new note's file must not have a note id",
+                    id.letters()
+                ));
+                false
+            }
+            (NoteImportAction::Add, _) => false,
+            (NoteImportAction::Delete(id), Some(file_id)) if id == file_id => {
+                found_own = true;
+                note_errors
+                    .push("would delete the note; delete notes by deleting their file".into());
+                false
+            }
+            (NoteImportAction::Delete(_), _) => {
+                note_errors.push("would delete a note; delete notes by deleting their file".into());
+                false
+            }
+        };
+        match finish_parse(settings, data, note_errors) {
+            Ok((settings, data)) if is_own => {
+                own = file_id.map(|note_id| ParsedNoteFile {
+                    note_id,
+                    settings,
+                    data,
+                });
+            }
+            Ok((settings, data)) => new.push(ParsedNewNoteFile { settings, data }),
+            Err(problems) => errors.extend(problems.iter().map(|problem| label(i, problem))),
+        }
+    }
+    if let Some(file_id) = file_id
+        && !found_own
+    {
+        errors.push(format!(
+            "holds no note with note id {}; keep the `note-id` of the note the file belongs to (notes without one are created, and a note is deleted by deleting its file)",
+            file_id.letters()
+        ));
+    }
+    if errors.is_empty() {
+        Ok(ParsedPushedFile { own, new, warnings })
+    } else {
+        Err(errors)
+    }
+}
+
 /// The one note in `contents`, with its errors other than warnings.
 fn parse_one_note(
+    context: &NoteFileContext,
     parser: &dyn Parseable,
     contents: &str,
     move_files: bool,
-) -> Result<(NoteSettings, Option<String>, Vec<String>), Vec<String>> {
+) -> Result<FileNote, Vec<String>> {
+    let mut notes = parse_notes(context, parser, contents, move_files)?;
+    match notes.len() {
+        1 => Ok(notes.remove(0)),
+        n => Err(vec![format!(
+            "holds {n} notes, but a file must hold exactly one here; push it to `main` first, which gives each note its own file"
+        )]),
+    }
+}
+
+/// A note of a file: its settings, its data, and its errors other than warnings
+type FileNote = (NoteSettings, Option<String>, Vec<String>);
+
+/// The notes in `contents`, at least one.
+fn parse_notes(
+    context: &NoteFileContext,
+    parser: &dyn Parseable,
+    contents: &str,
+    move_files: bool,
+) -> Result<Vec<FileNote>, Vec<String>> {
     let adapter = SparesAdapter::new(SparesRequestProcessor::Server);
-    let config = read_external_config().ok();
     let notes = get_file_notes(
         parser,
         None,
         contents,
         &adapter,
         move_files,
-        config.as_ref().map(|c| &c.overlapper),
+        context.config().map(|c| &c.overlapper),
     )
     .map_err(|e| vec![format!("failed to parse: {e}")])?;
-    let count = notes.len();
-    let mut notes = notes.into_iter();
-    let (settings, data) = match (notes.next(), count) {
-        (Some(note), 1) => note,
-        (_, 0) => {
-            return Err(vec![
-                "holds no note (are its start and end markers intact?)".into(),
-            ]);
-        }
-        (_, n) => {
-            return Err(vec![format!(
-                "holds {n} notes; a note file must hold exactly one. Create notes in `new-*` files, one per file"
-            )]);
-        }
-    };
-    let errors: Vec<String> = settings
-        .errors_and_warnings
-        .iter()
-        .filter(|e| !is_warning(e))
-        .map(ToString::to_string)
-        .collect();
-    Ok((settings, data, errors))
+    if notes.is_empty() {
+        return Err(vec![
+            "holds no note (are its start and end markers intact?)".into(),
+        ]);
+    }
+    Ok(notes
+        .into_iter()
+        .map(|(settings, data)| {
+            let errors: Vec<String> = settings
+                .errors_and_warnings
+                .iter()
+                .filter(|e| !is_warning(e))
+                .map(ToString::to_string)
+                .collect();
+            (settings, data, errors)
+        })
+        .collect())
 }
 
 fn finish_parse(
@@ -239,37 +434,39 @@ pub fn is_warning(error: &LibraryError) -> bool {
 
 /// The note's fields as a file would set them, or `None` if the file does not parse as that note.
 pub fn file_note_fields(
+    context: &NoteFileContext,
     parser: &dyn Parseable,
     contents: &str,
     note_id: NoteId,
 ) -> Option<NoteFields> {
-    parse_note_file(parser, contents, note_id, false)
+    parse_note_file(context, parser, contents, note_id, false)
         .ok()
         .map(|parsed| parsed.fields(parser))
 }
 
-/// The raw file the server writes for a note: without the hash line, with the linked-notes section
-/// from `linked_notes_map`.
+/// The raw file the server writes for a note, with the linked-notes section from
+/// `linked_notes_map`.
 pub fn construct_db_note_file(
+    context: &NoteFileContext,
     parser: &dyn Parseable,
     row: &RenderNoteData,
     linked_notes_map: &HashMap<NoteId, Vec<NoteLink>>,
 ) -> Result<String, crate::Error> {
-    let (template, placeholder) =
-        parser
-            .get_template_data(TemplateType::Note)
-            .map_err(|e| crate::Error::Io {
-                description: format!(
-                    "Failed to read template for parser {}",
-                    parser.get_parser_name()
-                ),
-                source: e,
-            })?;
+    let template = context
+        .note_template(parser)
+        .map_err(|e| crate::Error::Io {
+            description: format!(
+                "Failed to read template for parser {}",
+                parser.get_parser_name()
+            ),
+            source: e,
+        })?;
+    let (template, placeholder) = &*template;
     let request = generate_request(row, Some(linked_notes_map));
     Ok(construct_note_file_contents(
         parser,
-        &template,
-        &placeholder,
+        template,
+        placeholder,
         &request,
     ))
 }
@@ -325,6 +522,7 @@ mod tests {
     use serde_json::json;
     use sqlx::SqlitePool;
 
+    use super::NoteFileContext;
     use super::construct_db_note_file;
     use super::db_note_fields;
     use super::file_note_fields;
@@ -388,18 +586,26 @@ mod tests {
         }
         let rows = get_render_note_data(&pool, None).await.unwrap();
         assert_eq!(rows.len(), 2);
+        let context = NoteFileContext::default();
         let ids: Vec<NoteId> = rows.iter().map(|r| r.note_id).collect();
         let links = get_note_links_map(&pool, &ids).await.unwrap();
         for row in &rows {
             let parser = find_parser(&row.parser_name, &get_all_parsers()).unwrap();
             for links in [&links, &HashMap::new()] {
-                let file = construct_db_note_file(parser.as_ref(), row, links).unwrap();
-                let parsed = parse_note_file(parser.as_ref(), &file, row.note_id, false)
+                let file = construct_db_note_file(&context, parser.as_ref(), row, links).unwrap();
+                let parsed = parse_note_file(&context, parser.as_ref(), &file, row.note_id, false)
                     .unwrap_or_else(|e| panic!("{}: {e:?}\n{file}", row.parser_name));
                 assert_eq!(parsed.note_id, row.note_id);
-                let fields = file_note_fields(parser.as_ref(), &file, row.note_id).unwrap();
+                let fields =
+                    file_note_fields(&context, parser.as_ref(), &file, row.note_id).unwrap();
                 assert!(
-                    same_note(parser.as_ref(), row.note_id, &fields, &db_note_fields(row)),
+                    same_note(
+                        &context,
+                        parser.as_ref(),
+                        row.note_id,
+                        &fields,
+                        &db_note_fields(row)
+                    ),
                     "{}:\n{file}\n{fields:?}",
                     row.parser_name
                 );
@@ -408,6 +614,7 @@ mod tests {
             let mut changed = db_note_fields(row);
             changed.data.push_str(" more");
             assert!(!same_note(
+                &context,
                 parser.as_ref(),
                 row.note_id,
                 &changed,
@@ -416,6 +623,7 @@ mod tests {
             let mut changed = db_note_fields(row);
             changed.tags.insert("new tag".to_string());
             assert!(!same_note(
+                &context,
                 parser.as_ref(),
                 row.note_id,
                 &changed,

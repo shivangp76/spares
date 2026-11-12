@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::debug_handler;
 use axum::extract::Path;
@@ -17,11 +15,11 @@ use spares_core::schema::FilterOptions;
 use spares_core::schema::parser::CreateParserRequest;
 use spares_core::schema::parser::UpdateParserRequest;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 pub(crate) async fn create_parser_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<CreateParserRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let result = create_parser(&data.db, body, true)
@@ -32,7 +30,7 @@ pub(crate) async fn create_parser_handler(
 
 pub(crate) async fn get_parser_handler(
     Path(id): Path<i64>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let parser_res = get_parser(&data.db, id).await.map_err(error_to_response)?;
     Ok(Json(parser_res))
@@ -46,7 +44,7 @@ pub(crate) async fn list_known_parsers_handler() -> impl IntoResponse {
 /// The examples of how notes are written for the parser, for the web app's note editor.
 pub(crate) async fn get_parser_syntax_handler(
     Path(id): Path<i64>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let examples = get_parser_syntax(&data.db, id)
         .await
@@ -56,7 +54,7 @@ pub(crate) async fn get_parser_syntax_handler(
 
 pub(crate) async fn update_parser_handler(
     Path(id): Path<i64>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<UpdateParserRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -68,19 +66,20 @@ pub(crate) async fn update_parser_handler(
 
 pub(crate) async fn delete_parser_handler(
     Path(id): Path<i64>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
-    run_exclusive(async move { delete_parser(&db, id, true).await })
+    let event_id = run_exclusive(async move { delete_parser(&db, id, true).await })
         .await
         .map_err(error_to_response)?;
-    Ok(StatusCode::OK)
+    // The event to undo the delete with
+    Ok(Json(serde_json::json!({ "event_id": event_id })))
 }
 
 #[debug_handler]
 pub(crate) async fn list_parsers_handler(
     opts: Query<FilterOptions>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let list_parsers_res = list_parsers(&data.db, opts.0)
         .await

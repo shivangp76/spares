@@ -59,15 +59,11 @@ pub(super) fn group_clozes(
         cloze_data.settings.all_groupings = Some(all_groupings_settings.clone());
 
         // Replace `ClozeGrouping::All` with each grouping
-        let new_grouping_settings = all_grouping_names
-            .iter()
-            .map(|grouping| {
-                let mut settings = all_groupings_settings.clone();
-                settings.grouping = grouping.clone();
-                settings
-            })
-            .collect::<Vec<_>>();
-        *grouping_settings = new_grouping_settings;
+        *grouping_settings = expand_all_groupings(
+            grouping_settings,
+            &all_grouping_names,
+            &all_groupings_settings,
+        );
     }
 
     let cards_raw: Vec<Vec<(ClozeData, ClozeGroupingSettings)>> = all_clozes
@@ -144,8 +140,47 @@ pub(super) fn group_clozes(
     Ok((cards_raw, all_grouping_names.len()))
 }
 
+/// The settings of a cloze in all groupings (`g:*`) for each of `all_grouping_names`. A grouping
+/// the cloze names itself keeps its own settings, e.g. `g:*;hide:; g:1` is hidden in all groupings
+/// but grouping 1. Every other grouping is given a copy of the settings of `g:*`.
+fn expand_all_groupings(
+    grouping_settings: &[ClozeGroupingSettings],
+    all_grouping_names: &[ClozeGrouping],
+    all_groupings_settings: &ClozeGroupingSettings,
+) -> Vec<ClozeGroupingSettings> {
+    all_grouping_names
+        .iter()
+        .map(|grouping| {
+            grouping_settings
+                .iter()
+                .find(|settings| settings.grouping == *grouping)
+                .cloned()
+                .unwrap_or_else(|| ClozeGroupingSettings {
+                    grouping: grouping.clone(),
+                    from_all_groupings: true,
+                    ..all_groupings_settings.clone()
+                })
+        })
+        .collect()
+}
+
+/// Where in a card's clozes the card's own settings are kept, such as its orders: on the first
+/// cloze that is in the card in its own right. A cloze in all groupings (`g:*`) is in a card it
+/// does not name only through a copy of its settings, which is written without a `g:` key when
+/// the card's grouping is automatic. Settings kept there would be read back as those of `g:*`, for
+/// all of its cards. Only a card made of such copies alone keeps them on its first cloze.
+pub(super) fn settings_cloze_position(clozes: &[(ClozeData, ClozeGroupingSettings)]) -> usize {
+    clozes
+        .iter()
+        .position(|(_, x)| !x.skip_serialization && !x.from_all_groupings)
+        .or_else(|| clozes.iter().position(|(_, x)| !x.skip_serialization))
+        .unwrap()
+}
+
 /// Boil up settings to first cloze within the grouping.
 /// Note that clozes in the same grouping can have different settings for convenience. Rather than be forced to copy and paste the settings for all clozes, they can be declared on each cloze where subsequent clozes override the previous one.
+/// The settings a cloze in all groupings (`g:*`) gives a card it does not name are overridden by
+/// those of the card's own clozes, before or after it.
 #[expect(clippy::too_many_lines)]
 pub(super) fn boil_up_settings(
     cards_raw: &mut Vec<Vec<(ClozeData, ClozeGroupingSettings)>>,
@@ -154,7 +189,7 @@ pub(super) fn boil_up_settings(
     for clozes in &mut *cards_raw {
         // Get first non-hidden cloze to determine if it is an image occlusion cloze. This
         // determines the default settings.
-        let first_cloze = clozes.iter().find(|(_, x)| !x.skip_serialization).unwrap();
+        let first_cloze = &clozes[settings_cloze_position(clozes)];
         let modify_defaults = first_cloze.0.image_occlusion.as_ref().map(|d| {
             (
                 d.data.front_conceal,
@@ -164,7 +199,18 @@ pub(super) fn boil_up_settings(
             )
         });
         let mut boiled_cloze_settings = ClozeGroupingSettings::default(&mut 0, modify_defaults);
-        for (cloze_data, grouping_settings) in &mut *clozes {
+        // The copies of a cloze in all groupings (`g:*`) are boiled up first, so that a card's own
+        // clozes override them wherever they are. Otherwise which one wins would depend on their
+        // positions, and those change once the card's settings are moved onto the cloze at
+        // `settings_cloze_position`, so a rewritten note could read back differently.
+        let (all_groupings_copies, own_clozes): (Vec<_>, Vec<_>) = clozes
+            .iter_mut()
+            .partition(|(_, settings)| settings.from_all_groupings);
+        for (cloze_data, grouping_settings) in all_groupings_copies
+            .into_iter()
+            .chain(own_clozes)
+            .map(|(cloze_data, grouping_settings)| (&*cloze_data, grouping_settings))
+        {
             let modify_defaults = cloze_data.image_occlusion.as_ref().map(|d| {
                 (
                     d.data.front_conceal,
@@ -189,6 +235,7 @@ pub(super) fn boil_up_settings(
                 // Individual cloze settings. Don't boil up
                 hidden_no_answer: _,
                 skip_serialization,
+                from_all_groupings: _,
             } = grouping_settings;
             if *skip_serialization {
                 continue;
@@ -236,11 +283,9 @@ pub(super) fn boil_up_settings(
             }
         }
 
-        // Update first non-hidden cloze with boiled settings
-        let cloze = clozes
-            .iter_mut()
-            .find(|(_, x)| !x.skip_serialization)
-            .unwrap();
+        // Update the cloze that keeps the card's settings with boiled settings
+        let settings_cloze = settings_cloze_position(clozes);
+        let cloze = &mut clozes[settings_cloze];
         cloze.1.include_forward_card = boiled_cloze_settings.include_forward_card;
         cloze.1.include_backward_card = boiled_cloze_settings.include_backward_card;
         cloze.1.is_suspended = boiled_cloze_settings.is_suspended;
@@ -276,17 +321,17 @@ pub(super) fn update_first_cloze_with_order(
     let mut seen_clozes: HashSet<usize> = HashSet::new();
     let mut current_card_order = 1;
     for card_index in 0..cards_raw.len() {
-        // Find first non-hidden cloze
-        let cloze = &mut *cards_raw[card_index]
-            .iter_mut()
-            .find(|(_, x)| !x.skip_serialization)
-            .unwrap();
-        let index = cloze.0.index;
-        // Update first non-hidden cloze with order
+        // Find the cloze that keeps the card's settings
+        let card = &cards_raw[card_index];
+        let index = card[settings_cloze_position(card)].0.index;
+        // Update that cloze with order
         if !seen_clozes.contains(&index) {
             let all_cloze_groupings = cards_raw
                 .iter_mut()
-                .map(|x| x.iter_mut().find(|(_, x)| !x.skip_serialization).unwrap())
+                .map(|x| {
+                    let position = settings_cloze_position(x);
+                    &mut x[position]
+                })
                 .filter(|cl| cl.0.index == index)
                 .map(|x| &mut x.1)
                 .collect::<Vec<_>>();
@@ -404,6 +449,14 @@ pub(super) fn modify_card_settings(
                     None,
                 )
             });
+            // An image occlusion's settings are stored in its clozes SVG, which is read with the
+            // default keys (see `get_clozes_from_svg_str`), not the note's parser's. For example,
+            // Typst escapes `*` as `\*`, which the SVG would read as a grouping named `\*`.
+            let groupings_all = if cloze_data.image_occlusion.is_some() {
+                NoteSettingsKeys::default().groupings_all
+            } else {
+                groupings_all
+            };
             let cloze_settings_string = construct_cloze_string(
                 &cloze_data.settings,
                 &all_groupings,
@@ -599,6 +652,12 @@ pub(super) fn apply_conceal_and_reveal(
                 new_clozes.extend(matching_clozes);
             }
         }
+        // Each cloze with these settings finds the same other clozes, and every cloze of a card has
+        // them once its settings are written back on it, so a cloze is added once. Otherwise the
+        // card would have it several times, and the note's text, rebuilt from the card, too.
+        new_clozes.sort_by_key(|x| x.index);
+        new_clozes.dedup_by_key(|x| x.index);
+        new_clozes.retain(|x| !clozes.iter().any(|(cloze, _)| cloze.index == x.index));
         // Add these clozes along with a new grouping setting that has `hidden_no_answer` enabled.
         // NOTE: The value of `is_image_occlusion` doesn't matter here since that property won't be read.
         let mut new_grouping_settings = ClozeGroupingSettings::default(&mut 0, None);

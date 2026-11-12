@@ -4,11 +4,13 @@ use std::str::FromStr;
 use indexmap::IndexMap;
 
 use super::data::BackReveal;
+use super::data::CardInheritance;
 use super::data::ClozeGrouping;
 use super::data::ClozeGroupingSettings;
 use super::data::ClozeSettings;
 use super::data::ClozeUid;
 use super::data::FrontConceal;
+use super::data::InheritMode;
 use super::data::ModifyDefaultsFn;
 use super::data::ReadableCardIdentifier;
 use super::data::TypeAnswer;
@@ -18,8 +20,11 @@ use crate::helpers::GroupByInsertion;
 use crate::helpers::split_inclusive_following;
 use crate::model::NoteId;
 use crate::parsers::NoteSettingsKeys;
+use crate::parsers::SettingsSyntax;
 use crate::parsers::get_settings_pairs;
+use crate::parsers::quote_setting_value;
 use crate::parsers::tts::TtsSetting;
+use crate::parsers::unquote_setting_value;
 
 #[derive(Clone, Debug)]
 pub struct ClozeSettingsKeys {
@@ -37,6 +42,8 @@ pub struct ClozeSettingsKeys {
     /// The answer is typed before the card is flipped. See [`TypeAnswer`] for its values.
     pub type_answer: &'static str,
     pub inherit: &'static str,
+    /// Like `inherit`, but moves the source card instead of copying it
+    pub move_card: &'static str,
     pub overlapper: &'static str,
     pub id: &'static str,
     /// Speaks the cloze's text. See [`crate::parsers::tts`] for its values.
@@ -58,6 +65,7 @@ impl Default for ClozeSettingsKeys {
             back_emphasis: "be",
             type_answer: "t",
             inherit: "inh",
+            move_card: "mv",
             overlapper: "ov",
             id: "id",
             tts: TtsSetting::KEY,
@@ -82,7 +90,9 @@ pub fn construct_cloze_string(
     if let Some(ref hint) = global_settings.hint {
         parts.push(format!(
             "{}{}{}",
-            cloze_settings_keys.hint, settings_key_value_delim, hint
+            cloze_settings_keys.hint,
+            settings_key_value_delim,
+            quote_setting_value(hint, settings_delim)
         ));
     }
     if global_settings.is_overlapper {
@@ -114,18 +124,43 @@ pub fn construct_cloze_string(
     let default = ClozeGroupingSettings::default(&mut 0, modify_defaults_fn);
     let mut all_grouping_parts: Vec<String> = Vec::new();
     let mut only_groups = Vec::new();
+    // Writes the groupings without settings of their own together, e.g. `g:1,2`
+    let write_only_groups = |only_groups: &mut Vec<ClozeGrouping>,
+                             all_grouping_parts: &mut Vec<String>| {
+        if !only_groups.is_empty() {
+            let groups_str = only_groups
+                .drain(0..)
+                .map(|grouping| grouping.to_parser_string(groupings_all))
+                .collect::<Vec<_>>()
+                .join(",");
+            all_grouping_parts.push(format!(
+                "{}{}{}",
+                cloze_settings_keys.grouping, settings_key_value_delim, groups_str
+            ));
+        }
+    };
+    // Orders belong to a card, so they are never written on `g:*`, though notes written before
+    // kept them there (see `settings_cloze_position`)
+    let all_groupings_settings =
+        global_settings
+            .all_groupings
+            .as_ref()
+            .map(|settings| ClozeGroupingSettings {
+                orders: None,
+                ..settings.clone()
+            });
     let grouping_settings_with_all =
-        if let Some(ref all_groupings_settings) = global_settings.all_groupings {
+        if let Some(ref all_groupings_settings) = all_groupings_settings {
             std::iter::once(all_groupings_settings)
                 .chain(grouping_settings.iter())
                 .collect::<Vec<_>>()
         } else {
             grouping_settings.iter().collect::<Vec<_>>()
         };
-    for (
-        i,
-        ClozeGroupingSettings {
-            grouping,
+    // The settings of one grouping, without its `g:` key
+    let settings_parts = |settings: &ClozeGroupingSettings| {
+        let ClozeGroupingSettings {
+            grouping: _,
             inherit,
             orders,
             include_forward_card,
@@ -136,22 +171,10 @@ pub fn construct_cloze_string(
             back_reveal,
             back_emphasis,
             type_answer,
-            skip_serialization,
-        },
-    ) in grouping_settings_with_all.iter().enumerate()
-    {
-        if *skip_serialization {
-            continue;
-        }
+            skip_serialization: _,
+            from_all_groupings: _,
+        } = settings;
         let mut grouping_parts: Vec<String> = Vec::new();
-        let parse_grouping = !matches!(grouping, ClozeGrouping::Auto(_));
-        if parse_grouping {
-            let grouping_str = grouping.to_parser_string(groupings_all);
-            grouping_parts.push(format!(
-                "{}{}{}",
-                cloze_settings_keys.grouping, settings_key_value_delim, grouping_str
-            ));
-        }
         if let Some(orders) = orders {
             grouping_parts.push(format!(
                 "{}{}{}",
@@ -221,41 +244,74 @@ pub fn construct_cloze_string(
                 )
             });
         }
-        if serialize_ephemeral && let Some(identifier) = inherit {
+        if serialize_ephemeral && let Some(CardInheritance { source, mode }) = inherit {
+            let key = match mode {
+                InheritMode::Copy => cloze_settings_keys.inherit,
+                InheritMode::Move => cloze_settings_keys.move_card,
+            };
             grouping_parts.push(format!(
                 "{}{}{}/{}",
-                cloze_settings_keys.inherit,
+                key,
                 settings_key_value_delim,
-                identifier.note_id.letters(),
-                identifier.order,
+                source.note_id.letters(),
+                source.order,
             ));
         }
+        grouping_parts
+    };
+    let parts_of_all_groupings = all_groupings_settings.as_ref().map(settings_parts);
+    for (i, settings) in grouping_settings_with_all.iter().enumerate() {
+        if settings.skip_serialization {
+            continue;
+        }
+        let own_parts = settings_parts(settings);
+        // A cloze in all groupings is given one grouping per card (see `group_clozes`). Those it
+        // does not name are copies of the settings of `g:*`, which say nothing `g:*` does not,
+        // and so do groupings it names with the same settings. An automatic grouping is written
+        // without a `g:` key, so writing them would only repeat the settings after `g:*`, once
+        // per card in the note, e.g. `g:*;hide:; hide:; hide:`. The card's own settings, such as
+        // its orders, are kept on another cloze (see `settings_cloze_position`).
+        if i > 0
+            && let Some(parts_of_all_groupings) = &parts_of_all_groupings
+            && (settings.from_all_groupings || own_parts == *parts_of_all_groupings)
+        {
+            continue;
+        }
+        let grouping = &settings.grouping;
+        let mut grouping_parts: Vec<String> = Vec::new();
+        let parse_grouping = !matches!(grouping, ClozeGrouping::Auto(_));
+        if parse_grouping {
+            let grouping_str = grouping.to_parser_string(groupings_all);
+            grouping_parts.push(format!(
+                "{}{}{}",
+                cloze_settings_keys.grouping, settings_key_value_delim, grouping_str
+            ));
+        }
+        grouping_parts.extend(own_parts);
 
         // Push settings
-        if parse_grouping && grouping_parts.len() == 1 && *grouping != ClozeGrouping::All {
-            if global_settings.all_groupings.is_none() {
-                only_groups.push(grouping.clone());
-            }
+        // Groupings without settings are listed together, e.g. `g:1,2`. With `g:*`, a grouping
+        // left here differs from it, so it is written on its own, e.g. `g:*;hide:; g:1`.
+        if parse_grouping
+            && grouping_parts.len() == 1
+            && *grouping != ClozeGrouping::All
+            && global_settings.all_groupings.is_none()
+        {
+            only_groups.push(grouping.clone());
             grouping_parts.clear();
         }
-        if ((parse_grouping && grouping_parts.len() > 1) || i == grouping_settings.len() - 1)
-            && !only_groups.is_empty()
-        {
-            let groups_str = only_groups
-                .drain(0..)
-                .map(|grouping| grouping.to_parser_string(groupings_all))
-                .collect::<Vec<_>>()
-                .join(",");
-            all_grouping_parts.push(format!(
-                "{}{}{}",
-                cloze_settings_keys.grouping, settings_key_value_delim, groups_str
-            ));
+        // The groupings without settings so far are written before the next one with settings
+        if parse_grouping && grouping_parts.len() > 1 {
+            write_only_groups(&mut only_groups, &mut all_grouping_parts);
         }
         if !grouping_parts.is_empty() {
             let grouping_parts_str = grouping_parts.join(settings_delim);
             all_grouping_parts.push(grouping_parts_str);
         }
     }
+    // and after the last one. A cloze's last grouping may be one it is only hidden in, which is
+    // never written, so this cannot wait for it.
+    write_only_groups(&mut only_groups, &mut all_grouping_parts);
     if !all_grouping_parts.is_empty() {
         let delim = format!("{} ", settings_delim);
         let all_grouping_parts_str = all_grouping_parts.join(delim.as_str());
@@ -285,6 +341,7 @@ fn parse_grouping(
 }
 
 fn parse_card_source(
+    key: &str,
     value: &str,
     data: &str,
     card_settings_indices: &Range<usize>,
@@ -295,7 +352,8 @@ fn parse_card_source(
     let note_id = note_id_str.parse::<NoteId>().map_err(|e| {
         LibraryError::Card(CardErrorKind::InvalidSettings {
             description: format!(
-                "`inh:` must be in the format `inh:NOTE_ID/ORDER`. Invalid note id `{}`. Error: {}",
+                "`{key}:` must be in the format `{key}:NOTE_ID/ORDER`. Invalid note id `{}`. \
+                 Error: {}",
                 note_id_str, e
             ),
             src: data.to_string(),
@@ -305,7 +363,7 @@ fn parse_card_source(
     let order = order_str.parse::<usize>().map_err(|e| {
         LibraryError::Card(CardErrorKind::InvalidSettings {
             description: format!(
-                "`inh:` must be in the format `inh:NOTE_ID/ORDER`. Invalid order `{}`. Error: {}",
+                "`{key}:` must be in the format `{key}:NOTE_ID/ORDER`. Invalid order `{}`. Error: {}",
                 order_str, e
             ),
             src: data.to_string(),
@@ -314,12 +372,26 @@ fn parse_card_source(
     })?;
     if order == 0 {
         return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
-            description: "`inh:` order must be >= 1.".to_string(),
+            description: format!("`{key}:` order must be >= 1."),
             src: data.to_string(),
             at: card_settings_indices.clone().into(),
         }));
     }
     Ok(ReadableCardIdentifier { note_id, order })
+}
+
+/// Adds to the error of a setting that follows a hint that a hint ends at `;`, since the setting
+/// may have been meant as part of it, as in `h:it is;b`.
+fn hint_note(description: &str, hint: &str, key: &str, value: &str, hint_key: &str) -> String {
+    let setting = if value.is_empty() {
+        key.to_string()
+    } else {
+        format!("{key}:{value}")
+    };
+    format!(
+        "{description} A hint ends at `;`, so `{setting}` after `{hint_key}:{hint}` was read as a \
+         setting. To keep it in the hint, quote the hint, as in `{hint_key}:\"{hint};{setting}\"`."
+    )
 }
 
 #[expect(clippy::too_many_lines, reason = "One branch per key")]
@@ -342,6 +414,7 @@ fn parse_grouping_settings(
         back_emphasis: back_emphasis_key,
         type_answer: type_answer_key,
         inherit: inherit_key,
+        move_card: move_card_key,
         overlapper: overlapper_key,
         id: id_key,
         tts: tts_key,
@@ -352,91 +425,142 @@ fn parse_grouping_settings(
     // We don't want to increment `current_grouping_number` here, so we clone it first.
     let mut current_grouping_settings =
         ClozeGroupingSettings::default(&mut current_grouping_number.clone(), modify_defaults_fn);
+    // The hint written before the current setting, unless it was quoted
+    let mut previous_hint: Option<&str> = None;
     for (key, value) in grouping_settings {
-        if key == include_reverse_key {
-            include_reverse = true;
-        } else if key == reverse_only_key {
-            reverse_only = true;
-        } else if key == is_suspended_key {
-            // A negative option is provided to allow unsuspending a card when updating a note.
-            current_grouping_settings.is_suspended = Some(*value != "n");
-        } else if key == hint_key {
-            settings.hint = Some((**value).to_string());
-        } else if key == tts_key {
-            settings.tts = Some(TtsSetting::from_str(value).map_err(|e| {
-                LibraryError::Card(CardErrorKind::InvalidSettings {
-                    description: format!(
-                        "The text to speech setting `{}` is invalid. {}",
-                        value, e
-                    ),
-                    src: data.to_string(),
-                    at: card_settings_indices.clone().into(),
-                })
-            })?);
-        } else if key == hidden_no_answer_key {
-            current_grouping_settings.hidden_no_answer = true;
-        } else if key == front_conceal_key {
-            current_grouping_settings.front_conceal =
-                FrontConceal::from_str(value).map_err(|e| {
+        let after_hint = previous_hint.take();
+        if key == hint_key && !value.starts_with('"') {
+            previous_hint = Some(*value);
+        }
+        let parsed = (|| -> Result<(), LibraryError> {
+            if key == include_reverse_key {
+                include_reverse = true;
+            } else if key == reverse_only_key {
+                reverse_only = true;
+            } else if key == is_suspended_key {
+                // A negative option is provided to allow unsuspending a card when updating a note.
+                current_grouping_settings.is_suspended = Some(*value != "n");
+            } else if key == hint_key {
+                settings.hint = Some(unquote_setting_value(value));
+            } else if key == tts_key {
+                settings.tts = Some(TtsSetting::from_str(value).map_err(|e| {
                     LibraryError::Card(CardErrorKind::InvalidSettings {
-                        description: format!("The card front `{}` is invalid. Error: {}", value, e),
-                        src: data.to_string(),
-                        at: card_settings_indices.clone().into(),
-                    })
-                })?;
-        } else if key == back_reveal_key {
-            current_grouping_settings.back_reveal = BackReveal::from_str(value).map_err(|e| {
-                LibraryError::Card(CardErrorKind::InvalidSettings {
-                    description: format!("The card back `{}` is invalid. Error: {}", value, e),
-                    src: data.to_string(),
-                    at: card_settings_indices.clone().into(),
-                })
-            })?;
-        } else if key == back_emphasis_key {
-            current_grouping_settings.back_emphasis = true;
-        } else if key == type_answer_key {
-            current_grouping_settings.type_answer =
-                Some(TypeAnswer::from_str(value).map_err(|e| {
-                    LibraryError::Card(CardErrorKind::InvalidSettings {
-                        description: format!("The typed answer `{}` is invalid. {}", value, e),
+                        description: format!(
+                            "The text to speech setting `{}` is invalid. {}",
+                            value, e
+                        ),
                         src: data.to_string(),
                         at: card_settings_indices.clone().into(),
                     })
                 })?);
-        } else if key == overlapper_key {
-            settings.is_overlapper = true;
-        } else if key == inherit_key {
-            current_grouping_settings.inherit =
-                Some(parse_card_source(value, data, card_settings_indices)?);
-        } else if key == orders_key {
-            let orders = value
-                .split(',')
-                .map(|x| {
-                    x.trim().parse::<usize>().map_err(|e| {
+            } else if key == hidden_no_answer_key {
+                current_grouping_settings.hidden_no_answer = true;
+            } else if key == front_conceal_key {
+                current_grouping_settings.front_conceal =
+                    FrontConceal::from_str(value).map_err(|e| {
                         LibraryError::Card(CardErrorKind::InvalidSettings {
-                            description: format!("The card order `{}` is invalid. Error: {}", x, e),
+                            description: format!(
+                                "The card front `{}` is invalid. Error: {}",
+                                value, e
+                            ),
                             src: data.to_string(),
                             at: card_settings_indices.clone().into(),
                         })
+                    })?;
+            } else if key == back_reveal_key {
+                current_grouping_settings.back_reveal =
+                    BackReveal::from_str(value).map_err(|e| {
+                        LibraryError::Card(CardErrorKind::InvalidSettings {
+                            description: format!(
+                                "The card back `{}` is invalid. Error: {}",
+                                value, e
+                            ),
+                            src: data.to_string(),
+                            at: card_settings_indices.clone().into(),
+                        })
+                    })?;
+            } else if key == back_emphasis_key {
+                // Written back as `be:true` or `be:false` (see `construct_cloze_string`). Like `s:n`,
+                // `be:n` turns it off too, e.g. on an image occlusion that emphasizes by default.
+                current_grouping_settings.back_emphasis = !matches!(*value, "false" | "n");
+            } else if key == type_answer_key {
+                current_grouping_settings.type_answer =
+                    Some(TypeAnswer::from_str(value).map_err(|e| {
+                        LibraryError::Card(CardErrorKind::InvalidSettings {
+                            description: format!("The typed answer `{}` is invalid. {}", value, e),
+                            src: data.to_string(),
+                            at: card_settings_indices.clone().into(),
+                        })
+                    })?);
+            } else if key == overlapper_key {
+                settings.is_overlapper = true;
+            } else if key == inherit_key || key == move_card_key {
+                if current_grouping_settings.inherit.is_some() {
+                    return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
+                        description: format!(
+                            "A cloze takes one of `{inherit_key}:` and `{move_card_key}:`, once."
+                        ),
+                        src: data.to_string(),
+                        at: card_settings_indices.clone().into(),
+                    }));
+                }
+                current_grouping_settings.inherit = Some(CardInheritance {
+                    source: parse_card_source(key, value, data, card_settings_indices)?,
+                    mode: if key == inherit_key {
+                        InheritMode::Copy
+                    } else {
+                        InheritMode::Move
+                    },
+                });
+            } else if key == orders_key {
+                let orders = value
+                    .split(',')
+                    .map(|x| {
+                        x.trim().parse::<usize>().map_err(|e| {
+                            LibraryError::Card(CardErrorKind::InvalidSettings {
+                                description: format!(
+                                    "The card order `{}` is invalid. Error: {}",
+                                    x, e
+                                ),
+                                src: data.to_string(),
+                                at: card_settings_indices.clone().into(),
+                            })
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            current_grouping_settings.orders = Some(orders);
-        } else if key == id_key {
-            settings.cloze_uid = Some(ClozeUid::try_from(*value).map_err(|_| {
-                LibraryError::Card(CardErrorKind::InvalidSettings {
-                    description: format!("The cloze uid `{}` is invalid.", value),
+                    .collect::<Result<Vec<_>, _>>()?;
+                current_grouping_settings.orders = Some(orders);
+            } else if key == id_key {
+                settings.cloze_uid = Some(ClozeUid::try_from(*value).map_err(|_| {
+                    LibraryError::Card(CardErrorKind::InvalidSettings {
+                        description: format!("The cloze uid `{}` is invalid.", value),
+                        src: data.to_string(),
+                        at: card_settings_indices.clone().into(),
+                    })
+                })?);
+            } else {
+                return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
+                    description: format!("The key `{}` is not supported.", key),
                     src: data.to_string(),
                     at: card_settings_indices.clone().into(),
-                })
-            })?);
-        } else {
-            return Err(LibraryError::Card(CardErrorKind::InvalidSettings {
-                description: format!("The key `{}` is not supported.", key),
-                src: data.to_string(),
-                at: card_settings_indices.clone().into(),
-            }));
-        }
+                }));
+            }
+            Ok(())
+        })();
+        parsed.map_err(|e| match (e, after_hint) {
+            (
+                LibraryError::Card(CardErrorKind::InvalidSettings {
+                    description,
+                    src,
+                    at,
+                }),
+                Some(hint),
+            ) => LibraryError::Card(CardErrorKind::InvalidSettings {
+                description: hint_note(&description, hint, key, value, hint_key),
+                src,
+                at,
+            }),
+            (e, _) => e,
+        })?;
     }
 
     // Validate settings
@@ -492,7 +616,7 @@ pub fn parse_card_settings(
         card_settings_indices,
         settings_delim,
         settings_key_value_delim,
-        true,
+        SettingsSyntax::Cloze,
     )
     .into_iter()
     .collect::<Result<Vec<_>, _>>()

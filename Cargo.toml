@@ -4,8 +4,16 @@ members = [
     "spares_cli",
     "spares_server",
     "spares_frontend",
+    "spares_wasm",
+    "xtask",
 ]
 resolver = "2"
+exclude = ["vendor"]
+
+# sqlx with a path for wasm32-unknown-unknown (see vendor/README.md).
+[patch.crates-io]
+sqlx-core = { path = "vendor/sqlx-core-0.9.0" }
+sqlx-sqlite = { path = "vendor/sqlx-sqlite-0.9.0" }
 
 # [workspace.dependencies]
 # tokio = { version = "1.39.1", features = ["full"] }
@@ -13,8 +21,22 @@ resolver = "2"
 [profile.release]
 debug = true
 
+# The browser build of `spares_wasm`, which the web app downloads: small rather than fast.
+[profile.wasm]
+inherits = "release"
+debug = false
+lto = true
+codegen-units = 1
+opt-level = "z"
+
 # SQLite unoptimized makes queries several times slower, e.g. picking the next card to review
 [profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
+# Dependencies are optimized in debug builds too, while spares' own crates stay quick to rebuild:
+# Typst compiling in a worker (the `typst-render` feature) is about 9 times slower unoptimized, and
+# parsing notes with typst-syntax and fancy-regex is also faster.
+[profile.dev.package."*"]
 opt-level = 3
 
 [workspace.package]

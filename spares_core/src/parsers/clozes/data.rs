@@ -116,11 +116,39 @@ pub struct ReadableCardIdentifier {
     pub order: usize,
 }
 
+/// How a newly created card takes over the card named by `inh:` or `mv:`
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InheritMode {
+    /// `inh:`: the new card gets a copy of the source card's scheduling and review history. The
+    /// source card is left as it was.
+    Copy,
+    /// `mv:`: the source card itself moves into the new card's place, keeping its id, scheduling
+    /// and review history, and the card created for the cloze is dropped. Nothing is copied, so
+    /// each review is still counted once.
+    Move,
+}
+
+/// A card that a newly created card takes over, with `inh:` or `mv:`
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CardInheritance {
+    pub source: ReadableCardIdentifier,
+    pub mode: InheritMode,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClozeGroupingSettings {
     /// Any unique string that is shared among all clozes that are meant to be a part of the same card. The special keyword `*` indicates this cloze is a part of all groups.
     /// If this is not specified, then the cloze will be in its own group. In other words, a card will be created for this cloze and the card will only contain this one cloze.
+    ///
+    /// The settings after `*` apply in every grouping, except in groupings the cloze names itself,
+    /// which have their own settings in their place:
+    /// ```md
+    /// {{[g:1]a}} {{b}} {{[g:*;hide:; g:1]c}}
+    /// ```
+    /// Here "c" is hidden without being asked in the card for "b", but asked in the card for "a".
+    /// The settings of a card, such as its orders, are kept on the clozes the card is made from
+    /// in its own right, not on a cloze in all groupings.
     pub grouping: ClozeGrouping,
     /// `inh:NOTE_ID/ORDER`: when the card produced by this cloze is *newly created*, copy SRS
     /// data from the card at the given note id and order, so it is scheduled as if it had been
@@ -152,7 +180,17 @@ pub struct ClozeGroupingSettings {
     /// - Each cloze in a note can carry its own `inh:` pointing at a different source card.
     /// - This field is not serialized, i.e., it is stripped from stored note data after
     ///   processing, so it will not be re-applied on subsequent imports.
-    pub inherit: Option<ReadableCardIdentifier>,
+    ///
+    /// `mv:NOTE_ID/ORDER` takes the same source and follows the same rules, but **moves** the
+    /// source card instead of copying it: the card keeps its id, scheduling and review history and
+    /// now belongs to this note, in place of the card created for the cloze. Use it to merge notes:
+    /// with `inh:`, deleting the source note afterwards leaves its reviews behind with no card,
+    /// where they are still counted alongside the copies. A cloze takes `inh:` or `mv:`, not both,
+    /// and no two clozes of one import may move the same card. The source must be in another note.
+    /// The source note keeps its cloze, but no longer has a card for it, so the cloze should be
+    /// removed from it or the note deleted, in the same push or afterwards (a push updates and
+    /// deletes the notes its `mv:` takes cards from after the moves).
+    pub inherit: Option<CardInheritance>,
     /// `orders` is used to specify the order of the cards created from a cloze. Using this information, a card's parameters can be properly lined up when a cloze is added, deleted, or moved.
     /// It is only specified on the first cloze in a card, since that determines the order of how the cards are parsed.
     /// This is typically 1 number unless the cloze is a part of multiple cards, such as if the option to include the reverse card is enabled. This is so actions like adding a reverse card are properly accounted for as a card creation.
@@ -223,6 +261,11 @@ pub struct ClozeGroupingSettings {
     /// Internal
     /// Will not serialize this grouping in the cloze settings string
     pub skip_serialization: bool,
+    /// Internal
+    /// Whether this is a copy of the settings of `g:*` for a grouping the cloze does not name
+    /// itself (see `group_clozes`). A card's own settings, such as its orders, are never written on
+    /// such a copy, since it has no `g:` key of its own when its grouping is automatic.
+    pub from_all_groupings: bool,
 }
 
 #[derive(
@@ -486,6 +529,7 @@ impl ClozeGroupingSettings {
             back_emphasis: DEFAULT_BACK_EMPHASIS,
             type_answer: None,
             skip_serialization: false,
+            from_all_groupings: false,
         };
         if let Some((front_conceal, back_reveal, back_emphasis, type_answer)) = modify_defaults_fn {
             result.front_conceal = front_conceal;

@@ -32,32 +32,6 @@ const JJ_ALIASES_BEGIN: &str =
     "# BEGIN spares aliases (rewritten by `spares vcs init --repair-hooks`)";
 const JJ_ALIASES_END: &str = "# END spares aliases";
 
-/// The aliases as versions before [`JJ_ALIASES_BEGIN`] wrote them, to replace
-const OLD_JJ_ALIASES: &str = r#"
-[aliases]
-# Fetch spares' changes and rebase your work (the current branch, or the given revision's) onto them
-spares-pull = ["util", "exec", "--", "sh", "-c", '''
-  jj git fetch && jj rebase -b "${1:-@}" -d main@origin
-''', "spares-pull"]
-# Push a revision (default: @, or @- when @ is empty) to spares
-spares-push = ["util", "exec", "--", "sh", "-c", '''
-  set -e
-  rev="${1:-@}"
-  if [ "$rev" = @ ] && [ "$(jj log --no-graph -r @ -T empty)" = true ]; then rev=@-; fi
-  jj git fetch
-  if [ -z "$(jj log --no-graph -r "main@origin & ::($rev)" -T '"x"')" ]; then
-    echo "spares has newer notes; run 'jj spares-pull' first" >&2; exit 1
-  fi
-  if [ -n "$(jj log --no-graph -r "conflicts() & (main@origin..($rev))" -T '"x"')" ]; then
-    echo "resolve the conflicts first (jj log -r 'conflicts()')" >&2; exit 1
-  fi
-  # Checked above to be on top of spares' `main`, so moving the local bookmark anywhere is safe
-  jj bookmark set main --allow-backwards -r "$rev"
-  # A rejected push must not leave the local `main` on the rejected commit
-  jj git push -b main || { jj bookmark set main --allow-backwards -r main@origin >/dev/null 2>&1; exit 1; }
-''', "spares-push"]
-"#;
-
 /// Aliases added to the clone's jj config, running `spares` as `spares_command`. See the workflow
 /// docs.
 fn jj_aliases(spares_command: &str) -> String {
@@ -132,9 +106,6 @@ fn with_jj_aliases(config: &str, aliases: &str) -> Option<String> {
         config.replace_range(start..end, aliases);
         return Some(config);
     }
-    if config.contains(OLD_JJ_ALIASES) {
-        return Some(config.replacen(OLD_JJ_ALIASES, &format!("\n{aliases}"), 1));
-    }
     if config.contains("spares-push") {
         return None;
     }
@@ -188,7 +159,6 @@ pub(crate) async fn init_vcs(
     if jj {
         check_jj_version()?;
     }
-    check_typst_root(&dirs.data)?;
     let status = server_status(base_url, client).await?;
     let data_dir = dirs
         .data
@@ -196,7 +166,7 @@ pub(crate) async fn init_vcs(
         .unwrap_or_else(|_| dirs.data.clone());
     if status.data_dir != data_dir {
         return Err(miette!(
-            "The spares server at {base_url} uses the data directory {}, but this command uses {}. Run it with the same SPARES_* settings as the server.",
+            "The spares server at {base_url} uses the data directory {}, but this command uses {}. Run it with the SPARES_ROOT and SPARES_USER of the host.",
             status.data_dir.display(),
             data_dir.display()
         ));
@@ -238,10 +208,7 @@ pub(crate) async fn init_vcs(
             .json()
             .await
             .map_err(|e| miette!("{}", e))?;
-        println!(
-            "Committed {} notes ({} rendered files stay valid).",
-            init.note_count, init.render_hashes_kept
-        );
+        println!("Committed {} notes.", init.note_count);
     }
 
     install_hooks(&dirs.repo, base_url)?;
@@ -330,27 +297,6 @@ fn check_jj_version() -> Result<(), Error> {
     Ok(())
 }
 
-/// Typst can only read files under its root, and notes are compiled inside the data directory.
-fn check_typst_root(data_dir: &Path) -> Result<(), Error> {
-    let Some(root) = std::env::var_os("TYPST_ROOT") else {
-        return Ok(());
-    };
-    let root = PathBuf::from(root);
-    let root = root.canonicalize().unwrap_or(root);
-    let data = data_dir
-        .canonicalize()
-        .unwrap_or_else(|_| data_dir.to_path_buf());
-    if data.starts_with(&root) {
-        Ok(())
-    } else {
-        Err(miette!(
-            "TYPST_ROOT ({}) does not contain the data directory ({}), where spares compiles notes from now on. Set TYPST_ROOT to a directory containing both, e.g. `/`.",
-            root.display(),
-            data.display()
-        ))
-    }
-}
-
 /// git, isolated from the git environment of a caller such as a hook.
 fn git_command() -> Command {
     let mut command = Command::new("git");
@@ -412,18 +358,20 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// This spares binary, run against this instance: its address and data directory are fixed, so a
-/// shell with other settings cannot reach another spares instance.
+/// This spares binary, run against this host and collection: the host's address and root and the
+/// collection's user are fixed, so a shell with other settings cannot reach another host or user.
 fn spares_command(base_url: &str) -> Result<String, Error> {
     let exe = std::env::current_exe().map_err(|e| miette!("{}", e))?;
     let exe = exe.canonicalize().unwrap_or(exe);
-    let socket_address = base_url.trim_start_matches("http://");
-    let data_dir = get_data_dir();
-    let data_dir = data_dir.canonicalize().unwrap_or(data_dir);
+    let root = spares_server::host::default_root();
+    let root = root.canonicalize().unwrap_or(root);
+    let user = spares_core::collection::current_id()
+        .ok_or_else(|| miette!("No collection on this machine to write hooks for"))?;
     Ok(format!(
-        "env SPARES_SOCKET_ADDRESS={} SPARES_DATA_DIR={} {}",
-        shell_quote(socket_address),
-        shell_quote(&data_dir.to_string_lossy()),
+        "env SPARES_HOST={} SPARES_ROOT={} SPARES_USER={} {}",
+        shell_quote(base_url),
+        shell_quote(&root.to_string_lossy()),
+        shell_quote(&user),
         shell_quote(&exe.to_string_lossy()),
     ))
 }
@@ -521,6 +469,7 @@ fn carry_over(backup: &Path, notes: &Path, jj: bool) -> Result<(), Error> {
     let mut local_edits: Vec<PathBuf> = Vec::new();
     let mut untracked: Vec<PathBuf> = Vec::new();
     let mut same_note = 0;
+    let context = notes_vcs::NoteFileContext::default();
     for entry in WalkDir::new(backup)
         .into_iter()
         .filter_entry(|e| !matches!(e.file_name().to_str(), Some(".git" | ".jj")))
@@ -544,13 +493,14 @@ fn carry_over(backup: &Path, notes: &Path, jj: bool) -> Result<(), Error> {
         if old == new {
             continue;
         }
-        // Files that differ only in the hash line, the linked-notes section or formatting hold
-        // the same note.
+        // Files that differ only in the linked-notes section or formatting hold the same note.
         if let Some((parser, id)) = notes_vcs::parse_note_rel_path(&rel)
             && let (Ok(old), Ok(new)) = (std::str::from_utf8(&old), std::str::from_utf8(&new))
-            && let Some(old_fields) = notes_vcs::file_note_fields(parser.as_ref(), old, id)
-            && let Some(new_fields) = notes_vcs::file_note_fields(parser.as_ref(), new, id)
-            && notes_vcs::same_note(parser.as_ref(), id, &old_fields, &new_fields)
+            && let Some(old_fields) =
+                notes_vcs::file_note_fields(&context, parser.as_ref(), old, id)
+            && let Some(new_fields) =
+                notes_vcs::file_note_fields(&context, parser.as_ref(), new, id)
+            && notes_vcs::same_note(&context, parser.as_ref(), id, &old_fields, &new_fields)
         {
             same_note += 1;
             continue;
@@ -637,7 +587,7 @@ fn carry_over(backup: &Path, notes: &Path, jj: bool) -> Result<(), Error> {
     println!();
     if same_note > 0 {
         println!(
-            "{same_note} note file(s) in the old directory only differed in formatting, the hash line or linked notes."
+            "{same_note} note file(s) in the old directory only differed in formatting or linked notes."
         );
     }
     if let Some(local_edits_ref) = local_edits_ref {
@@ -705,7 +655,7 @@ fn print_workflow(dirs: &Dirs, backup: Option<&Path>, jj: bool) {
         println!(
             "{} lists `notes/`; you may want to add `{}/` and `notes.pre-vcs-*/` too.",
             gitignore.display(),
-            notes_vcs::SERVER_REPO_DIR_NAME
+            spares_core::collection::NOTES_REPO_DIR_NAME
         );
     }
 }
@@ -713,7 +663,6 @@ fn print_workflow(dirs: &Dirs, backup: Option<&Path>, jj: bool) {
 #[cfg(test)]
 mod tests {
     use super::JJ_ALIASES_BEGIN;
-    use super::OLD_JJ_ALIASES;
     use super::jj_aliases;
     use super::with_jj_aliases;
 
@@ -731,12 +680,6 @@ mod tests {
         let replaced = with_jj_aliases(&added, &newer).unwrap();
         assert_eq!(replaced, format!("{user}\n{newer}"));
         assert_eq!(with_jj_aliases(&replaced, &newer).unwrap(), replaced);
-
-        // The unmarked aliases of earlier versions are replaced.
-        let old = format!("{user}{OLD_JJ_ALIASES}");
-        let migrated = with_jj_aliases(&old, &aliases).unwrap();
-        assert_eq!(migrated, format!("{user}\n{aliases}"));
-        assert_eq!(migrated.matches("spares-push =").count(), 1);
 
         // Aliases someone edited are left alone.
         let edited = format!("{user}[aliases]\nspares-push = [\"x\"]\n");

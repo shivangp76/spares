@@ -4,7 +4,7 @@ import {
   NOTE_EDITOR_SHORTCUTS,
   SEARCH_BOX_SHORTCUTS,
   type Shortcut,
-} from './shortcuts';
+} from "./shortcuts";
 
 /** A section of the manual, in `src/manual`. `pages.test.ts` checks that each one exists. */
 export interface DocLink {
@@ -26,158 +26,251 @@ export interface PageHelp {
 
 /** The pages of the manual, in the order it lists them. */
 export const MANUAL_PAGES: { file: string; title: string }[] = [
-  { file: 'getting_started.md', title: 'Getting Started' },
-  { file: 'deploying.md', title: 'Deploying a Sync Server' },
-  { file: 'concepts.md', title: 'Main Concepts' },
-  { file: 'workflows.md', title: 'Workflows' },
-  { file: 'comparison.md', title: 'Comparison with Anki' },
+  { file: "getting_started.md", title: "Getting Started" },
+  { file: "deploying.md", title: "Deploying a Sync Server" },
+  { file: "concepts.md", title: "Main Concepts" },
+  { file: "workflows.md", title: "Workflows" },
+  { file: "comparison.md", title: "Comparison with Anki" },
 ];
 
 /** The anchor of a heading, as GitHub gives it, so the files' links work there too: lowercase,
     without punctuation, with `-` for spaces. */
 export function headingAnchor(heading: string): string {
-  return heading.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+  return heading
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .replace(/\s/g, "-");
 }
 
 /** The app's path of a page of the manual, as in `/manual/concepts`. */
 export function manualPath(file: string): string {
-  return `/manual/${file.replace(/\.md$/, '')}`;
+  return `/manual/${file.replace(/\.md$/, "")}`;
 }
 
 /** Where a link in a page of the manual goes: the app's page for one to another file, as in
     `./workflows.md#jj`, and the link itself otherwise. */
 export function manualHref(href: string): string {
   const match = /^(?:\.\/)?([\w-]+\.md)(#.*)?$/.exec(href);
-  return match ? manualPath(match[1]) + (match[2] ?? '') : href;
+  return match ? manualPath(match[1]) + (match[2] ?? "") : href;
 }
 
 export function docUrl(link: DocLink): string {
-  return manualPath(link.file) + (link.heading ? `#${headingAnchor(link.heading)}` : '');
+  return (
+    manualPath(link.file) +
+    (link.heading ? `#${headingAnchor(link.heading)}` : "")
+  );
 }
 
-const NOTE_VS_CARD: DocLink = { label: 'Note vs Card', file: 'concepts.md', heading: 'Note vs Card' };
-const SCHEDULING: DocLink = { label: 'Scheduling', file: 'concepts.md', heading: 'Scheduling' };
+const NOTE_VS_CARD: DocLink = {
+  label: "Note vs Card",
+  file: "concepts.md",
+  heading: "Note vs Card",
+};
+const SCHEDULING: DocLink = {
+  label: "Scheduling",
+  file: "concepts.md",
+  heading: "Scheduling",
+};
+const LOCAL_COPY: DocLink = {
+  label: "Keeping a copy on this device",
+  file: "getting_started.md",
+  heading: "Keeping a copy on this device",
+};
 
 /** The help for each page, by its path. */
 export const PAGE_HELP: Record<string, PageHelp> = {
-  '/review': {
-    title: 'Review',
+  "/review": {
+    title: "Review",
     about: [
-      'Reviews the cards due today, one at a time: recall what is hidden, show the answer, and rate how well you knew it. The rating decides when the card is next due.',
-      'To review only some of them, enter a query, as on the Cards page, or pick a filtered tag.',
-      'Bury Card Until After puts a card off until after a date, such as an exam, remembered for the query or tag.',
+      "Reviews the cards due today, one at a time: recall what is hidden, show the answer, and rate how well you knew it. The rating decides when the card is next due.",
+      "To review only some of them, enter a query, as on the Cards page, or pick a filtered tag.",
+      "Bury Card Until After puts a card off until after a date, such as an exam, remembered for the query or tag.",
     ],
     // The review page lists its own, which apply only to some cards
     shortcuts: [],
     docs: [
       SCHEDULING,
-      { label: 'Typed answers', file: 'getting_started.md', heading: 'Typed answers' },
-      { label: 'Reviewing offline', file: 'getting_started.md', heading: 'Reviewing offline' },
-      { label: 'Putting cards off until after an exam', file: 'workflows.md', heading: 'Putting cards off until after an exam' },
-      { label: 'Fixing a live note while reviewing it', file: 'workflows.md', heading: 'Live notes' },
+      {
+        label: "Typed answers",
+        file: "getting_started.md",
+        heading: "Typed answers",
+      },
+      {
+        label: "Reviewing offline",
+        file: "getting_started.md",
+        heading: "Keeping a copy on this device",
+      },
+      {
+        label: "Putting cards off until after an exam",
+        file: "workflows.md",
+        heading: "Putting cards off until after an exam",
+      },
+      {
+        label: "Fixing a live note while reviewing it",
+        file: "workflows.md",
+        heading: "Live notes",
+      },
     ],
   },
-  '/notes': {
-    title: 'Notes',
+  "/notes": {
+    title: "Notes",
     about: [
       "A note holds what you want to remember. Each cloze in it, or group of clozes, makes a card: Syntax, by a note's text, shows how to write them.",
       'Tags group notes, as in `tag=spanish`. Keywords name what a note is about, as in `keyword="Irregular verbs"`, so that other notes can link to it.',
-      'Check notes to act on them at once: add or remove tags, change their parser, export them to a file to import, or delete them. A search starts with every note it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.',
-      'Make filtered tag turns a search into a filtered tag, to review the cards it finds, as an Anki filtered deck does.',
+      "Check notes to act on them at once: add or remove tags, change their parser, export them to a file to import, or delete them. A search starts with every note it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.",
+      "Make filtered tag turns a search into a filtered tag, to review the cards it finds, as an Anki filtered deck does.",
+      "Import brings in files of notes: shared notes, added as new notes, or files of this collection's notes, such as an export to edit them or live notes, which it previews before importing. Undo reverts the whole import.",
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS, ...NOTE_EDITOR_SHORTCUTS],
     docs: [
       NOTE_VS_CARD,
-      { label: 'Clozes', file: 'concepts.md', heading: 'Clozes' },
-      { label: 'Keywords', file: 'concepts.md', heading: 'Keywords' },
-      { label: 'Linked notes', file: 'concepts.md', heading: 'Linked Notes' },
-      { label: 'Editing notes', file: 'getting_started.md', heading: 'Editing notes' },
+      { label: "Clozes", file: "concepts.md", heading: "Clozes" },
+      { label: "Keywords", file: "concepts.md", heading: "Keywords" },
+      { label: "Linked notes", file: "concepts.md", heading: "Linked Notes" },
+      {
+        label: "Editing notes",
+        file: "getting_started.md",
+        heading: "Editing notes",
+      },
+      {
+        label: "Importing notes",
+        file: "getting_started.md",
+        heading: "Adding notes",
+      },
     ],
   },
-  '/graph': {
-    title: 'Graph',
+  "/graph": {
+    title: "Graph",
     about: [
-      'Each note is a circle, with an arrow to it from each note it links to by keyword: the notes it builds on. Notes the query finds are filled. The notes they link to are shown too, hollow, even when the query does not find them, while notes that link to them are left out. With no query, every note is shown.',
-      'Force pulls linked notes together, as in Obsidian. Layered puts each note below the notes it builds on. Point at a note to light up what it builds on and what builds on it, and click it to edit it.',
-      'Built on limits how many links up to follow. Building on them also shows the notes that build on those found, a number of links down, which shows what a weak note holds back. Link score leaves out links that only match a keyword loosely; by default it is the queue\'s `linked_note_max_score`.',
-      'Color by How learned shows which notes a topic builds on have not been studied yet. Groups color the notes a query finds, such as `tag=exam`, over the other colors. Unmatched links shows, dashed, the keywords notes link to that no note has yet.',
-      'Display and forces sets how notes are drawn and, in the Force layout, how they pull and push, as in Obsidian. They are kept in this browser. The arrow keys move around the graph, faster with Shift.',
-      'What do these mean?, under the settings on the page, explains each of them in full.',
+      "Each note is a circle, with an arrow to it from each note it links to by keyword: the notes it builds on. Notes the query finds are filled. The notes they link to are shown too, hollow, even when the query does not find them, while notes that link to them are left out. With no query, every note is shown.",
+      "Force pulls linked notes together, as in Obsidian. Layered puts each note below the notes it builds on. Point at a note to light up what it builds on and what builds on it, and click it to edit it.",
+      "Built on limits how many links up to follow. Building on them also shows the notes that build on those found, a number of links down, which shows what a weak note holds back. Link score leaves out links that only match a keyword loosely; by default it is the queue's `linked_note_max_score`.",
+      "Color by How learned shows which notes a topic builds on have not been studied yet. Groups color the notes a query finds, such as `tag=exam`, over the other colors. Unmatched links shows, dashed, the keywords notes link to that no note has yet.",
+      "Display and forces sets how notes are drawn and, in the Force layout, how they pull and push, as in Obsidian. They are kept in this browser. The arrow keys move around the graph, faster with Shift.",
+      "What do these mean?, under the settings on the page, explains each of them in full.",
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS],
     docs: [
-      { label: 'Linked notes', file: 'concepts.md', heading: 'Linked Notes' },
-      { label: 'Keywords', file: 'concepts.md', heading: 'Keywords' },
+      { label: "Linked notes", file: "concepts.md", heading: "Linked Notes" },
+      { label: "Keywords", file: "concepts.md", heading: "Keywords" },
     ],
   },
-  '/cards': {
-    title: 'Cards',
+  "/cards": {
+    title: "Cards",
     about: [
       "Each card asks for part of its note, and is scheduled on its own. Cards are searched for with the same queries as notes, and the card's own fields start with `c.`, as in `c.due<=today`.",
-      'Check cards to suspend, bury, reschedule or forget them, or tag their notes, at once. A search starts with every card it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.',
-      'Make filtered tag turns a search into a filtered tag, to review the cards it finds, as an Anki filtered deck does.',
-      'The bulk tools act on the cards a query finds, and list leeches.',
+      "Check cards to suspend, bury, reschedule or forget them, or tag their notes, at once. A search starts with every card it finds checked, on every page; uncheck the ones to leave out. Shift-click checks a range.",
+      "Make filtered tag turns a search into a filtered tag, to review the cards it finds, as an Anki filtered deck does.",
+      "The bulk tools act on the cards a query finds, and list leeches.",
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS],
     docs: [NOTE_VS_CARD, SCHEDULING],
   },
-  '/tags': {
-    title: 'Tags',
+  "/tags": {
+    title: "Tags",
     about: [
-      'Tags group notes and their cards. A tag named `a:b` is a child of `a`, and `tag=a` finds both.',
-      'A tag with a query is a filtered tag, which holds the cards its query found when it was built. Rebuild finds them again, and Review studies them.',
+      "Tags group notes and their cards. A tag named `a:b` is a child of `a`, and `tag=a` finds both.",
+      "A tag with a query is a filtered tag, which holds the cards its query found when it was built. Rebuild finds them again, and Review studies them.",
     ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS],
-    docs: [{ label: 'Tags', file: 'concepts.md', heading: 'Tags' }],
+    docs: [{ label: "Tags", file: "concepts.md", heading: "Tags" }],
   },
-  '/parsers': {
-    title: 'Parsers',
+  "/parsers": {
+    title: "Parsers",
     about: [
       "A parser is the markup a note is written in, and decides how its clozes are written and how it is rendered. A parser listed here works only if spares has one by that name, in `spares_core::parsers::impls`.",
     ],
     shortcuts: [],
     docs: [
-      { label: 'Parsers', file: 'concepts.md', heading: 'Parsers' },
-      { label: 'Creating a parser', file: 'getting_started.md', heading: 'Creating a parser (optional)' },
+      { label: "Parsers", file: "concepts.md", heading: "Parsers" },
+      {
+        label: "Creating a parser",
+        file: "getting_started.md",
+        heading: "Creating a parser (optional)",
+      },
     ],
   },
-  '/keywords': {
-    title: 'Keywords',
+  "/keywords": {
+    title: "Keywords",
     about: [
-      'Keywords name what a note is about. A note links to another by one of its keywords, which is found even when written a little differently, as Search shows.',
+      "Keywords name what a note is about. A note links to another by one of its keywords, which is found even when written a little differently, as Search shows.",
     ],
     shortcuts: [],
     docs: [
-      { label: 'Keywords', file: 'concepts.md', heading: 'Keywords' },
-      { label: 'Linked notes', file: 'concepts.md', heading: 'Linked Notes' },
+      { label: "Keywords", file: "concepts.md", heading: "Keywords" },
+      { label: "Linked notes", file: "concepts.md", heading: "Linked Notes" },
     ],
   },
-  '/image-occlusion': {
-    title: 'Image Occlusion',
+  "/image-occlusion": {
+    title: "Image Occlusion",
     about: [
       'Draw clozes over an image, each of which makes a card, and paste the block into a note written elsewhere. In the note editor, "Insert image occlusion" does this in place.',
     ],
     shortcuts: [],
-    docs: [{ label: 'Image occlusions', file: 'getting_started.md', heading: 'Image Occlusions' }],
+    docs: [
+      {
+        label: "Image occlusions",
+        file: "getting_started.md",
+        heading: "Image Occlusions",
+      },
+    ],
   },
-  '/statistics': {
-    title: 'Statistics',
-    about: ['How your reviews went, and how many cards are due in the days ahead. A query limits them to the cards it finds.'],
+  "/statistics": {
+    title: "Statistics",
+    about: [
+      "How your reviews went, and how many cards are due in the days ahead. A query limits them to the cards it finds.",
+      "Scheduler fits FSRS's parameters to your reviews (Optimize parameters, then Apply and reschedule), and Reschedule all cards applies changed scheduler settings to every card at once. Both run on the server.",
+    ],
     shortcuts: [...SEARCH_BOX_SHORTCUTS],
     docs: [SCHEDULING],
   },
-  '/settings': {
-    title: 'Settings',
+  "/settings": {
+    title: "Settings",
     about: [
       "These settings are kept in this browser. Scheduling, the daily limits and the presets are set in the server's `config.toml`.",
+      "This Device can keep a copy of the whole collection in this browser, so every page works offline. It syncs with the server like the laptop does.",
+      "Account lists the devices logged in with `spares login`, and logs out one you lost.",
     ],
     shortcuts: [],
-    docs: [SCHEDULING, { label: 'Deploying a sync server', file: 'deploying.md' }],
+    docs: [
+      SCHEDULING,
+      LOCAL_COPY,
+      { label: "Deploying a sync server", file: "deploying.md" },
+    ],
+  },
+  "/history": {
+    title: "History",
+    about: [
+      "Every change to the collection, newest first. Undo last change in the navbar only undoes the latest; here any change can be undone, or an undo redone, unless a later change depends on it. A group, such as an import, is undone as one.",
+      "Automatic changes, such as the daily unbury and a reschedule, are skipped by Undo last change, but can be undone here. Ratings are hidden unless Show ratings is checked.",
+    ],
+    shortcuts: [],
+    docs: [],
+  },
+  "/conflicts": {
+    title: "Conflicts",
+    about: [
+      "Notes a sync could not merge on its own: both sides changed the same lines, or one deleted the note while the other edited it. Each can be kept as it is, replaced by the other side, edited, or deleted. The next sync sends the result.",
+    ],
+    shortcuts: [],
+    docs: [
+      {
+        label: "Two-way sync",
+        file: "getting_started.md",
+        heading: "Two-way sync",
+      },
+      LOCAL_COPY,
+    ],
   },
 };
 
 /** Linked from the login page. */
-export const LOGIN_DOCS: DocLink = { label: 'Setting up a server to log in to', file: 'deploying.md', heading: '5. Log in on the phone' };
+export const LOGIN_DOCS: DocLink = {
+  label: "Setting up a host to log in to",
+  file: "getting_started.md",
+  heading: "Starting the server",
+};
 
 /** The shortcuts every page has, after the page's own. */
 export const GLOBAL_SHORTCUTS: Shortcut[] = [HELP_SHORTCUT, ...GO_TO_SHORTCUTS];

@@ -119,16 +119,15 @@ pub async fn queue_positions(
         ),
         None => None,
     };
-    unbury_cards_and_update_config(db).await?;
-    let review_filter = review_filter_of(db, filter, requested_date).await?;
     let config = read_external_config()?;
+    unbury_cards_and_update_config(db, &config).await?;
+    let review_filter = review_filter_of(db, &config, filter, requested_date).await?;
     let OrderedQueue { rows, skipped, .. } = ordered_queue(
         db,
         &review_filter,
         &config,
         requested_date,
         review_filter.card_due_limit,
-        None,
     )
     .await?;
     let limit = limit.map_or(usize::MAX, |limit| limit as usize);
@@ -276,12 +275,13 @@ fn invalid(message: String) -> Error {
 /// The review with `filter`, which for a query with `limit` is today's snapshot of it.
 async fn review_filter_of(
     db: &SqlitePool,
+    config: &SparesExternalConfig,
     filter: Option<GetReviewCardFilterRequest>,
     requested_date: DateTime<Utc>,
 ) -> Result<ReviewFilterQuery, Error> {
     let filter = match filter {
         Some(GetReviewCardFilterRequest::Query(query)) if query_has_limit(&query) => {
-            let tag_id = todays_review_snapshot(db, &query, requested_date)
+            let tag_id = todays_review_snapshot(db, &query, requested_date, config.zone())
                 .await?
                 .ok_or_else(|| {
                     invalid(format!(
@@ -293,7 +293,7 @@ async fn review_filter_of(
         }
         filter => filter,
     };
-    build_review_filter_query(db, filter.as_ref(), requested_date, true)
+    build_review_filter_query(db, config, filter.as_ref(), requested_date, true)
         .await?
         .ok_or_else(|| invalid("No filtered tag has this id.".to_string()))
 }
@@ -444,7 +444,6 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
-    use crate::api::offline_review::get_review_queue;
     use crate::api::preset::cards_with_preset;
     use crate::api::queue::QueueCaps;
     use crate::api::queue::tests::LEARNING;
@@ -452,6 +451,7 @@ mod tests {
     use crate::api::queue::tests::REVIEW;
     use crate::api::queue::tests::add_review;
     use crate::api::queue::tests::create_cards;
+    use crate::api::queue::tests::local_midday;
     use crate::api::queue::tests::set_card;
     use crate::api::queue::waiting_on_links;
     use crate::api::review::get_review_card;
@@ -460,7 +460,6 @@ mod tests {
     use crate::model::NEW_CARD_STATE;
     use crate::parsers::get_all_parsers;
     use crate::schema::review::GetReviewCardRequest;
-    use crate::schema::review::ReviewQueueRequest;
 
     async fn positions(
         pool: &SqlitePool,
@@ -522,27 +521,12 @@ mod tests {
         ids
     }
 
-    /// The whole queue is the cards `get_review_queue` downloads, in the same order, and review
-    /// shows the first of them next.
+    /// The whole queue is listed, in order, and review shows the first of it next.
     #[sqlx::test]
-    async fn positions_agree_with_the_review_queue(pool: SqlitePool) {
+    async fn positions_list_the_queue_review_shows(pool: SqlitePool) {
         let now = Utc::now();
         setup(&pool, now).await;
         let response = positions(&pool, None, None, now).await;
-        let queue = get_review_queue(
-            &pool,
-            ReviewQueueRequest {
-                filter: None,
-                limit: 100,
-                days_ahead: 0,
-            },
-            now,
-            &get_all_parsers(),
-        )
-        .await
-        .unwrap();
-        let queue_ids: Vec<CardId> = queue.cards.iter().map(|card| card.card.card_id).collect();
-        assert_eq!(card_ids(&response.positions), queue_ids);
         assert_eq!(response.total, 24);
         assert_eq!(response.matching, 24);
         let card = &response.positions[0].card;
@@ -617,7 +601,8 @@ mod tests {
 
     #[sqlx::test]
     async fn learning_cards_beyond_the_learn_ahead_limit_are_held_back(pool: SqlitePool) {
-        let now = Utc::now();
+        // Midday, so that an hour later is still today
+        let now = local_midday();
         let ids = setup(&pool, now).await;
         let due = now + Duration::hours(1);
         set_card(&pool, ids[3], LEARNING, due, 1.0, 5.0).await;
@@ -655,7 +640,9 @@ mod tests {
         let now = Utc::now();
         let ids = setup(&pool, now).await;
         // As opening review today already has, so the card buried below stays buried
-        unbury_cards_and_update_config(&pool).await.unwrap();
+        unbury_cards_and_update_config(&pool, &SparesExternalConfig::default())
+            .await
+            .unwrap();
         set_special_state(&pool, ids[0], SpecialState::Suspended).await;
         set_special_state(&pool, ids[1], SpecialState::SchedulerBuried).await;
         set_card(&pool, ids[2], REVIEW, now + Duration::days(3), 5.0, 5.0).await;
@@ -696,12 +683,14 @@ mod tests {
             new_after_linked_notes: true,
             ..QueueConfig::default()
         };
-        let (_, card_due_limit) = get_start_end_local_date(&now);
+        let (_, card_due_limit) = get_start_end_local_date(&now, crate::api::queue::tests::zone());
         let filter = ReviewFilterQuery {
             cards: cards_with_preset(&IndexMap::new()),
             where_clause: String::new(),
             is_filtered_tag: false,
             card_due_limit,
+            zone: crate::api::queue::tests::zone(),
+            maximum_answer_seconds: SparesExternalConfig::default().maximum_answer_seconds(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: None,

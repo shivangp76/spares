@@ -22,8 +22,11 @@
 //!   directory, e.g. with `css: [~/.config/spares/markdown/web.css]`. The PDF's `defaults_file` is
 //!   not used for HTML. Math macros defined in its `header-includes` are unknown to the HTML, so
 //!   notes using them show their PDF; define macros in the note itself to have them apply to both.
-//! - Notes rendered before upgrading show their PDF until they are rendered again, e.g. with
-//!   `spares note generate --render --force-render`.
+//! - A browser that keeps a copy of the collection converts the cards of notes changed there with
+//!   pandoc's WebAssembly build, of the server's version, until the server renders them after the
+//!   next sync (`src/local/pandoc.ts` in the web app). It gets the web defaults file at each sync,
+//!   and leaves out what it names files with, such as `css` and `filters`, since it doesn't have
+//!   them.
 
 use std::fs::read_to_string;
 use std::fs::remove_file;
@@ -43,9 +46,7 @@ use serde::Serialize;
 
 use crate::Error;
 use crate::LibraryError;
-use crate::config::get_cache_dir;
 use crate::config::get_config_dir;
-use crate::config::is_test_mode;
 use crate::config::read_external_config;
 use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
@@ -58,8 +59,8 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
-use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderOutputType;
+use crate::parsers::RenderedFile;
 use crate::parsers::WebRenderMode;
 use crate::parsers::audio::AudioRef;
 use crate::parsers::audio::find_audio_refs;
@@ -70,17 +71,12 @@ use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::render_command_output;
-use crate::parsers::render_dependencies_filepath;
 use crate::schema::note::LinkedNote;
 
 mod cloze_parser;
 
-/// Between a card's header and body. Explicit raw blocks, since `\hrulefill` cannot be converted
-/// to `MathML`, so as math it would make every card's HTML lose content. HTML drops the LaTeX block
-/// without counting it as lost (see [`is_content_loss`]).
 /// Comments, code and math, where audio links are not found and text is not spoken.
 const UNSPOKEN_REGEX: &str = r"(?s)<!--.*?-->|```.*?```|`[^`\n]*`|\$\$.*?\$\$|\$[^$\n]*\$";
-const CARD_SEPARATOR: &str = "```{=latex}\n\\hrulefill\n```\n\n```{=html}\n<hr>\n```";
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(default)]
@@ -287,7 +283,12 @@ impl Parseable for MarkdownParser {
                     // "\n".to_string(),
                     "\n".to_string(),
                     action_string,
-                    self.construct_setting(&note_id_string),
+                    // A note to add has no id yet: importing one with an id is an error.
+                    if matches!(note_import_action, NoteImportAction::Add) {
+                        String::new()
+                    } else {
+                        self.construct_setting(&note_id_string)
+                    },
                     self.construct_setting(&keywords_string),
                     self.construct_setting(&tags_string),
                     custom_data_str,
@@ -307,28 +308,11 @@ impl Parseable for MarkdownParser {
                 note_file_data
             }
             ConstructFileDataType::Card(card_order, card_data, side) => {
-                let card_data_str = without_cloze_delimiters(&construct_card_data(
+                // The note's id, keywords and tags are shown beside the card instead of in it, so
+                // changing them leaves the card's render up to date.
+                let card_file_data = without_cloze_delimiters(&construct_card_data(
                     self, card_order, card_data, side, *note_id,
                 ));
-                let mut lines = vec![format!(
-                    "- note-id{} {}",
-                    settings_key_value_delim,
-                    note_id.letters()
-                )];
-                if !keywords_str.is_empty() {
-                    lines.push(format!(
-                        "- keywords{} {}",
-                        settings_key_value_delim, keywords_str
-                    ));
-                }
-                lines.extend(vec![
-                    format!("- tags{} {}", settings_key_value_delim, tags_str),
-                    String::new(),
-                    CARD_SEPARATOR.to_string(),
-                    String::new(),
-                    card_data_str,
-                ]);
-                let card_file_data = lines.join("\n");
                 card_file_data
             }
         }
@@ -344,10 +328,10 @@ impl Parseable for MarkdownParser {
             ClozeReplacement::Hidden(cloze_replacement) => match cloze_replacement {
                 ClozeHiddenReplacement::ToAnswer { hint } => match (hint, id) {
                     (Some(hint), Some(id)) => {
-                        format!("[{id} _____({hint})]{{.mark}}")
+                        format!("[{id} _____({})]{{.mark}}", escape_brackets(hint))
                     }
                     (Some(hint), None) => {
-                        format!("[_____({hint})]{{.mark}}")
+                        format!("[_____({})]{{.mark}}", escape_brackets(hint))
                     }
                     (None, Some(id)) => {
                         format!("[{id} _____]{{.mark}}")
@@ -369,7 +353,7 @@ impl Parseable for MarkdownParser {
     fn construct_image_occlusion(
         &self,
         image_occlusion_data: &ImageOcclusionData,
-        output_type: ConstructImageOcclusionType,
+        output_type: ConstructImageOcclusionType<'_>,
     ) -> String {
         fn construct_image(file_path: &Path, caption: &str) -> String {
             format!("![{}]({})\n", caption, file_path.display())
@@ -395,17 +379,6 @@ impl Parseable for MarkdownParser {
         Some(format!("[{keyword}][li]"))
     }
 
-    fn get_output_rendered_dir(&self, _output_type: RenderOutputDirectoryType) -> PathBuf {
-        if is_test_mode() {
-            return get_cache_dir();
-        }
-        std::env::var("MARKDOWN_OUT_DIR")
-            .ok()
-            .map(PathBuf::from)
-            .filter(|dir| dir.exists())
-            .unwrap_or_else(get_cache_dir)
-    }
-
     fn file_extension(&self) -> &'static str {
         "md"
     }
@@ -420,22 +393,20 @@ impl Parseable for MarkdownParser {
         output_text_filepath: &Path,
         _output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
-    ) -> Result<std::process::Output, Error> {
+    ) -> Result<RenderedFile, Error> {
         // Output is rendered as a pdf. This is because some formats, like png, do not support text selection. Other formats, such as svg, do not have popular viewers on all platforms.
-        let dependencies_filepath = render_dependencies_filepath(output_rendered_filepath);
         // Pandoc logs the resources it loads, which are the dependencies besides the defaults file.
-        let mut log_filepath = dependencies_filepath.clone();
-        log_filepath.set_extension("pandoc-log.json");
+        let log_filepath = output_rendered_filepath.with_extension("pandoc-log.json");
         let input = PandocInput::new(
             self,
             output_text_filepath,
-            dependencies_filepath.with_extension("pandoc-input.md"),
+            output_rendered_filepath.with_extension("pandoc-input.md"),
         )
         .map_err(|source| Error::Io {
             description: format!("Failed to read {}", output_text_filepath.display()),
             source,
         })?;
-        let mut base_command = Command::new("pandoc");
+        let mut base_command = pandoc_command();
         let mut command = base_command
             .arg("-o")
             .arg(output_rendered_filepath)
@@ -444,11 +415,12 @@ impl Parseable for MarkdownParser {
             .arg(&log_filepath);
         let config = read_external_config().unwrap();
         if let Some(defaults_file) = &config.parser.markdown.defaults_file {
+            check_defaults_file(Path::new(defaults_file))?;
             command = command.arg("--defaults").arg(defaults_file);
         }
         let output = render_command_output(command, "pandoc");
-        if output.is_ok()
-            && let Err(e) = record_dependencies(
+        let dependencies = output.as_ref().ok().map(|_| {
+            record_dependencies(
                 &log_filepath,
                 config
                     .parser
@@ -456,16 +428,20 @@ impl Parseable for MarkdownParser {
                     .defaults_file
                     .as_deref()
                     .map(Path::new),
-                &dependencies_filepath,
             )
-        {
-            warn!(
-                "Failed to record dependencies of {}: {e}",
-                output_text_filepath.display()
-            );
-        }
+            .unwrap_or_else(|e| {
+                warn!(
+                    "Failed to record dependencies of {}: {e}",
+                    output_text_filepath.display()
+                );
+                RenderDependencies::default()
+            })
+        });
         let _ = remove_file(&log_filepath);
-        output
+        Ok(RenderedFile {
+            output: output?,
+            dependencies: dependencies.unwrap_or_default(),
+        })
     }
 
     fn has_web_render(&self) -> bool {
@@ -478,22 +454,24 @@ impl Parseable for MarkdownParser {
         output_rendered_filepath: &Path,
         output_web_filepath: &Path,
         mode: WebRenderMode,
+        dependencies: &mut RenderDependencies,
     ) -> Result<(), String> {
-        let dependencies_filepath = render_dependencies_filepath(output_rendered_filepath);
-        let mut log_filepath = dependencies_filepath.clone();
-        log_filepath.set_extension("pandoc-web-log.json");
+        let log_filepath = output_rendered_filepath.with_extension("pandoc-web-log.json");
         let input = PandocInput::new(
             self,
             output_text_filepath,
-            dependencies_filepath.with_extension("pandoc-web-input.md"),
+            output_rendered_filepath.with_extension("pandoc-web-input.md"),
         )
         .map_err(|e| format!("Failed to read {}: {e}", output_text_filepath.display()))?;
         let web_defaults_file = Some(web_defaults_filepath()).filter(|path| path.is_file());
+        if let Some(path) = &web_defaults_file {
+            check_defaults_file(path).map_err(|e| e.to_string())?;
+        }
         let page_title = output_rendered_filepath
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let mut command = Command::new("pandoc");
+        let mut command = pandoc_command();
         command
             .arg(input.path())
             .arg("-o")
@@ -514,7 +492,7 @@ impl Parseable for MarkdownParser {
             &mut command,
             &log_filepath,
             web_defaults_file.as_deref(),
-            &dependencies_filepath,
+            dependencies,
             mode,
         );
         let _ = remove_file(&log_filepath);
@@ -558,8 +536,40 @@ impl Drop for PandocInput<'_> {
     }
 }
 
-/// Optional pandoc defaults file for the HTML for web clients.
-fn web_defaults_filepath() -> PathBuf {
+/// Optional pandoc defaults file for the HTML for web clients. Devices that keep a copy get it too
+/// (`spares_core::sync::devices::DeviceConfig`), for the cards they convert themselves.
+/// `text` with its unmatched square brackets escaped, so that it can go inside a span such as
+/// `[text]{.mark}`, which an unmatched `]` would end, or an unmatched `[` take the `]` of. A hint
+/// can hold one, written as `\]` in its cloze's settings. Brackets already escaped, and those in
+/// math, are left as they are.
+fn escape_brackets(text: &str) -> String {
+    let mut unmatched = Vec::new();
+    let mut open = Vec::new();
+    let mut in_math = false;
+    let mut chars = text.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '$' => in_math = !in_math,
+            '[' if !in_math => open.push(i),
+            ']' if !in_math && open.pop().is_none() => unmatched.push(i),
+            _ => {}
+        }
+    }
+    unmatched.extend(open);
+    let mut escaped = String::with_capacity(text.len() + unmatched.len());
+    for (i, c) in text.char_indices() {
+        if unmatched.contains(&i) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
+pub fn web_defaults_filepath() -> PathBuf {
     get_config_dir().join("markdown").join("web-defaults.yaml")
 }
 
@@ -567,7 +577,7 @@ fn render_web_command(
     command: &mut Command,
     log_filepath: &Path,
     web_defaults_file: Option<&Path>,
-    dependencies_filepath: &Path,
+    dependencies: &mut RenderDependencies,
     mode: WebRenderMode,
 ) -> Result<(), String> {
     let output = render_command_output(command, "pandoc").map_err(|e| e.to_string())?;
@@ -586,14 +596,10 @@ fn render_web_command(
 
     // The web defaults file and what it loads, such as stylesheets, are synced to the server like
     // the PDF's.
-    let mut files = loaded_resources_of(&messages);
-    files.extend(web_defaults_file.map(Path::to_path_buf));
-    if let Err(e) = RenderDependencies::extend_file(dependencies_filepath, files) {
-        warn!(
-            "Failed to record dependencies in {}: {e}",
-            dependencies_filepath.display()
-        );
-    }
+    dependencies.files.extend(loaded_resources_of(&messages));
+    dependencies
+        .files
+        .extend(web_defaults_file.map(Path::to_path_buf));
 
     match mode {
         WebRenderMode::Auto => match messages.iter().find_map(content_loss) {
@@ -743,25 +749,23 @@ fn shorten(text: &str) -> String {
     }
 }
 
-/// Writes the [`RenderDependencies`] of a rendered file from the resources in pandoc's log and the
+/// The [`RenderDependencies`] of a rendered file, from the resources in pandoc's log and the
 /// defaults file. Files that are only referenced by the defaults file, such as a template, are not
 /// logged, so they are not included.
 fn record_dependencies(
     log_filepath: &Path,
     defaults_file: Option<&Path>,
-    dependencies_filepath: &Path,
-) -> Result<(), String> {
+) -> Result<RenderDependencies, String> {
     let log = read_to_string(log_filepath)
         .map_err(|e| format!("Failed to read {}: {e}", log_filepath.display()))?;
     let mut files = loaded_resources(&log)?;
     if let Some(defaults_file) = defaults_file {
         files.extend(find_defaults_file(defaults_file));
     }
-    RenderDependencies {
+    Ok(RenderDependencies {
         files,
         packages: Vec::new(),
-    }
-    .write(dependencies_filepath)
+    })
 }
 
 /// Absolute paths of the local files pandoc loaded according to its JSON log.
@@ -783,30 +787,69 @@ fn loaded_resources_of(messages: &[PandocLogMessage]) -> Vec<PathBuf> {
 }
 
 /// The path of a defaults file given to `pandoc --defaults`. Like pandoc, looks relative to the
-/// working directory, then in the `defaults` directory of pandoc's user data directory.
+/// working directory, which is the config directory (see [`pandoc_command`]), then in the
+/// `defaults` directory of pandoc's user data directory.
 fn find_defaults_file(defaults_file: &Path) -> Option<PathBuf> {
     let defaults_file = if defaults_file.extension().is_none() {
         defaults_file.with_extension("yaml")
     } else {
         defaults_file.to_path_buf()
     };
-    if defaults_file.is_file() {
-        return std::path::absolute(defaults_file).ok();
+    let in_config_dir = get_config_dir().join(&defaults_file);
+    if in_config_dir.is_file() {
+        return Some(in_config_dir);
     }
-    let path = pandoc_user_data_dir()?.join("defaults").join(defaults_file);
+    let path = pandoc_user_data_dir().join("defaults").join(defaults_file);
     path.is_file().then_some(path)
 }
 
-fn pandoc_user_data_dir() -> Option<&'static Path> {
-    static DIR: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+/// Refuses a defaults file that would have pandoc run other programs (see
+/// [`crate::render::check_pandoc_defaults`]).
+fn check_defaults_file(defaults_file: &Path) -> Result<(), Error> {
+    let Some(path) = find_defaults_file(defaults_file) else {
+        return Ok(());
+    };
+    let contents = std::fs::read_to_string(&path).map_err(|e| Error::Io {
+        description: format!("Failed to read {}", path.display()),
+        source: e,
+    })?;
+    crate::render::check_pandoc_defaults(&contents, &path)
+}
+
+/// The collection's pandoc user data directory, `pandoc` in its config directory, which renders
+/// read defaults files, templates and the like from instead of the host's own. Each collection has
+/// its own, so users never read each other's.
+pub fn pandoc_user_data_dir() -> PathBuf {
+    get_config_dir().join("pandoc")
+}
+
+/// `pandoc`, run in the collection's config directory with its own user data directory, so a
+/// relative defaults file is the collection's.
+fn pandoc_command() -> Command {
+    let mut command = Command::new("pandoc");
+    command
+        .arg("--data-dir")
+        .arg(pandoc_user_data_dir())
+        .current_dir(get_config_dir());
+    command
+}
+
+/// The version of the pandoc that renders notes, e.g. `3.12.1`, if it runs.
+pub fn pandoc_version() -> Option<&'static str> {
+    pandoc_version_output()?
+        .lines()
+        .next()?
+        .strip_prefix("pandoc ")
+        .map(str::trim)
+}
+
+/// `pandoc --version`, run once.
+fn pandoc_version_output() -> Option<&'static str> {
+    static OUTPUT: LazyLock<Option<String>> = LazyLock::new(|| {
         let output = Command::new("pandoc").arg("--version").output().ok()?;
-        String::from_utf8(output.stdout)
-            .ok()?
-            .lines()
-            .find_map(|line| line.strip_prefix("User data directory: "))
-            .map(|dir| PathBuf::from(dir.trim()))
+        String::from_utf8(output.stdout).ok()
     });
-    DIR.as_deref()
+    OUTPUT.as_deref()
 }
 
 /// <https://pandoc.org/MANUAL.html?pandocs-markdown#reference-links>
@@ -990,11 +1033,11 @@ pub mod tests {
         };
         assert_eq!(
             card(2, CardSide::Front),
-            "Spain: Madrid, France: [card-#256-2 _____]{.mark}, $3^{2^{2}}$ Rome Lazio"
+            "Spain: Madrid, France: [card-2 _____]{.mark}, $3^{2^{2}}$ Rome Lazio"
         );
         assert_eq!(
             card(4, CardSide::Back),
-            "Spain: Madrid, France: Paris, $3^{2^{2}}$ Rome [card-#256-4 Lazio]{.mark}"
+            "Spain: Madrid, France: Paris, $3^{2^{2}}$ Rome [card-4 Lazio]{.mark}"
         );
     }
 
@@ -1030,10 +1073,8 @@ pub mod tests {
     mod web_render {
         use std::fs::read_to_string;
         use std::fs::write;
-        use std::path::Path;
         use std::path::PathBuf;
 
-        use super::super::CARD_SEPARATOR;
         use super::super::MarkdownParser;
         use super::super::PandocLogMessage;
         use super::super::content_loss;
@@ -1041,7 +1082,6 @@ pub mod tests {
         use crate::parsers::Parseable;
         use crate::parsers::RenderDependencies;
         use crate::parsers::WebRenderMode;
-        use crate::parsers::render_dependencies_filepath;
 
         /// A 1x1 PNG.
         const PNG: &[u8] = &[
@@ -1070,8 +1110,13 @@ pub mod tests {
             let text = dir.join("0001.md");
             write(&text, markdown).unwrap();
             let html = dir.join("0001.html");
-            let result =
-                MarkdownParser::new().render_web_file(&text, &dir.join("0001.pdf"), &html, mode);
+            let result = MarkdownParser::new().render_web_file(
+                &text,
+                &dir.join("0001.pdf"),
+                &html,
+                mode,
+                &mut RenderDependencies::default(),
+            );
             (result, html)
         }
 
@@ -1141,30 +1186,22 @@ pub mod tests {
             .unwrap();
             let rendered = dir.join("0001.pdf");
             let html = dir.join("0001.html");
+            let mut dependencies = RenderDependencies::default();
             MarkdownParser::new()
-                .render_web_file(&text, &rendered, &html, WebRenderMode::Auto)
+                .render_web_file(
+                    &text,
+                    &rendered,
+                    &html,
+                    WebRenderMode::Auto,
+                    &mut dependencies,
+                )
                 .unwrap();
             let html = read_to_string(html).unwrap();
             assert!(!html.contains("<script"));
             assert!(html.contains("data:image/png"));
             assert!(html.contains("<math"));
             // The image is recorded so sync copies it to the server
-            let dependencies: RenderDependencies = serde_json::from_str(
-                &read_to_string(render_dependencies_filepath(&rendered)).unwrap(),
-            )
-            .unwrap();
             assert!(dependencies.files.contains(&image));
-        }
-
-        #[test]
-        fn test_render_web_file_card_separator() {
-            let (result, html) = render(
-                "separator",
-                &format!("- note-id: 1\n\n{CARD_SEPARATOR}\n\nFront"),
-                WebRenderMode::Auto,
-            );
-            result.unwrap();
-            assert!(read_to_string(html).unwrap().contains("<hr"));
         }
 
         /// A note's file keeps its clozes as written, which the HTML shows as their text.
@@ -1210,26 +1247,17 @@ pub mod tests {
             );
             assert!(result.unwrap_err().starts_with("pandoc exited"));
         }
+    }
 
-        #[test]
-        fn test_extend_dependencies_file() {
-            let dir = test_dir("dependencies");
-            let path = dir.join("0001.deps.json");
-            RenderDependencies {
-                files: vec![PathBuf::from("/b")],
-                packages: Vec::new(),
-            }
-            .write(&path)
-            .unwrap();
-            RenderDependencies::extend_file(&path, vec![PathBuf::from("/a"), PathBuf::from("/b")])
-                .unwrap();
-            let dependencies: RenderDependencies =
-                serde_json::from_str(&read_to_string(&path).unwrap()).unwrap();
-            assert_eq!(dependencies.files, [Path::new("/a"), Path::new("/b")]);
-            // A missing file is created
-            let new_path = dir.join("0002.deps.json");
-            RenderDependencies::extend_file(&new_path, vec![PathBuf::from("/c")]).unwrap();
-            assert!(new_path.exists());
-        }
+    #[test]
+    fn test_escape_brackets() {
+        use super::escape_brackets;
+        assert_eq!(escape_brackets("a]b"), r"a\]b");
+        assert_eq!(escape_brackets("a[b"), r"a\[b");
+        // Matched, escaped and math brackets are kept
+        assert_eq!(escape_brackets("[a] [[b]]"), "[a] [[b]]");
+        assert_eq!(escape_brackets(r"a\]b"), r"a\]b");
+        assert_eq!(escape_brackets("$[0,1)$ and ]"), r"$[0,1)$ and \]");
+        assert_eq!(escape_brackets("]["), r"\]\[");
     }
 }

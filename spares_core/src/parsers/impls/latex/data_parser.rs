@@ -180,6 +180,11 @@ impl<'a> LatexDataParser<'a> {
         let mut depth = 0u32;
         loop {
             match self.s.eat() {
+                // A `\]` does not end the settings (see `SettingsSyntax::Cloze`), as in LaTeX,
+                // where it is a command rather than the `]` closing the optional argument
+                Some('\\') => {
+                    self.s.eat();
+                }
                 Some('[') => depth += 1,
                 Some(']') => {
                     if depth == 0 {

@@ -7,7 +7,7 @@
 //! What a preset changes, and where:
 //!
 //! - Its daily limits ([`PresetLimitsLeft`]) are computed with the top-level ones by
-//!   [`daily_limits_left`](crate::api::review::daily_limits_left). Review leaves out a preset's
+//!   [`daily_limits_left_with`](crate::api::review::daily_limits_left_with). Review leaves out a preset's
 //!   new or review cards once its own limit is used up, and [`cap_counts`] caps the counts of
 //!   what is left by both.
 //! - Its orders are applied per card by [`queue_order_by`](crate::api::queue::queue_order_by).

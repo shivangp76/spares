@@ -1,0 +1,21 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+description = "Development tasks for spares, run with `cargo xtask`"
+publish = false
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+anyhow = "1.0"
+# The same version as spares_wasm's `wasm-bindgen`, which its bindings must come from
+wasm-bindgen-cli-support = "=0.2.129"
+
+[lints]
+workspace = true

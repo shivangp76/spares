@@ -10,22 +10,15 @@ use sqlx::SqlitePool;
 use crate::api::card::get_cards;
 use crate::api::card::get_leeches;
 use crate::api::note::create_notes;
-use crate::api::offline_review::get_review_queue;
-use crate::api::offline_review::sync_offline_actions;
-use crate::api::offline_review::sync_offline_actions_with_config;
 use crate::api::parser::tests::create_parser_helper;
 use crate::api::review::submit_study_action;
 use crate::api::scheduler::reschedule_scheduler;
 use crate::api::undo::undo_event;
-use crate::config::LeechAction;
-use crate::config::LeechConfig;
-use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::helpers::FractionalDays;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::EventType;
-use crate::model::NEW_CARD_STATE;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
@@ -34,14 +27,9 @@ use crate::schedulers::optimal_interval_days;
 use crate::schema::card::GetLeechesRequest;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
-use crate::schema::review::OfflineActionOutcome;
-use crate::schema::review::OfflineStudyAction;
-use crate::schema::review::OfflineStudyActionKind;
 use crate::schema::review::RatingSubmission;
-use crate::schema::review::ReviewQueueRequest;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
-use crate::schema::review::SyncOfflineActionsRequest;
 use crate::schema::undo::UndoEventRequest;
 
 const LEARNING: u32 = 1;
@@ -232,7 +220,7 @@ async fn reschedule_is_logged_with_the_cards_it_changed(pool: SqlitePool) {
     set_desired_retention(&pool, changed, 0.97).await;
     let before = fetch_card(&pool, changed).await;
 
-    reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
+    let response = reschedule_scheduler(&pool, "fsrs", now).await.unwrap();
     let rescheduled = fetch_card(&pool, changed).await;
     assert_ne!(rescheduled.due, before.due);
 
@@ -249,6 +237,8 @@ async fn reschedule_is_logged_with_the_cards_it_changed(pool: SqlitePool) {
         .map(|card| card["card_id"].as_i64().unwrap())
         .collect();
     assert_eq!(card_ids, [changed], "{unreviewed} did not change");
+    // Returned, so the web app can offer to undo it
+    assert_eq!(response.event_id, Some(event_id));
 
     // A plain undo skips it, as an automatic change, but it can be undone by id
     let latest = undo_event(
@@ -354,7 +344,7 @@ async fn advance_and_postpone_accept_a_query(pool: SqlitePool) {
 fn distinct_local_days(cards: &[Card]) -> usize {
     cards
         .iter()
-        .map(|card| card.due.with_timezone(&chrono::Local).date_naive())
+        .map(|card| crate::helpers::study_date(card.due, crate::api::queue::tests::zone()))
         .collect::<std::collections::HashSet<_>>()
         .len()
 }
@@ -474,370 +464,4 @@ async fn rating_walks_the_learning_steps(pool: SqlitePool) {
     at += steps[1];
     rate(&pool, card_id, GOOD, at).await;
     assert_eq!(fetch_card(&pool, card_id).await.state, REVIEW);
-}
-
-// Offline review: actions performed on a web client without a connection, submitted later.
-
-/// `now`, in whole seconds as the database stores it.
-fn whole_seconds(at: DateTime<Utc>) -> DateTime<Utc> {
-    DateTime::from_timestamp(at.timestamp(), 0).unwrap()
-}
-
-fn offline_rating(
-    client_id: &str,
-    card_id: CardId,
-    rating: u32,
-    at: DateTime<Utc>,
-) -> OfflineStudyAction {
-    OfflineStudyAction {
-        client_id: client_id.to_string(),
-        performed_at: at,
-        action: OfflineStudyActionKind::Rate(RatingSubmission {
-            card_id,
-            rating,
-            recall_duration: Duration::seconds(5),
-            rate_duration: Duration::seconds(2),
-            tag_id: None,
-        }),
-    }
-}
-
-async fn sync(
-    pool: &SqlitePool,
-    actions: Vec<OfflineStudyAction>,
-    now: DateTime<Utc>,
-) -> Vec<OfflineActionOutcome> {
-    sync_offline_actions(
-        pool,
-        SyncOfflineActionsRequest {
-            scheduler_name: "fsrs".to_string(),
-            actions,
-        },
-        now,
-    )
-    .await
-    .unwrap()
-    .results
-    .into_iter()
-    .map(|result| result.outcome)
-    .collect()
-}
-
-async fn review_times(pool: &SqlitePool, card_id: CardId) -> Vec<DateTime<Utc>> {
-    let review_logs: Vec<ReviewLog> =
-        sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ? ORDER BY reviewed_at, id")
-            .bind(card_id)
-            .fetch_all(pool)
-            .await
-            .unwrap();
-    review_logs
-        .into_iter()
-        .map(|review_log| review_log.reviewed_at)
-        .collect()
-}
-
-fn assert_same_memory_state(actual: &Card, expected: &Card) {
-    assert_eq!(actual.state, expected.state, "state");
-    assert!(
-        (actual.stability - expected.stability).abs() < 1e-6
-            && (actual.difficulty - expected.difficulty).abs() < 1e-6,
-        "card {} has stability {} and difficulty {}, expected {} and {}",
-        actual.id,
-        actual.stability,
-        actual.difficulty,
-        expected.stability,
-        expected.difficulty,
-    );
-}
-
-#[sqlx::test]
-async fn offline_reviews_schedule_like_online_reviews(pool: SqlitePool) {
-    let cards = create_cards(&pool, &["a {{ b }} c", "d {{ e }} f"]).await;
-    let (online, offline) = (cards[0][0], cards[1][0]);
-    let now = whole_seconds(Utc::now());
-    let times = [
-        now - Duration::days(10),
-        now - Duration::days(9),
-        now - Duration::days(3),
-    ];
-
-    for at in times {
-        rate(&pool, online, GOOD, at).await;
-    }
-    // Submitted out of order, as the client's order is not trusted
-    let actions = times
-        .iter()
-        .enumerate()
-        .rev()
-        .map(|(i, at)| offline_rating(&format!("review {i}"), offline, GOOD, *at))
-        .collect();
-    let outcomes = sync(&pool, actions, now).await;
-
-    assert!(
-        outcomes
-            .iter()
-            .all(|outcome| matches!(outcome, OfflineActionOutcome::Applied { event_id: Some(_) })),
-        "each review is the card's latest when applied, so each can be undone: {outcomes:?}"
-    );
-    assert_eq!(review_times(&pool, offline).await, times);
-    assert_same_memory_state(
-        &fetch_card(&pool, offline).await,
-        &fetch_card(&pool, online).await,
-    );
-}
-
-#[sqlx::test]
-async fn offline_review_synced_after_a_later_review_is_replayed_in_order(pool: SqlitePool) {
-    let cards = create_cards(&pool, &["a {{ b }} c", "d {{ e }} f", "g {{ h }} i"]).await;
-    let (in_order, out_of_order, rated_good_once) = (cards[0][0], cards[1][0], cards[2][0]);
-    let now = whole_seconds(Utc::now());
-    let (earlier, later) = (now - Duration::days(5), now - Duration::days(1));
-
-    rate(&pool, in_order, AGAIN, earlier).await;
-    rate(&pool, in_order, GOOD, later).await;
-
-    // Another device reviewed the card and synced first
-    rate(&pool, out_of_order, GOOD, later).await;
-    let outcomes = sync(
-        &pool,
-        vec![offline_rating("offline", out_of_order, AGAIN, earlier)],
-        now,
-    )
-    .await;
-
-    let [
-        OfflineActionOutcome::Applied {
-            event_id: Some(event_id),
-        },
-    ] = outcomes[..]
-    else {
-        panic!("a review inserted into the history has an undo event: {outcomes:?}");
-    };
-    assert_eq!(review_times(&pool, out_of_order).await, [earlier, later]);
-    assert_same_memory_state(
-        &fetch_card(&pool, out_of_order).await,
-        &fetch_card(&pool, in_order).await,
-    );
-    let recorded_event: Option<i64> =
-        sqlx::query_scalar("SELECT event_id FROM offline_action WHERE client_id = 'offline'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(recorded_event, Some(event_id));
-
-    // Undoing it takes the review out of the history and puts the card back as it was
-    undo_event(
-        &pool,
-        UndoEventRequest {
-            event_id: Some(event_id),
-            undo_group: false,
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(review_times(&pool, out_of_order).await, [later]);
-    rate(&pool, rated_good_once, GOOD, later).await;
-    assert_same_memory_state(
-        &fetch_card(&pool, out_of_order).await,
-        &fetch_card(&pool, rated_good_once).await,
-    );
-}
-
-async fn note_tags(pool: &SqlitePool, card_id: CardId) -> Vec<String> {
-    sqlx::query_scalar(
-        r"SELECT t.name FROM tag t JOIN note_tag nt ON nt.tag_id = t.id
-        JOIN card c ON c.note_id = nt.note_id WHERE c.id = ?",
-    )
-    .bind(card_id)
-    .fetch_all(pool)
-    .await
-    .unwrap()
-}
-
-/// The example on [`crate::api::offline_review`], with a threshold of 2 lapses.
-#[sqlx::test]
-async fn offline_lapse_inserted_into_the_history_triggers_the_leech_action(pool: SqlitePool) {
-    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
-    let now = whole_seconds(Utc::now());
-    let config = SparesExternalConfig {
-        leech: LeechConfig {
-            lapses_threshold: 2,
-            action: LeechAction::Suspend,
-            ..LeechConfig::default()
-        },
-        ..SparesExternalConfig::default()
-    };
-    graduate(&pool, card_id, now, &[60, 59]).await;
-    // The first lapse, relearned
-    let lapsed_at = now - Duration::days(40);
-    rate(&pool, card_id, AGAIN, lapsed_at).await;
-    rate(&pool, card_id, GOOD, lapsed_at + Duration::hours(1)).await;
-    rate(&pool, card_id, GOOD, lapsed_at + Duration::days(1)).await;
-    // The laptop reviews the card after the phone's lapse, and syncs first
-    rate(&pool, card_id, GOOD, now - Duration::days(1)).await;
-
-    let outcomes = sync_offline_actions_with_config(
-        &pool,
-        &config,
-        SyncOfflineActionsRequest {
-            scheduler_name: "fsrs".to_string(),
-            actions: vec![offline_rating(
-                "phone",
-                card_id,
-                AGAIN,
-                now - Duration::days(10),
-            )],
-        },
-        now,
-    )
-    .await
-    .unwrap()
-    .results;
-    assert!(
-        matches!(
-            outcomes[0].outcome,
-            OfflineActionOutcome::Applied { event_id: Some(_) }
-        ),
-        "the inserted rating has an undo event: {outcomes:?}"
-    );
-    assert_eq!(
-        fetch_card(&pool, card_id).await.special_state,
-        Some(SpecialState::Suspended),
-    );
-    assert_eq!(note_tags(&pool, card_id).await, ["leech"]);
-
-    // The leech action is in the rating's group, and undoing the group takes all of it back
-    undo_event(
-        &pool,
-        UndoEventRequest {
-            event_id: None,
-            undo_group: true,
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(fetch_card(&pool, card_id).await.special_state, None);
-    assert_eq!(note_tags(&pool, card_id).await, Vec::<String>::new());
-    assert_eq!(
-        review_times(&pool, card_id).await.len(),
-        6,
-        "the inserted rating is undone with it"
-    );
-}
-
-#[sqlx::test]
-async fn offline_actions_are_applied_once_and_invalid_ones_rejected(pool: SqlitePool) {
-    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
-    let now = whole_seconds(Utc::now());
-    let review = || offline_rating("review", card_id, GOOD, now - Duration::hours(1));
-
-    let outcomes = sync(&pool, vec![review()], now).await;
-    assert!(matches!(
-        outcomes[..],
-        [OfflineActionOutcome::Applied { .. }]
-    ));
-    // The client did not get the response, and resends it
-    let outcomes = sync(&pool, vec![review()], now).await;
-    assert!(matches!(outcomes[..], [OfflineActionOutcome::Duplicate]));
-    assert_eq!(review_times(&pool, card_id).await.len(), 1);
-
-    let outcomes = sync(
-        &pool,
-        vec![offline_rating("deleted card", card_id + 1000, GOOD, now)],
-        now,
-    )
-    .await;
-    assert!(
-        matches!(outcomes[..], [OfflineActionOutcome::Rejected { .. }]),
-        "{outcomes:?}"
-    );
-    assert_eq!(review_times(&pool, card_id).await.len(), 1);
-
-    // From a client whose clock is ahead of the server's
-    sync(
-        &pool,
-        vec![offline_rating(
-            "future",
-            card_id,
-            GOOD,
-            now + Duration::hours(1),
-        )],
-        now,
-    )
-    .await;
-    assert_eq!(review_times(&pool, card_id).await.last(), Some(&now));
-    let outcomes = sync(
-        &pool,
-        vec![offline_rating("deleted card", card_id + 1000, GOOD, now)],
-        now,
-    )
-    .await;
-    assert!(
-        matches!(outcomes[..], [OfflineActionOutcome::Duplicate]),
-        "a rejected action is not retried"
-    );
-}
-
-#[sqlx::test]
-async fn offline_bury_from_an_earlier_day_is_over(pool: SqlitePool) {
-    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
-    let now = whole_seconds(Utc::now());
-    let bury = |client_id: &str, at| OfflineStudyAction {
-        client_id: client_id.to_string(),
-        performed_at: at,
-        action: OfflineStudyActionKind::Bury { card_id },
-    };
-
-    let outcomes = sync(&pool, vec![bury("yesterday", now - Duration::days(1))], now).await;
-    assert!(
-        matches!(&outcomes[..], [OfflineActionOutcome::Rejected { message }] if message.contains("ended")),
-        "{outcomes:?}"
-    );
-    assert_eq!(fetch_card(&pool, card_id).await.special_state, None);
-
-    sync(&pool, vec![bury("today", now)], now).await;
-    assert_eq!(
-        fetch_card(&pool, card_id).await.special_state,
-        Some(SpecialState::UserBuried)
-    );
-}
-
-#[sqlx::test]
-async fn review_queue_includes_new_cards_up_to_todays_limit(pool: SqlitePool) {
-    let limit = read_external_config().unwrap().new_cards_daily_limit;
-    let notes = (0..limit + 3)
-        .map(|i| format!("{i} {{{{ b }}}} c"))
-        .collect::<Vec<_>>();
-    let cards = create_cards(&pool, &notes.iter().map(String::as_str).collect::<Vec<_>>()).await;
-    let now = Utc::now();
-    // Studying a card uses up one of today's new cards, and leaves it due again today
-    rate(&pool, cards[0][0], AGAIN, now).await;
-
-    let queue = get_review_queue(
-        &pool,
-        ReviewQueueRequest {
-            filter: None,
-            limit: 1000,
-            days_ahead: 1,
-        },
-        now,
-        &get_all_parsers(),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(queue.new_cards_left_today, limit - 1);
-    let new_cards = queue
-        .cards
-        .iter()
-        .filter(|card| card.card.card_state == NEW_CARD_STATE)
-        .count();
-    assert_eq!(new_cards, (limit - 1) as usize);
-    assert!(
-        queue
-            .cards
-            .iter()
-            .any(|card| card.card.card_id == cards[0][0]),
-        "the studied card is due again today"
-    );
 }

@@ -20,15 +20,14 @@ use crate::adapters::SrsAdapter;
 use crate::adapters::migration::MigrationFunc;
 use crate::api::note::create_notes;
 use crate::api::note::delete_notes;
+use crate::api::note::list_live_notes;
 use crate::api::note::relocate_live_cards;
 use crate::api::note::render_notes;
-use crate::api::note::update_notes;
+use crate::api::note::update_notes_batch;
 use crate::api::parser::list_parsers;
 use crate::api::undo::group_events;
-use crate::config::Environment;
-use crate::config::get_env_config;
+use crate::config::host_client;
 use crate::config::is_test_mode;
-use crate::config::local_api_key;
 use crate::config::read_external_config;
 use crate::model::CustomData;
 use crate::model::NoteId;
@@ -44,6 +43,8 @@ use crate::schema::note::DeleteNotesRequest;
 use crate::schema::note::DeleteNotesResponse;
 use crate::schema::note::FindLiveNoteRequest;
 use crate::schema::note::FindLiveNoteResponse;
+use crate::schema::note::ListLiveNotesRequest;
+use crate::schema::note::ListLiveNotesResponse;
 use crate::schema::note::LiveNoteClozes;
 use crate::schema::note::NoteResponse;
 use crate::schema::note::NotesResponse;
@@ -75,13 +76,14 @@ pub struct SparesAdapter {
 #[derive(Debug)]
 pub enum SparesRequestProcessor {
     Server,
-    /// For testing use only. Logs undo events, as the server's handlers do.
+    /// Writes to the database directly, logging undo events as the server's handlers do: the
+    /// server's imports of files the web app uploads (`crate::api::note::import`), and tests.
     Database {
         pool: SqlitePool,
     },
 }
 
-/// Sends the local server's API key, which it requires when it has one.
+/// Sends the device token for the host (see [`host_client`]).
 fn authed(request: RequestBuilder, api_key: Option<&str>) -> RequestBuilder {
     match api_key {
         Some(key) => request.bearer_auth(key),
@@ -105,12 +107,11 @@ impl SparesAdapter {
     pub fn new(request_processor: SparesRequestProcessor) -> Self {
         let internal = match request_processor {
             SparesRequestProcessor::Server => {
-                let env_config = get_env_config(Environment::Production);
-                let base_url = format!("http://{}", env_config.socket_address);
+                let host = host_client();
                 SparesRequestProcessorInternal::Server {
-                    base_url,
+                    base_url: host.base_url,
                     client: Client::new(),
-                    api_key: local_api_key(),
+                    api_key: host.token,
                 }
             }
             SparesRequestProcessor::Database { pool } => {
@@ -121,6 +122,12 @@ impl SparesAdapter {
             request_processor: internal,
             import_group: Mutex::new(None),
         }
+    }
+
+    /// The first event of the imports so far, whose group the others are in, so undoing it with
+    /// its group reverts them all
+    pub fn import_group(&self) -> Option<i64> {
+        *self.import_group.lock().unwrap()
     }
 
     /// Puts `event_ids`, the events of part of an import, in the group of the import's first
@@ -178,20 +185,25 @@ impl SparesAdapter {
     }
 
     /// Returns the event to undo the update with, if any
-    async fn update_note(
+    /// Updates the notes of an import in one request, with one commit of the notes repository,
+    /// and returns their events
+    async fn update_notes(
         &self,
-        update_note_request: UpdateNotesRequest,
+        requests: Vec<UpdateNotesRequest>,
         at: DateTime<Utc>,
-    ) -> Result<Option<i64>, Error> {
-        let response: UpdateNotesResponse = match &self.request_processor {
+    ) -> Result<Vec<i64>, Error> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        let responses: Vec<UpdateNotesResponse> = match &self.request_processor {
             SparesRequestProcessorInternal::Server {
                 base_url,
                 client,
                 api_key,
             } => {
-                let url = format!("{}/api/notes", base_url);
+                let url = format!("{}/api/notes/batch", base_url);
                 let response = authed(client.patch(url), api_key.as_deref())
-                    .json(&update_note_request)
+                    .json(&requests)
                     .send()
                     .await
                     .map_err(Error::ApiRequest)?;
@@ -199,10 +211,10 @@ impl SparesAdapter {
                 response.json().await.map_err(Error::ApiRequest)?
             }
             SparesRequestProcessorInternal::Database { pool } => {
-                update_notes(pool, update_note_request, at, &get_all_parsers(), true).await?
+                update_notes_batch(pool, requests, at, &get_all_parsers(), true).await?
             }
         };
-        Ok(response.event_id)
+        Ok(responses.into_iter().filter_map(|r| r.event_id).collect())
     }
 
     async fn relocate_live_cards(
@@ -252,13 +264,14 @@ impl SparesAdapter {
             tags: UpdateTags::None,
         };
         if !dry_run {
-            self.update_note(update_note_request, at).await?;
+            self.update_notes(vec![update_note_request], at).await?;
         }
         Ok(())
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
 impl SrsAdapter for SparesAdapter {
     fn get_adapter_name(&self) -> &'static str {
         "spares"
@@ -439,9 +452,7 @@ impl SrsAdapter for SparesAdapter {
             event_ids.extend(self.relocate_live_cards(request, at).await?.event_id);
         }
 
-        for update_note_request in update_note_requests {
-            event_ids.extend(self.update_note(update_note_request, at).await?);
-        }
+        event_ids.extend(self.update_notes(update_note_requests, at).await?);
 
         // Issue a single bulk delete for all collected note IDs.
         if !delete_note_ids.is_empty() {
@@ -461,9 +472,9 @@ impl SrsAdapter for SparesAdapter {
                         .await
                         .map_err(Error::ApiRequest)?;
                     let response = self.handle_response(response).await?;
-                    // A server from before deletes returned their event responds with no body
-                    let response: Option<DeleteNotesResponse> = response.json().await.ok();
-                    event_ids.extend(response.and_then(|r| r.event_id));
+                    let response: DeleteNotesResponse =
+                        response.json().await.map_err(Error::ApiRequest)?;
+                    event_ids.extend(response.event_id);
                 }
                 SparesRequestProcessorInternal::Database { pool } => {
                     let response = delete_notes(pool, request, &get_all_parsers(), true).await?;
@@ -555,6 +566,41 @@ impl SrsAdapter for SparesAdapter {
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
                 Ok(note_id)
+            }
+        }
+    }
+
+    async fn live_notes(&self, live_sync_name: &str) -> Result<BTreeMap<i64, NoteId>, Error> {
+        match &self.request_processor {
+            SparesRequestProcessorInternal::Server {
+                base_url,
+                client,
+                api_key,
+            } => {
+                let url = format!("{}/api/notes/live/list", base_url);
+                let body = ListLiveNotesRequest {
+                    live_sync_name: live_sync_name.to_string(),
+                };
+                let response = authed(client.post(url), api_key.as_deref())
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(Error::ApiRequest)?;
+                let response = self.handle_response(response).await?;
+                let response: ListLiveNotesResponse = response.json().await.map_err(|e| {
+                    Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                        adapter_name: self.get_adapter_name().to_string(),
+                        error: e.to_string(),
+                    }))
+                })?;
+                Ok(response
+                    .notes
+                    .into_iter()
+                    .map(|n| (n.block_order, n.id))
+                    .collect())
+            }
+            SparesRequestProcessorInternal::Database { pool } => {
+                list_live_notes(pool, live_sync_name).await
             }
         }
     }

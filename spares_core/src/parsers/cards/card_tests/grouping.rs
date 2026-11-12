@@ -283,6 +283,8 @@ fn test_get_cards_grouping_all_2() {
     // Tests:
     // 1. Grouping "*" specified first
     // 2. Grouping "*" and 1 is redundant, so it is truncated to just grouping "*"
+    // 3. The cards' orders are kept on the clozes the cards are made from in their own right, not
+    //    on the cloze in all groupings, which every card starts with
     let data = r"{{[g:*,1]a}}{{b}}{{[g:1]c}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
@@ -302,19 +304,19 @@ fn test_get_cards_grouping_all_2() {
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
-                    NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
+                    NotePart::ClozeStart("{{[g:*]".to_string()),
                     NotePart::ClozeData(
                         "a".to_string(),
                         ClozeHiddenReplacement::ToAnswer { hint: None },
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
-                    NotePart::ClozeStart("{{".to_string()),
+                    NotePart::ClozeStart("{{[o:1]".to_string()),
                     NotePart::ClozeData(
                         "b".to_string(),
                         ClozeHiddenReplacement::ToAnswer { hint: None },
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
-                    NotePart::SurroundingData("{{[g:1]c}}".to_string()),
+                    NotePart::SurroundingData("{{[g:1;o:2]c}}".to_string()),
                 ],
             },
             CardData {
@@ -330,14 +332,14 @@ fn test_get_cards_grouping_all_2() {
                 inherit: None,
                 cloze_uid: None,
                 data: vec![
-                    NotePart::ClozeStart("{{[g:*; o:1; g:1;o:2]".to_string()),
+                    NotePart::ClozeStart("{{[g:*]".to_string()),
                     NotePart::ClozeData(
                         "a".to_string(),
                         ClozeHiddenReplacement::ToAnswer { hint: None },
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
-                    NotePart::SurroundingData("{{b}}".to_string()),
-                    NotePart::ClozeStart("{{[g:1]".to_string()),
+                    NotePart::SurroundingData("{{[o:1]b}}".to_string()),
+                    NotePart::ClozeStart("{{[g:1;o:2]".to_string()),
                     NotePart::ClozeData(
                         "c".to_string(),
                         ClozeHiddenReplacement::ToAnswer { hint: None },
@@ -502,7 +504,7 @@ fn test_get_cards_grouping_all_4() {
     // let data_1 = r"a{{[g:1]b}}c{{a}}{{[g:*;r:]f}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let (new_data, _) = add_order_to_note_data(parser.as_ref(), data_1, None).unwrap();
-    assert!(new_data.contains("g:*;hide:;"));
+    assert!(new_data.contains("{{[g:*;hide:]f}}"), "{new_data}");
     let data = r"a{{[g:1]b}}c{{d}}{{[g:*;hide:]f}}";
     let cards_res = get_cards(parser.as_ref(), None, data, true, MOVE_FILES);
     assert!(cards_res.is_ok());
@@ -529,7 +531,7 @@ fn test_get_cards_grouping_all_4() {
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
                     NotePart::SurroundingData("c{{[o:2]d}}".to_string()),
-                    NotePart::ClozeStart("{{[g:*;hide:; g:1;hide:; hide:]".to_string()),
+                    NotePart::ClozeStart("{{[g:*;hide:]".to_string()),
                     NotePart::ClozeData("f".to_string(), ClozeHiddenReplacement::NotToAnswer),
                     NotePart::ClozeEnd("}}".to_string()),
                 ],
@@ -554,7 +556,7 @@ fn test_get_cards_grouping_all_4() {
                         ClozeHiddenReplacement::ToAnswer { hint: None },
                     ),
                     NotePart::ClozeEnd("}}".to_string()),
-                    NotePart::ClozeStart("{{[g:*;hide:; g:1;hide:; hide:]".to_string()),
+                    NotePart::ClozeStart("{{[g:*;hide:]".to_string()),
                     NotePart::ClozeData("f".to_string(), ClozeHiddenReplacement::NotToAnswer),
                     NotePart::ClozeEnd("}}".to_string()),
                 ],
@@ -858,4 +860,193 @@ fn test_get_cards_grouping_multiple_times() {
         ];
         assert_eq!(cards, expected);
     }
+}
+
+/// Writes `data` back twice and checks that the first pass gives `expected` and the second
+/// changes neither the note nor its cards. Only the cards' previous orders differ, since the
+/// second pass reads the orders the first one wrote.
+fn assert_rewrites_to(data: &str, expected: &str) {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let (new_data, mut cards) = add_order_to_note_data(parser.as_ref(), data, None).unwrap();
+    assert_eq!(new_data, expected);
+    let (newer_data, mut newer_cards) =
+        add_order_to_note_data(parser.as_ref(), &new_data, None).unwrap();
+    assert_eq!(newer_data, expected);
+    for card in cards.iter_mut().chain(newer_cards.iter_mut()) {
+        card.previous_order = None;
+    }
+    assert_eq!(newer_cards, cards);
+}
+
+#[test]
+fn test_grouping_all_not_repeated_per_card() {
+    // Each card used to add a keyless `; hide:`, one per grouping `g:*` was expanded into
+    assert_rewrites_to(
+        r"{{a}}{{b}}{{[g:*;hide:]c}}",
+        r"{{[o:1]a}}{{[o:2]b}}{{[g:*;hide:]c}}",
+    );
+    assert_rewrites_to(r"{{a}}{{[g:*;hide:]c}}", r"{{[o:1]a}}{{[g:*;hide:]c}}");
+    assert_rewrites_to(
+        r"{{a}}{{b}}{{[h:x;g:*;hide:]c}}",
+        r"{{[o:1]a}}{{[o:2]b}}{{[h:x;g:*;hide:]c}}",
+    );
+}
+
+#[test]
+fn test_grouping_all_drops_grouping_with_same_settings() {
+    // `g:1;hide:` says nothing that `g:*;hide:` does not
+    assert_rewrites_to(
+        r"{{[g:1]a}}{{b}}{{[g:*;hide:; g:1;hide:]c}}",
+        r"{{[g:1;o:1]a}}{{[o:2]b}}{{[g:*;hide:]c}}",
+    );
+}
+
+#[test]
+fn test_grouping_all_repeated_settings_are_cleaned_up() {
+    // Notes written before the fix repeated the settings of `g:*` once per card
+    assert_rewrites_to(
+        r"{{a}}{{b}}{{[g:*;hide:; hide:; hide:; hide:; hide:]c}}",
+        r"{{[o:1]a}}{{[o:2]b}}{{[g:*;hide:]c}}",
+    );
+}
+
+#[test]
+fn test_grouping_all_keeps_no_card_orders() {
+    // A cloze in all groupings that comes first in its cards used to keep their orders, written
+    // without `g:` keys, so they were read back as the orders of `g:*` for every card
+    assert_rewrites_to(
+        r"{{[g:*;hide:]c}}{{a}}{{b}}",
+        r"{{[g:*;hide:]c}}{{[o:1]a}}{{[o:2]b}}",
+    );
+    assert_rewrites_to(
+        r"{{a}}{{[g:*;hide:]b}}{{c}}{{[g:*;hide:]d}}",
+        r"{{[o:1]a}}{{[g:*;hide:]b}}{{[o:2]c}}{{[g:*;hide:]d}}",
+    );
+    // `g:*,1` is the same as `g:*`
+    assert_rewrites_to(r"{{[g:*,1]a}}{{b}}", r"{{[g:*]a}}{{[o:1]b}}");
+    // Orders notes written before kept on `g:*` move to the cards' own clozes
+    assert_rewrites_to(
+        r"{{[g:*;hide:; o:1;hide:; o:2;hide:]c}}{{a}}{{b}}",
+        r"{{[g:*;hide:]c}}{{[o:1]a}}{{[o:2]b}}",
+    );
+    assert_rewrites_to(
+        r"{{[g:*;o:2;hide:]c}}{{a}}{{b}}",
+        r"{{[g:*;hide:]c}}{{[o:1]a}}{{[o:2]b}}",
+    );
+    assert_rewrites_to(
+        r"{{[g:*,1;hide:]a}}{{b}}{{[g:1]c}}",
+        r"{{[g:*;hide:]a}}{{[o:1]b}}{{[g:1;o:2]c}}",
+    );
+}
+
+#[test]
+fn test_grouping_all_keeps_no_card_settings() {
+    // `r:` used to move onto the cloze in all groupings, so all of its cards were reversed and
+    // the note could not be read again
+    assert_rewrites_to(
+        r"{{[g:*;hide:]c}}{{[r:]a}}{{b}}",
+        r"{{[g:*;hide:]c}}{{[o:1,2;r:]a}}{{[o:3]b}}",
+    );
+    // The settings of `g:*` are kept for all groupings, and its cards' clozes repeat them
+    assert_rewrites_to(
+        r"{{[g:*;hide:;f:all;b:a]c}}{{a}}{{b}}",
+        r"{{[g:*;hide:;f:all;b:a]c}}{{[o:1;f:all;b:a]a}}{{[o:2;f:all;b:a]b}}",
+    );
+}
+
+/// The previous orders of a note's cards, by grouping
+fn previous_orders(data: &str) -> Vec<(ClozeGrouping, Option<usize>)> {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    get_cards(parser.as_ref(), None, data, false, MOVE_FILES)
+        .unwrap()
+        .into_iter()
+        .map(|card| (card.grouping, card.previous_order))
+        .collect()
+}
+
+#[test]
+fn test_adding_grouping_all_cloze_keeps_card_orders() {
+    // A cloze in all groupings added before a note's clozes is first in all of its cards. It used
+    // to be read for their orders, which it has none of, so all of the cards were made anew.
+    assert_eq!(
+        previous_orders(r"{{[g:*;hide:]t}}{{[o:1]a}}{{[o:2]b}}"),
+        vec![
+            (ClozeGrouping::Auto(1), Some(1)),
+            (ClozeGrouping::Auto(2), Some(2)),
+        ]
+    );
+}
+
+#[test]
+fn test_grouping_all_orders_written_before_are_read() {
+    // Notes written before kept a card's orders on its first cloze, even in all groupings
+    assert_eq!(
+        previous_orders(r"{{[g:*; o:1; g:1;o:2]a}}{{b}}{{[g:1]c}}"),
+        vec![
+            (ClozeGrouping::Custom("1".to_string()), Some(2)),
+            (ClozeGrouping::Auto(1), Some(1)),
+        ]
+    );
+}
+
+#[test]
+fn test_grouping_all_card_uids() {
+    // A card is known by the uid of its own cloze, not that of the cloze in all groupings
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let data = r"{{[id:aaaaaaaaaaaa;g:*;hide:]a}}{{[id:bbbbbbbbbbbb]b}}{{[id:cccccccccccc]c}}";
+    let uids = get_cards(parser.as_ref(), None, data, false, MOVE_FILES)
+        .unwrap()
+        .into_iter()
+        .map(|card| card.cloze_uid.map(|uid| uid.to_string()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        uids,
+        vec![
+            Some("bbbbbbbbbbbb".to_string()),
+            Some("cccccccccccc".to_string())
+        ]
+    );
+}
+
+#[test]
+fn test_grouping_all_keeps_own_grouping_settings() {
+    // A grouping a cloze in all groupings names itself has its own settings in place of those of
+    // `g:*`. They used to be replaced by those of `g:*`.
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let data = r"{{[g:1]a}}{{b}}{{[g:*;hide:; g:1;f:all]c}}";
+    assert_rewrites_to(data, r"{{[g:1;o:1;f:all]a}}{{[o:2]b}}{{[g:*;hide:; g:1]c}}");
+    let cards = get_cards(parser.as_ref(), None, data, true, MOVE_FILES).unwrap();
+    assert_eq!(cards[0].grouping, ClozeGrouping::Custom("1".to_string()));
+    assert_eq!(cards[0].front_conceal, FrontConceal::AllGroupings);
+    assert_eq!(cards[1].front_conceal, FrontConceal::OnlyGrouping);
+
+    // Hidden only in grouping 1
+    assert_rewrites_to(
+        r"{{[g:1]a}}{{b}}{{[g:*; g:1;hide:]c}}",
+        r"{{[g:1;o:1]a}}{{[o:2]b}}{{[g:*; g:1;hide:]c}}",
+    );
+    // Hidden in all groupings but grouping 1
+    let data = r"{{[g:1]a}}{{b}}{{[g:*;hide:; g:1]c}}";
+    assert_rewrites_to(data, r"{{[g:1;o:1]a}}{{[o:2]b}}{{[g:*;hide:; g:1]c}}");
+    let cards = get_cards(parser.as_ref(), None, data, true, MOVE_FILES).unwrap();
+    let c_part = |card: &CardData| {
+        card.data
+            .iter()
+            .find(|part| matches!(part, NotePart::ClozeData(text, _) if text == "c"))
+            .cloned()
+    };
+    assert_eq!(
+        c_part(&cards[0]),
+        Some(NotePart::ClozeData(
+            "c".to_string(),
+            ClozeHiddenReplacement::ToAnswer { hint: None }
+        ))
+    );
+    assert_eq!(
+        c_part(&cards[1]),
+        Some(NotePart::ClozeData(
+            "c".to_string(),
+            ClozeHiddenReplacement::NotToAnswer
+        ))
+    );
 }

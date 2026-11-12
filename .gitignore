@@ -8,3 +8,9 @@ target/
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+
+# The browser build of spares_wasm (cargo xtask build-wasm)
+spares_frontend/frontend/src/local/pkg/
+
+# Lockfiles from building a vendored crate on its own; the workspace's Cargo.lock covers them
+vendor/*/Cargo.lock

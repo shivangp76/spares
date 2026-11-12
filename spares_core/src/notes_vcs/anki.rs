@@ -33,8 +33,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -51,6 +49,7 @@ use super::lock::NotesGuard;
 use super::lock::WRITER_WAIT;
 use super::lock::exclusive_guard;
 use super::lock::run_holding;
+use super::note_file::NoteFileContext;
 use super::note_file::construct_db_note_file;
 use super::note_file::db_note_fields;
 use super::note_file::file_note_fields;
@@ -344,6 +343,7 @@ async fn snapshot_tree(
     notes: &[AnkiRawNote],
     hints: &HashMap<i64, String>,
 ) -> Result<String, Error> {
+    let context = NoteFileContext::default();
     let entries = read_tree(repo, parent)?;
     let note_shas: Vec<&str> = entries
         .iter()
@@ -433,10 +433,19 @@ async fn snapshot_tree(
                 .id()
                 .and_then(|id| db_notes.rows.get(&id))
                 .filter(|row| row.parser_name == note_path.parser().get_parser_name())
-                .map(|row| construct_db_note_file(note_path.parser(), row, &db_notes.links))
+                .map(|row| {
+                    construct_db_note_file(&context, note_path.parser(), row, &db_notes.links)
+                })
                 .transpose()?,
         };
-        let contents = note_contents(&note_path, base.as_deref(), raw, &anki_note, &db_notes)?;
+        let contents = note_contents(
+            &context,
+            &note_path,
+            base.as_deref(),
+            raw,
+            &anki_note,
+            &db_notes,
+        )?;
         let entry = match (contents, parent_entry, base) {
             (None, Some(entry), _) => (entry.mode.clone(), entry.sha.clone()),
             (Some(contents), _, _) | (None, None, Some(contents)) => {
@@ -465,6 +474,7 @@ async fn snapshot_tree(
 
 /// The file of an Anki note at `note_path`, or `None` to keep `base`, the parent's file there.
 fn note_contents(
+    context: &NoteFileContext,
     note_path: &NotePath,
     base: Option<&str>,
     raw: &AnkiRawNote,
@@ -472,7 +482,7 @@ fn note_contents(
     db_notes: &DbNotes,
 ) -> Result<Option<String>, Error> {
     let parser = note_path.parser();
-    let parsed = base.and_then(|base| parse_file(note_path, base));
+    let parsed = base.and_then(|base| parse_file(context, note_path, base));
     let anki_id_value = Value::String(raw.id.to_string());
     if let (Some(base), Some((settings, data))) = (base, &parsed)
         && holds(parser, note_path.id(), settings, data, raw, anki_note)
@@ -501,14 +511,14 @@ fn note_contents(
                 parser_name: row.parser_name.clone(),
                 tags_value: row.tags_value.clone(),
             };
-            let file_fields = file_note_fields(parser, base, id).map(|mut fields| {
+            let file_fields = file_note_fields(context, parser, base, id).map(|mut fields| {
                 fields.custom_data.clone_from(&custom_data);
                 fields
             });
-            if file_fields
-                .is_some_and(|fields| same_note(parser, id, &fields, &db_note_fields(&row)))
-            {
-                return construct_db_note_file(parser, &row, &db_notes.links).map(Some);
+            if file_fields.is_some_and(|fields| {
+                same_note(context, parser, id, &fields, &db_note_fields(&row))
+            }) {
+                return construct_db_note_file(context, parser, &row, &db_notes.links).map(Some);
             }
         }
         let request = GenerateNoteFilesRequest {
@@ -590,12 +600,18 @@ fn sorted_tags(tags: &[String]) -> Vec<&str> {
     tags
 }
 
-fn parse_file(note_path: &NotePath, contents: &str) -> Option<(NoteSettings, String)> {
+fn parse_file(
+    context: &NoteFileContext,
+    note_path: &NotePath,
+    contents: &str,
+) -> Option<(NoteSettings, String)> {
     match note_path {
-        NotePath::Note(parser, id) => parse_note_file(parser.as_ref(), contents, *id, false)
-            .ok()
-            .map(|parsed| (parsed.settings, parsed.data)),
-        NotePath::New(parser) => parse_new_note_file(parser.as_ref(), contents, false)
+        NotePath::Note(parser, id) => {
+            parse_note_file(context, parser.as_ref(), contents, *id, false)
+                .ok()
+                .map(|parsed| (parsed.settings, parsed.data))
+        }
+        NotePath::New(parser) => parse_new_note_file(context, parser.as_ref(), contents, false)
             .ok()
             .map(|parsed| (parsed.settings, parsed.data)),
     }
@@ -795,7 +811,7 @@ pub struct AnkiFinishResponse {
 
 /// An accepted push to `anki` that git has not moved the ref for yet. It holds the exclusive notes
 /// lock, so a refresh cannot move `anki` between Anki being written and git moving the ref.
-struct AnkiSession {
+pub(crate) struct AnkiSession {
     id: String,
     old: String,
     new: String,
@@ -804,10 +820,11 @@ struct AnkiSession {
     _guard: NotesGuard,
 }
 
-static ANKI_SESSION: Mutex<Option<AnkiSession>> = Mutex::new(None);
-
-fn anki_session() -> MutexGuard<'static, Option<AnkiSession>> {
-    ANKI_SESSION.lock().unwrap_or_else(|e| e.into_inner())
+/// Runs `f` on the collection's push to `anki`, in its state (`VcsState`).
+fn with_anki_session<T>(f: impl FnOnce(&mut Option<AnkiSession>) -> T) -> T {
+    let state = crate::collection::state();
+    let mut session = crate::collection::lock(&state.vcs.anki_session);
+    f(&mut session)
 }
 
 /// The session id for `post-receive`, which runs in another process than the `update` hook.
@@ -816,11 +833,12 @@ pub fn anki_session_file_path() -> PathBuf {
 }
 
 fn take_anki_session(id: &str) -> Option<AnkiSession> {
-    let mut session = anki_session();
-    if session.as_ref().is_some_and(|s| s.id != id) {
-        return None;
-    }
-    session.take()
+    with_anki_session(|session| {
+        if session.as_ref().is_some_and(|s| s.id != id) {
+            return None;
+        }
+        session.take()
+    })
 }
 
 enum AnkiOutcome {
@@ -840,7 +858,7 @@ pub async fn receive(
 ) -> Result<AnkiReceiveResponse, Error> {
     let guard = exclusive_guard(None).await?;
     // Its own task, so a hook killed mid-request cannot stop writing to Anki halfway.
-    let handle = tokio::spawn(async move {
+    let handle = crate::collection::spawn(async move {
         let outcome = receive_locked(&db, backend.as_ref(), &request)
             .await
             .unwrap_or_else(|e| {
@@ -861,15 +879,17 @@ pub async fn receive(
                 if let Err(e) = std::fs::write(anki_session_file_path(), &id) {
                     log::error!("Failed to write the `anki` push session: {e}");
                 }
-                *anki_session() = Some(AnkiSession {
-                    id: id.clone(),
-                    old: request.old.clone(),
-                    new: request.new.clone(),
-                    hints,
-                    _guard: guard,
+                with_anki_session(|session| {
+                    *session = Some(AnkiSession {
+                        id: id.clone(),
+                        old: request.old.clone(),
+                        new: request.new.clone(),
+                        hints,
+                        _guard: guard,
+                    });
                 });
                 let watchdog_id = id.clone();
-                tokio::spawn(async move {
+                crate::collection::spawn(async move {
                     tokio::time::sleep(WATCHDOG_DELAY).await;
                     if let Some(session) = take_anki_session(&watchdog_id) {
                         log::warn!(
@@ -905,7 +925,8 @@ pub async fn finish(
             changed: false,
         });
     };
-    let handle = tokio::spawn(async move { settle(&db, backend.as_ref(), session).await });
+    let handle =
+        crate::collection::spawn(async move { settle(&db, backend.as_ref(), session).await });
     handle
         .await
         .map_err(|e| Error::NotesVcs(format!("Settling the push failed: {e}")))?
@@ -962,6 +983,7 @@ async fn receive_locked(
     backend: &dyn AnkiBackend,
     request: &AnkiReceiveRequest,
 ) -> Result<AnkiOutcome, Error> {
+    let context = NoteFileContext::default();
     // 1. The hook's repository must be the one this server writes to.
     if let Some(reason) = wrong_repo(&request.repo) {
         return Ok(AnkiOutcome::Rejected(reason));
@@ -1091,9 +1113,11 @@ async fn receive_locked(
             continue;
         }
         let parsed = match &note_path {
-            NotePath::Note(parser, id) => parse_note_file(parser.as_ref(), &blob, *id, false)
-                .map(|parsed| (parsed.settings, parsed.data)),
-            NotePath::New(parser) => parse_new_note_file(parser.as_ref(), &blob, false)
+            NotePath::Note(parser, id) => {
+                parse_note_file(&context, parser.as_ref(), &blob, *id, false)
+                    .map(|parsed| (parsed.settings, parsed.data))
+            }
+            NotePath::New(parser) => parse_new_note_file(&context, parser.as_ref(), &blob, false)
                 .map(|parsed| (parsed.settings, parsed.data)),
         };
         let (settings, data) = match parsed {

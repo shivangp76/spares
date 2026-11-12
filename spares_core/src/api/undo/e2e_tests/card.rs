@@ -681,6 +681,13 @@ async fn e2e_undo_postpone_cards_takes_its_review_log_rows(pool: SqlitePool) {
     .unwrap();
     assert_eq!(due().await, after);
     assert_eq!(reschedules().await, logged, "redo must restore the rows");
+    // As if the redo came a minute later. The rows it restored keep the postponement's time.
+    sqlx::query(
+        "UPDATE event SET created_at = created_at + 60 WHERE id = (SELECT MAX(id) FROM event)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // And again, from the redo
     undo_event(
@@ -1011,7 +1018,9 @@ async fn e2e_daily_unbury_is_skipped_by_plain_undo_and_redo(pool: SqlitePool) {
         .execute(&pool)
         .await
         .unwrap();
-    unbury_cards_and_update_config(&pool).await.unwrap();
+    unbury_cards_and_update_config(&pool, &crate::config::read_external_config().unwrap())
+        .await
+        .unwrap();
     assert_eq!(special_state().await, None);
     let unbury_id: i64 = sqlx::query_scalar("SELECT id FROM event WHERE kind = ?")
         .bind(EventType::DailyUnbury)

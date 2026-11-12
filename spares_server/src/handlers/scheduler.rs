@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::Path;
 use axum::extract::Query;
@@ -14,7 +12,7 @@ use spares_core::api::scheduler::reschedule_scheduler;
 use spares_core::api::scheduler::resolve_rating_from_score;
 use spares_core::schema::review::OptimizeRequest;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 #[derive(Deserialize)]
@@ -29,7 +27,7 @@ pub(crate) async fn list_schedulers_handler() -> impl IntoResponse {
 
 pub(crate) async fn get_scheduler_ratings_handler(
     Path(name): Path<String>,
-    axum::extract::State(_data): axum::extract::State<Arc<AppState>>,
+    Coll(_data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let res = get_scheduler_ratings(name.as_str()).map_err(error_to_response)?;
     Ok(Json(res))
@@ -37,7 +35,7 @@ pub(crate) async fn get_scheduler_ratings_handler(
 
 pub(crate) async fn get_scheduler_states_handler(
     Path(name): Path<String>,
-    axum::extract::State(_data): axum::extract::State<Arc<AppState>>,
+    Coll(_data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let res = get_scheduler_states(name.as_str()).map_err(error_to_response)?;
     Ok(Json(res))
@@ -46,7 +44,7 @@ pub(crate) async fn get_scheduler_states_handler(
 pub(crate) async fn get_rating_from_score_handler(
     Path(name): Path<String>,
     Query(query): Query<ScoreQuery>,
-    axum::extract::State(_data): axum::extract::State<Arc<AppState>>,
+    Coll(_data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if !query.score.is_finite() || !(0.0..=1.0).contains(&query.score) {
         return Err((
@@ -63,7 +61,7 @@ pub(crate) async fn get_rating_from_score_handler(
 
 pub(crate) async fn optimize_scheduler_handler(
     Path(name): Path<String>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<OptimizeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let res = optimize_scheduler(&data.db, name.as_str(), body, Utc::now())
@@ -74,10 +72,10 @@ pub(crate) async fn optimize_scheduler_handler(
 
 pub(crate) async fn reschedule_scheduler_handler(
     Path(name): Path<String>,
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    reschedule_scheduler(&data.db, name.as_str(), Utc::now())
+    let res = reschedule_scheduler(&data.db, name.as_str(), Utc::now())
         .await
         .map_err(error_to_response)?;
-    Ok(StatusCode::OK)
+    Ok(Json(res))
 }

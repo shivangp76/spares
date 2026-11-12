@@ -1,14 +1,9 @@
-use std::sync::Arc;
+// Some handlers have routes only on the server (`route::native_routes`), not in a browser.
+#![cfg_attr(target_family = "wasm", allow(dead_code, unused_imports))]
 
 use axum::Json;
-use axum::body::Body;
-use axum::extract::State;
-use axum::http::Request;
 use axum::http::StatusCode;
-use axum::http::header::AUTHORIZATION;
-use axum::middleware::Next;
 use axum::response::IntoResponse;
-use axum::response::Response;
 use serde_json::Value;
 use serde_json::json;
 use spares_core::Error;
@@ -16,19 +11,24 @@ use spares_core::LibraryError;
 use spares_core::NoteErrorKind;
 use spares_core::TagErrorKind;
 
-use crate::AppState;
-
 pub(crate) mod audio;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod auth;
 pub(crate) mod card;
 pub(crate) mod image;
 pub(crate) mod image_occlusion;
 pub(crate) mod note;
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod notes_vcs;
 pub(crate) mod parser;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod relay;
 pub(crate) mod render_asset;
 pub(crate) mod review;
 pub(crate) mod saved_search;
 pub(crate) mod scheduler;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod share;
 pub(crate) mod sync;
 pub(crate) mod tag;
 pub(crate) mod undo;
@@ -54,6 +54,13 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
                 Json(json!({ "message": reason, "full_sync_required": true })),
             );
         }
+        // The device has to enroll again (`spares_core::sync::devices`).
+        Error::NotEnrolled(replica) => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "message": e.to_string(), "not_enrolled": true, "replica": replica })),
+            );
+        }
         // A search error's message marks the problem in the query, `span` says where it is, and
         // `query_field` which of the request's queries it is in, if it has several.
         Error::Library(LibraryError::Search {
@@ -66,9 +73,13 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
                 Json(json!({ "message": message, "span": span, "query_field": query_field })),
             );
         }
-        Error::Sync(_) | Error::Library(LibraryError::Tag(TagErrorKind::InvalidInput(_))) => {
-            Some(StatusCode::BAD_REQUEST)
-        }
+        // E.g. undoing what has been synced already
+        Error::Sync(_)
+        | Error::Library(
+            LibraryError::Tag(TagErrorKind::InvalidInput(_)) | LibraryError::InvalidConfig(_),
+        ) => Some(StatusCode::BAD_REQUEST),
+        // A host syncing with its upstream
+        Error::SyncUnreachable(_) => Some(StatusCode::BAD_GATEWAY),
         Error::Library(LibraryError::Note(NoteErrorKind::NotFound { .. })) => {
             Some(StatusCode::NOT_FOUND)
         }
@@ -77,30 +88,12 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
     if let Some(status) = status {
         return (status, Json(json!({ "message": e.to_string() })));
     }
+    // The message is for the user, as everywhere else, and the details for the log
+    log::error!("{e:?}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({
-            "message": format!("{:?}", e)
-        })),
+        Json(json!({ "message": e.to_string() })),
     )
-}
-
-pub(crate) async fn require_api_key(
-    State(state): State<Arc<AppState>>,
-    request: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    if let Some(expected) = &state.api_key {
-        let token = request
-            .headers()
-            .get(AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v: &str| v.strip_prefix("Bearer "));
-        if token != Some(expected.as_str()) {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-    }
-    Ok(next.run(request).await)
 }
 
 pub(crate) async fn health_check_handler() -> impl IntoResponse {

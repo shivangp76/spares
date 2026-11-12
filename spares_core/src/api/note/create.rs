@@ -16,7 +16,10 @@ use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::execute_batched_query;
 use crate::api::fetch_review_logs;
 use crate::api::max_rows_for;
+use crate::api::note::CardMove;
 use crate::api::note::basic::fetch_note_snapshot;
+use crate::api::note::check_card_moves;
+use crate::api::note::move_cards;
 use crate::api::parser::get_parser_name;
 use crate::api::placeholders;
 use crate::api::placeholders_2d;
@@ -25,6 +28,7 @@ use crate::api::tag::create_tag;
 use crate::api::tag::restore_tags;
 use crate::api::undo::create_event_group;
 use crate::api::undo::insert_events;
+use crate::api::undo::join_event_group;
 use crate::api::undo::payloads::CardLinks;
 use crate::api::undo::payloads::CreateNotesPayload;
 use crate::api::undo::payloads::CreateTagPayload;
@@ -45,8 +49,9 @@ use crate::model::NoteLink;
 use crate::model::SpecialState;
 use crate::model::TagId;
 use crate::notes_vcs;
+use crate::parsers::CardInheritance;
+use crate::parsers::InheritMode;
 use crate::parsers::Parseable;
-use crate::parsers::ReadableCardIdentifier;
 use crate::parsers::add_order_to_note_data;
 use crate::parsers::extract_and_combine_keywords;
 use crate::parsers::find_parser;
@@ -121,9 +126,13 @@ pub async fn create_notes(
     let mut card_entries = Vec::new();
     // (dst_note_id, dst_order, src_note_id, src_order)
     let mut inherit_entries: Vec<(NoteId, u32, NoteId, usize)> = Vec::new();
+    // `mv:` directives, carried out once the notes' event is logged
+    let mut move_entries: Vec<CardMove> = Vec::new();
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
     // One run of ids for the whole call, so notes created together sort next to each other.
     let note_ids = allocate_note_ids(db, body.requests.len()).await?;
+    // Read once for every note, rather than parsing config.toml again for each
+    let external_config = read_external_config().ok();
     for (create_note_request, note_id) in body.requests.iter().zip(note_ids) {
         let CreateNoteRequest {
             data,
@@ -135,12 +144,30 @@ pub async fn create_notes(
         let mut tags = remove_ancestor_tags(tags);
         tags.sort();
         let custom_data_str = Value::Object(custom_data.clone());
-        let external_config = read_external_config().ok();
         let (note_data, card_datas) = add_order_to_note_data(
             parser.as_ref(),
             data,
             external_config.as_ref().map(|c| &c.overlapper),
         )?;
+        // Check this note's `mv:` directives (with the earlier notes', so no card moves twice)
+        // before anything of it is written
+        let note_moves = card_datas
+            .iter()
+            .enumerate()
+            .filter_map(|(i, card_data)| match card_data.inherit {
+                Some(CardInheritance {
+                    source,
+                    mode: InheritMode::Move,
+                }) => Some((note_id, (i + 1) as u32, source.note_id, source.order)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !note_moves.is_empty() {
+            let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+            let mut moves = move_entries.clone();
+            moves.extend(note_moves);
+            check_card_moves(&mut conn, &moves).await?;
+        }
         // Create note
         sqlx::query(r"INSERT INTO note (id, data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(note_id)
@@ -205,12 +232,12 @@ pub async fn create_notes(
                         }
                     }
                     // Collect inheritance directives for post-creation update
-                    if let Some(ReadableCardIdentifier {
-                        note_id: src_note_id,
-                        order: src_order,
-                    }) = card_data.inherit
-                    {
-                        inherit_entries.push((note_id, order, src_note_id, src_order));
+                    if let Some(CardInheritance { source, mode }) = card_data.inherit {
+                        let entry = (note_id, order, source.note_id, source.order);
+                        match mode {
+                            InheritMode::Copy => inherit_entries.push(entry),
+                            InheritMode::Move => move_entries.push(entry),
+                        }
                     }
                     card
                 })
@@ -270,8 +297,7 @@ pub async fn create_notes(
     // Create card files, without compiling. (There is no point in compiling if the linked notes are not updated.)
     notes_vcs::fill_linked_notes(db, &mut generate_files_requests).await?;
     let created_ids: Vec<NoteId> = generate_files_requests.iter().map(|r| r.note_id).collect();
-    let include_cards =
-        generates_render_files(parser.as_ref(), read_external_config().ok().as_ref());
+    let include_cards = generates_render_files(parser.as_ref(), external_config.as_ref());
     let parse_notes_request = GenerateNoteFilesRequests {
         requests: generate_files_requests,
         overridden_output_raw_dir: None,
@@ -279,6 +305,7 @@ pub async fn create_notes(
         render: false,
         force_render: false,
         precomputed_cards: None,
+        render_states: HashMap::new(),
     };
     let generated = create_note_files_bulk(parser.as_ref(), &parse_notes_request);
     // Commit whatever was written, even if some files failed.
@@ -286,7 +313,9 @@ pub async fn create_notes(
         &notes_vcs::note_rel_paths(parser.get_parser_name(), &created_ids),
         &notes_vcs::commit_message("create", &created_ids),
     );
-    let _card_paths = generated?.into_iter().collect::<Result<Vec<_>, _>>()?;
+    for files in generated? {
+        files.result?;
+    }
 
     // Update config — only invalidate linked-note cache if any note has keywords or note links
     let has_keywords = note_keyword_entries.iter().any(|(_, ks)| !ks.is_empty());
@@ -347,6 +376,12 @@ pub async fn create_notes(
             events.push(note_event);
             event_id = Some(create_event_group(db, events, at).await?);
         }
+    }
+
+    // After the event, which holds the cards as created, so undoing the moves restores them
+    let move_event_id = move_cards(db, &move_entries, at, log).await?;
+    if let (Some(leader), Some(move_event_id)) = (event_id, move_event_id) {
+        join_event_group(db, leader, move_event_id).await?;
     }
 
     Ok(NotesResponse {
@@ -497,7 +532,8 @@ pub(crate) async fn create_notes_event(
 }
 
 /// Gives a recreated card back its reviews, unless another card has them since, and its filtered
-/// tags, those that still exist.
+/// tags, those that still exist. The reviews are sent at the next sync, since the other replicas
+/// unlinked them too if the delete reached them.
 async fn restore_card_links(db: &SqlitePool, links: &CardLinks) -> Result<(), Error> {
     execute_batched_query(
         db,
@@ -505,7 +541,7 @@ async fn restore_card_links(db: &SqlitePool, links: &CardLinks) -> Result<(), Er
         MAX_ROWS_IN_QUERY,
         async |db, chunk| {
             let query_str = format!(
-                "UPDATE review_log SET card_id = ? WHERE id IN ({}) AND card_id IS NULL",
+                "UPDATE review_log SET card_id = ?, usn = -1 WHERE id IN ({}) AND card_id IS NULL",
                 placeholders(chunk.len())
             );
             let mut query = sqlx::query(AssertSqlSafe(query_str)).bind(links.card_id);

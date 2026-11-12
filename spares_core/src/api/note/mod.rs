@@ -4,10 +4,13 @@ mod basic;
 mod create;
 mod delete;
 pub mod export;
+pub mod import;
 mod keyword_distance;
 mod live;
 mod render;
 mod search;
+pub mod share_bundle;
+pub mod shared_media;
 pub(crate) mod update;
 pub use basic::*;
 pub use create::*;
@@ -27,6 +30,7 @@ pub(crate) mod tests {
     use crate::api::note::create_notes;
     use crate::api::note::delete_notes;
     use crate::api::note::update_notes;
+    use crate::api::note::update_notes_batch;
     use crate::api::parser::tests::create_parser_helper;
     use crate::api::tag::create_tag;
     use crate::model::EventType;
@@ -71,6 +75,62 @@ pub(crate) mod tests {
         let create_notes_res =
             create_notes(&pool, request, Utc::now(), &get_all_parsers(), false).await;
         assert!(create_notes_res.is_err());
+    }
+
+    /// A batch updates the notes it changes and leaves alone those it would leave as they are,
+    /// with no undo event and the same `updated_at`, still listing them in its responses.
+    #[sqlx::test]
+    async fn test_update_batch_leaves_unchanged_notes_alone(pool: SqlitePool) -> () {
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let created_at = Utc::now() - chrono::Duration::days(1);
+        let note = |data: &str| CreateNoteRequest {
+            data: data.to_string(),
+            keywords: vec!["kw".to_string()],
+            tags: vec!["a".to_string()],
+            is_suspended: false,
+            custom_data: Map::new(),
+        };
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![note("Same"), note("Before")],
+        };
+        let created = create_notes(&pool, request, created_at, &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let (same, changed) = (created.notes[0].id, created.notes[1].id);
+        let update = |id, data: &str| UpdateNotesRequest {
+            selector: NotesSelector::Ids(vec![id]),
+            parser_id: Some(parser.id),
+            data: Some(data.to_string()),
+            keywords: Some(vec!["kw".to_string()]),
+            tags: UpdateTags::SetTags(vec!["a".to_string()]),
+            custom_data: Some(Map::new()),
+        };
+        let responses = update_notes_batch(
+            &pool,
+            vec![update(same, "Same"), update(changed, "After")],
+            Utc::now(),
+            &get_all_parsers(),
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(responses[0].notes[0].id, same);
+        assert_eq!(responses[0].event_id, None);
+        assert!(responses[1].event_id.is_some());
+        let updated_at = |id| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>("SELECT updated_at FROM note WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(updated_at(same).await, created_at.timestamp());
+        assert!(updated_at(changed).await > created_at.timestamp());
     }
 
     #[sqlx::test]

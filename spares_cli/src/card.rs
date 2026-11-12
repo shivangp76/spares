@@ -10,6 +10,7 @@ use spares_core::schema::card::UpdateCardsRequest;
 use spares_core::schema::card::UpdateCardsResponse;
 use spares_core::schema::review::OptimizeRequest;
 use spares_core::schema::review::OptimizeResponse;
+use spares_core::schema::review::RescheduleResponse;
 use spares_core::schema::review::StudyAction;
 use spares_core::schema::review::SubmitStudyActionRequest;
 use spares_core::search::QueryReturnItemType;
@@ -23,6 +24,7 @@ use crate::args::PostponeArgs;
 use crate::args::RescheduleArgs;
 use crate::args::SearchArgs;
 use crate::args::SpecialStateLocal;
+use crate::args::StepsArgs;
 use crate::card_info::fetch_card_reviews;
 use crate::card_info::print_card_info;
 use crate::history::print_history;
@@ -35,8 +37,10 @@ use crate::search::print_fields;
 use crate::search::search;
 use crate::search::search_cards;
 use crate::statistics::print_statistics;
+use crate::steps::print_steps_stats;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
+use crate::utils::with_spinner;
 use crate::view::view_cards;
 
 #[expect(clippy::too_many_lines)]
@@ -234,21 +238,24 @@ pub(crate) async fn handle(
             yes,
         }) => {
             if !yes {
-                // Unlike advance and postpone, a reschedule is not recorded as an event.
-                let prompt = "This recomputes the memory state and due date of every card, including suspended and buried ones, and cannot be undone. Are you sure you want to continue?";
+                let prompt = "This recomputes the memory state and due date of every card, including suspended and buried ones. Are you sure you want to continue?";
                 let ans = Confirm::new(prompt).with_default(false).prompt();
                 if !ans.unwrap_or(false) {
                     return Ok(());
                 }
             }
             let url = format!("{}/api/scheduler/{}/reschedule", base_url, scheduler_name);
-            let response = client
-                .post(&url)
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let _ = ensure_ok(response).await?;
-            println!("Rescheduled all cards.");
+            let rescheduled: RescheduleResponse = with_spinner("Rescheduling cards", async {
+                let response = client
+                    .post(&url)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let response = ensure_ok(response).await?;
+                response.json().await.map_err(|e| miette!("{}", e))
+            })
+            .await?;
+            print_rescheduled(rescheduled.event_id);
         }
         CardCommands::Optimize(OptimizeArgs {
             scheduler_name,
@@ -256,24 +263,31 @@ pub(crate) async fn handle(
             yes,
         }) => {
             if apply && !yes {
-                let prompt = "If the optimized parameters are better, this saves them to the config and recomputes the memory state and due date of every card, which cannot be undone. Are you sure you want to continue?";
+                let prompt = "If the optimized parameters are better, this saves them to the config and recomputes the memory state and due date of every card. Are you sure you want to continue?";
                 let ans = Confirm::new(prompt).with_default(false).prompt();
                 if !ans.unwrap_or(false) {
                     return Ok(());
                 }
             }
-            println!("Optimizing. This can take a minute on a large collection.");
             let url = format!("{}/api/scheduler/{}/optimize", base_url, scheduler_name);
-            let response = client
-                .post(&url)
-                .json(&OptimizeRequest { apply })
-                .send()
-                .await
-                .map_err(|e| miette!("{}", e))?;
-            let response = ensure_ok(response).await?;
-            let optimized: OptimizeResponse =
-                response.json().await.map_err(|e| miette!("{}", e))?;
+            let optimized: OptimizeResponse = with_spinner(
+                "Optimizing. This can take a minute on a large collection.",
+                async {
+                    let response = client
+                        .post(&url)
+                        .json(&OptimizeRequest { apply })
+                        .send()
+                        .await
+                        .map_err(|e| miette!("{}", e))?;
+                    let response = ensure_ok(response).await?;
+                    response.json().await.map_err(|e| miette!("{}", e))
+                },
+            )
+            .await?;
             print_optimize_response(&optimized, apply);
+        }
+        CardCommands::Steps(args @ StepsArgs { .. }) => {
+            print_steps_stats(args, base_url, client).await?;
         }
         CardCommands::Forget(ForgetCardArgs { ids, query }) => {
             let card_ids = if let Some(ids_vec) = ids {
@@ -327,6 +341,17 @@ pub(crate) async fn handle(
     Ok(())
 }
 
+/// Says that every card was rescheduled, and how to undo it.
+fn print_rescheduled(event_id: Option<i64>) {
+    match event_id {
+        // An automatic event: a plain `spares event undo` skips it
+        Some(id) => println!(
+            "Rescheduled all cards. `spares event undo {id}` restores their previous schedule."
+        ),
+        None => println!("Rescheduled all cards. None of them changed."),
+    }
+}
+
 fn print_optimize_response(response: &OptimizeResponse, apply: bool) {
     println!(
         "Fitted to {} reviews of {} cards. Lower is better:",
@@ -353,7 +378,8 @@ fn print_optimize_response(response: &OptimizeResponse, apply: bool) {
     println!("\nfsrs_parameters = [{}]\n", parameters);
     let better = response.optimized.log_loss < response.current.log_loss;
     if response.applied {
-        println!("Saved the optimized parameters to the config and rescheduled all cards.");
+        println!("Saved the optimized parameters to the config.");
+        print_rescheduled(response.event_id);
     } else if !better {
         println!(
             "Kept the current parameters: the optimized ones do not predict your reviews better."

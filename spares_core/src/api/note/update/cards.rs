@@ -11,6 +11,7 @@ use crate::CardErrorKind;
 use crate::Error;
 use crate::LibraryError;
 use crate::api::MAX_ROWS_IN_QUERY;
+use crate::api::note::CardMove;
 use crate::api::note::apply_srs_inheritance_on;
 use crate::api::note::copy_review_logs_on;
 use crate::api::note::create_cards_on;
@@ -22,9 +23,10 @@ use crate::model::CardId;
 use crate::model::NoteId;
 use crate::model::SpecialState;
 use crate::parsers::CardData;
+use crate::parsers::CardInheritance;
 use crate::parsers::ClozeUid;
+use crate::parsers::InheritMode;
 use crate::parsers::MatchCardsResult;
-use crate::parsers::ReadableCardIdentifier;
 use crate::parsers::match_cards;
 
 /// Works out, for each new card, which old card it continues — the input `match_cards` needs to
@@ -38,7 +40,10 @@ use crate::parsers::match_cards;
 ///
 /// Positional matching remains the fallback for notes whose cards carry no uid (notes predating uid
 /// minting, and CLI-block cards).
-fn resolve_previous_orders(old_cards: &[CardData], new_cards: &[CardData]) -> Vec<Option<usize>> {
+pub(super) fn resolve_previous_orders(
+    old_cards: &[CardData],
+    new_cards: &[CardData],
+) -> Vec<Option<usize>> {
     // With no old cards there is nothing to continue, so every new card is created. The submitted
     // `o:` markers cannot refer to anything here; live notes are submitted with positional orders,
     // so trusting them would make a note's first cloze claim an old card `1` that does not exist.
@@ -78,7 +83,7 @@ pub(super) async fn update_cards(
     new_cards: &[CardData],
     note_id: NoteId,
     at: DateTime<Utc>,
-) -> Result<(), Error> {
+) -> Result<Vec<CardMove>, Error> {
     // Line up cards
     // The card's id in the database cannot change since they are referred to in `review_log`.
     let old_cards_orders = old_cards.iter().map(|x| x.order).collect::<Vec<_>>();
@@ -356,23 +361,29 @@ pub(super) async fn update_cards(
         .collect::<Result<Vec<_>, _>>()?;
     create_cards_on(&mut *conn, &new_cards_created).await?;
 
-    // Apply SRS inheritance for newly created cards that carried `inh:NOTE_ID/ORDER`
-    let inherit_entries: Vec<(NoteId, u32, NoteId, usize)> = new_cards_created
-        .iter()
-        .filter_map(|card| {
-            let card_data = new_card_data_ref.get(card.order as usize - 1)?;
-            let ReadableCardIdentifier {
-                note_id: src_note_id,
-                order: src_order,
-            } = card_data.inherit?;
-            Some((note_id, card.order, src_note_id, src_order))
-        })
-        .collect();
+    // Apply SRS inheritance for newly created cards that carried `inh:NOTE_ID/ORDER`, and
+    // collect those that carried `mv:NOTE_ID/ORDER`, which the caller carries out once the
+    // update's event is logged
+    let mut inherit_entries: Vec<(NoteId, u32, NoteId, usize)> = Vec::new();
+    let mut move_entries: Vec<CardMove> = Vec::new();
+    for card in &new_cards_created {
+        let Some(card_data) = new_card_data_ref.get(card.order as usize - 1) else {
+            continue;
+        };
+        let Some(CardInheritance { source, mode }) = card_data.inherit else {
+            continue;
+        };
+        let entry = (note_id, card.order, source.note_id, source.order);
+        match mode {
+            InheritMode::Copy => inherit_entries.push(entry),
+            InheritMode::Move => move_entries.push(entry),
+        }
+    }
     apply_srs_inheritance_on(&mut *conn, &inherit_entries).await?;
     if AUTO_FIX_MISSING_CARDS {
         verify_card_consistency(&mut *conn, note_id, new_card_data_ref, at).await?;
     }
-    Ok(())
+    Ok(move_entries)
 }
 
 /// Ensures the set of cards in the database exactly matches what the parser

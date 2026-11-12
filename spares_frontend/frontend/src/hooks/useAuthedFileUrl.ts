@@ -1,14 +1,21 @@
-import { useEffect, useState } from 'react';
-import { fetchFile } from '../api/client';
-import { errorMessage } from '../utils';
+import { useEffect, useState } from "react";
+import { fetchFile } from "../api/client";
+import { errorMessage } from "../utils";
 
-interface Loaded { key: string; url: string | null; error: string | null }
+interface Loaded {
+  key: string;
+  url: string | null;
+  error: string | null;
+}
 
 /**
- * An object URL for a rendered file, for elements like `<embed>` that cannot send the API key.
+ * An object URL for a rendered file, fetched like other requests (from this device's copy when it keeps one), for elements like `<embed>`.
  * Changing `version` refetches the file, e.g. after it was regenerated.
  */
-export function useAuthedFileUrl(path: string, version?: number): { url: string | null; error: string | null } {
+export function useAuthedFileUrl(
+  path: string,
+  version?: number,
+): { url: string | null; error: string | null } {
   const key = `${path}?v=${version}`;
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
@@ -16,12 +23,14 @@ export function useAuthedFileUrl(path: string, version?: number): { url: string 
     let cancelled = false;
     let objectUrl: string | null = null;
     fetchFile(path)
-      .then(blob => {
+      .then((blob) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);
         setLoaded({ key, url: objectUrl, error: null });
       })
-      .catch(e => { if (!cancelled) setLoaded({ key, url: null, error: errorMessage(e) }); });
+      .catch((e) => {
+        if (!cancelled) setLoaded({ key, url: null, error: errorMessage(e) });
+      });
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);

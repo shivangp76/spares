@@ -59,11 +59,24 @@ pub async fn get_card(db: &SqlitePool, id: CardId) -> Result<CardResponse, Error
 
 /// The card's review log, oldest first, including forget markers and crams. Each entry carries the
 /// memory state the card had after it, replayed with the scheduler's current parameters. A cram
-/// leaves the memory state as it was, so it carries the same one as the row before it.
+/// leaves the memory state as it was, so it carries the same one as the row before it. Times are
+/// capped by [`SparesExternalConfig::maximum_answer_time`] when it is set, as statistics count them.
 pub async fn get_card_reviews(
     db: &SqlitePool,
     card_id: CardId,
 ) -> Result<Vec<CardReviewEntry>, Error> {
+    let config = read_external_config()?;
+    let entry = |review_log: crate::model::ReviewLog, memory_state, lapse| {
+        let mut entry = CardReviewEntry::new(review_log, memory_state, lapse);
+        if entry.recall_duration.is_some() || entry.rate_duration.is_some() {
+            let seconds = |d: Option<i64>| chrono::Duration::seconds(d.unwrap_or(0));
+            let (recall, rate) = config
+                .cap_answer_time(seconds(entry.recall_duration), seconds(entry.rate_duration));
+            entry.recall_duration = entry.recall_duration.map(|_| recall.num_seconds());
+            entry.rate_duration = entry.rate_duration.map(|_| rate.num_seconds());
+        }
+        entry
+    };
     let card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
         .fetch_one(db)
@@ -86,12 +99,11 @@ pub async fn get_card_reviews(
             .into_iter()
             .map(|review_log| {
                 let lapse = lapses.contains(&review_log.id);
-                CardReviewEntry::new(review_log, None, lapse)
+                entry(review_log, None, lapse)
             })
             .collect());
     };
     let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
-    let config = read_external_config()?;
     // With the steps of the card's preset, as it was rated with
     let configs = CardConfigs::load(db, &config, Some(&[card_id])).await?;
     let history = scheduler.memory_state_history(
@@ -106,7 +118,7 @@ pub async fn get_card_reviews(
             let memory_state =
                 (card.state != NEW_CARD_STATE).then_some((card.stability, card.difficulty));
             let lapse = lapses.contains(&review_log.id);
-            CardReviewEntry::new(review_log, memory_state, lapse)
+            entry(review_log, memory_state, lapse)
         })
         .collect())
 }
@@ -215,6 +227,7 @@ pub async fn update_cards(
             SpecialStateUpdate::BuriedUntilLaterToday => SpecialState::BuriedUntilLaterToday,
         })
     });
+    let mut config = None;
     for card_id in card_ids {
         let existing_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
             .bind(card_id)
@@ -257,8 +270,12 @@ pub async fn update_cards(
             if let Some(latest_review) = review_logs.iter().rev().find(|rl| rl.is_review()) {
                 let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
 
-                let config = read_external_config()?;
-                let configs = CardConfigs::load(db, &config, Some(&[updated_card.id])).await?;
+                // Read once for all of the cards, rather than parsing config.toml for each
+                if config.is_none() {
+                    config = Some(read_external_config()?);
+                }
+                let config = config.as_ref().expect("read above");
+                let configs = CardConfigs::load(db, config, Some(&[updated_card.id])).await?;
                 // Reschedule card
                 scheduler
                     .reschedule(db, &configs, vec![(updated_card.clone(), review_logs)], at)
@@ -1170,9 +1187,8 @@ mod forget_tests {
 
     #[sqlx::test]
     async fn review_history_counts_reviews_per_day(pool: SqlitePool) {
-        use chrono::Local;
-
         use crate::api::statistics::get_review_history;
+        use crate::helpers::study_date;
         use crate::schema::review::ReviewHistoryRequest;
 
         let card_id = create_single_card(&pool).await;
@@ -1186,7 +1202,8 @@ mod forget_tests {
         let history = get_review_history(&pool, ReviewHistoryRequest::default())
             .await
             .unwrap();
-        let local_date = |at: DateTime<Utc>| at.with_timezone(&Local).date_naive();
+        let local_date = |at: DateTime<Utc>| study_date(at, crate::api::queue::tests::zone());
+        assert_eq!(history.today, Some(local_date(Utc::now())));
         assert_eq!(history.review_count_by_date.len(), 2);
         assert_eq!(history.review_count_by_date[&local_date(earlier)], 1);
         // Forgetting is not a review

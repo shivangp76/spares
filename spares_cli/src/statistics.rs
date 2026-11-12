@@ -388,8 +388,10 @@ pub(crate) fn format_statistics(fetched: &Fetched, sections: &[Section], width: 
             Section::Calendar => {
                 if let Some(history) = &fetched.history {
                     write_title(&mut out, "Calendar");
-                    let today =
-                        graphs.map_or_else(|| chrono::Local::now().date_naive(), |g| g.date);
+                    let today = graphs
+                        .map(|g| g.date)
+                        .or(history.today)
+                        .unwrap_or_else(|| chrono::Local::now().date_naive());
                     out.push_str(&format_history(
                         &history.review_count_by_date,
                         &history.cram_count_by_date,
@@ -951,6 +953,21 @@ fn write_distributions(out: &mut String, graphs: &StatisticsGraphsResponse, widt
             writeln!(out, "Estimated total knowledge {knowledge:.0} cards\n").unwrap();
         }
     }
+    // Over the cards in review only, unlike the histograms' averages
+    writeln!(out, "Cards in review").unwrap();
+    writeln!(
+        out,
+        "  daily load       {} reviews a day",
+        format_mean(distributions.daily_load)
+    )
+    .unwrap();
+    if let Some(recall) = distributions.average_retrievability {
+        writeln!(out, "  retrievability   {:.0}%", recall * 100.0).unwrap();
+    }
+    if let Some(stability) = distributions.average_stability {
+        writeln!(out, "  stability        {} days", format_mean(stability)).unwrap();
+    }
+    out.push('\n');
 }
 
 #[cfg(test)]
@@ -1121,6 +1138,9 @@ mod tests {
                 difficulty: Histogram::default(),
                 retrievability: None,
                 total_knowledge: None,
+                daily_load: 0.35,
+                average_retrievability: Some(0.874),
+                average_stability: Some(12.25),
             },
         }
     }
@@ -1258,6 +1278,11 @@ No cards.
 
 Difficulty
 No cards.
+
+Cards in review
+  daily load       0.35 reviews a day
+  retrievability   87%
+  stability        12.25 days
 
 --- Scheduling ---
 Safe to advance   4

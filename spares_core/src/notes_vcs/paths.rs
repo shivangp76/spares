@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::config::get_cache_dir;
 use crate::config::get_data_dir;
 use crate::config::is_test_mode;
 use crate::model::NoteId;
@@ -10,18 +9,15 @@ use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_output_raw_dir;
 
-/// Name of the server copy of the notes repository, relative to the data directory.
-pub const SERVER_REPO_DIR_NAME: &str = "notes-spares";
-
-/// The server copy of the notes repository, whether or not it exists.
+/// The server copy of the current collection's notes repository, whether or not it exists.
 pub fn server_repo_dir() -> PathBuf {
-    get_data_dir().join(SERVER_REPO_DIR_NAME)
+    crate::collection::paths().notes_repo.clone()
 }
 
 /// Whether notes are kept in a git repository that users push to. Without it, notes are written to
-/// the user-facing directory as before.
+/// the user-facing directory as before. Never in a browser, which has neither files nor git.
 pub fn enabled() -> bool {
-    !is_test_mode() && server_repo_dir().join(".git").exists()
+    !cfg!(target_family = "wasm") && !is_test_mode() && server_repo_dir().join(".git").exists()
 }
 
 /// The directory the server writes raw note files to. Readers that show paths to users use
@@ -107,36 +103,6 @@ pub fn parse_new_note_rel_path(rel_path: &Path) -> Option<Box<dyn Parseable>> {
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
     (valid && extension == parser.file_extension()).then_some(parser)
-}
-
-/// Holds `blake3` of the raw file a note was last compiled from. In the notes repository, raw files
-/// do not carry their hash (see [`crate::parsers::generate_files::file_in_cache`]).
-pub fn render_hash_path(parser_name: &str, note_id: NoteId) -> PathBuf {
-    get_cache_dir()
-        .join("note-hashes")
-        .join(parser_name)
-        .join(note_id.letters())
-}
-
-pub fn read_render_hash(parser_name: &str, note_id: NoteId) -> Option<String> {
-    std::fs::read_to_string(render_hash_path(parser_name, note_id))
-        .ok()
-        .map(|s| s.trim().to_string())
-}
-
-pub fn write_render_hash(parser_name: &str, note_id: NoteId, hash: &str) {
-    let path = render_hash_path(parser_name, note_id);
-    let result = path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| std::fs::write(&path, hash));
-    if let Err(e) = result {
-        log::warn!("Failed to write {}: {e}", path.display());
-    }
-}
-
-pub fn remove_render_hash(parser_name: &str, note_id: NoteId) {
-    let _ = std::fs::remove_file(render_hash_path(parser_name, note_id));
 }
 
 #[cfg(test)]

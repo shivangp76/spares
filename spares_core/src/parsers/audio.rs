@@ -37,8 +37,9 @@
 //!
 //! In the web app, clicking an audio link inside the card also plays it. If the browser blocks
 //! autoplay before the page has been used, a Play button appears instead. Clips are fetched from
-//! the server's render assets: rendering a note records its clips, and `spares sync cloud` sends
-//! them, like the other files notes read. Clips are downloaded with the cards for offline review.
+//! the server's render assets: rendering a note records its clips, the sync gives the server the
+//! clips themselves, and the server stores them as render assets when first asked for one. A
+//! device that keeps a copy of the collection downloads them with its other files.
 //! `spares card review` plays clips with
 //! [`audio_player`](crate::config::SparesExternalConfig::audio_player).
 //!
@@ -59,6 +60,7 @@ use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::NotePart;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
+use crate::parsers::SettingsSyntax;
 use crate::parsers::get_settings_pairs;
 use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 use crate::parsers::tts::TtsSetting;
@@ -82,6 +84,19 @@ pub struct AudioRef {
     pub range: Range<usize>,
     /// As written in the link.
     pub path: String,
+}
+
+impl AudioRef {
+    /// Whether the path is absolute, which a clip's must be. A device (wasm) has notes from the
+    /// laptop or the server, whose paths are Unix ones, which `Path::is_absolute` doesn't know of
+    /// there.
+    pub fn is_absolute(&self) -> bool {
+        if cfg!(target_family = "wasm") {
+            self.path.starts_with('/')
+        } else {
+            Path::new(&self.path).is_absolute()
+        }
+    }
 }
 
 /// Something a client plays for a card: an audio clip, or text to speak (see [`super::tts`]).
@@ -211,7 +226,7 @@ pub fn card_audio(
     let mut back: Vec<(usize, AudioItem)> = Vec::new();
     let audio_refs = parser.audio_refs(&note_data);
     for audio_ref in &audio_refs {
-        if !Path::new(&audio_ref.path).is_absolute() {
+        if !audio_ref.is_absolute() {
             continue;
         }
         let Some(is_back) = side_at(audio_ref.range.start) else {
@@ -282,7 +297,7 @@ fn speech_runs(
                 &cloze.settings_match,
                 settings_delim,
                 settings_key_value_delim,
-                true,
+                SettingsSyntax::Cloze,
             )
             .into_iter()
             .filter_map(Result::ok)

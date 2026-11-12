@@ -4,9 +4,11 @@ use crate::adapters::get_adapter_from_string;
 use crate::parsers::BackReveal;
 use crate::parsers::BackType;
 use crate::parsers::CardData;
+use crate::parsers::CardInheritance;
 use crate::parsers::ClozeGrouping;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::FrontConceal;
+use crate::parsers::InheritMode;
 use crate::parsers::NotePart;
 use crate::parsers::Parseable;
 use crate::parsers::ReadableCardIdentifier;
@@ -667,9 +669,12 @@ fn test_get_cards_inherit_basic() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             type_answer: None,
-            inherit: Some(ReadableCardIdentifier {
-                note_id: "dt".parse().unwrap(),
-                order: 1,
+            inherit: Some(CardInheritance {
+                source: ReadableCardIdentifier {
+                    note_id: "dt".parse().unwrap(),
+                    order: 1,
+                },
+                mode: InheritMode::Copy,
             }),
             cloze_uid: None,
             data: vec![
@@ -683,6 +688,40 @@ fn test_get_cards_inherit_basic() {
             ],
         }];
         assert_eq!(cards, expected);
+    }
+}
+
+#[test]
+fn test_get_cards_move() {
+    // `mv:NOTE_ID/ORDER` takes the same source as `inh:` but moves the card, and is stripped too.
+    let data = r"{{[o:1;mv:dt/2]b}}";
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let cards = get_cards(parser.as_ref(), None, data, false, MOVE_FILES).unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(
+        cards[0].inherit,
+        Some(CardInheritance {
+            source: ReadableCardIdentifier {
+                note_id: "dt".parse().unwrap(),
+                order: 2,
+            },
+            mode: InheritMode::Move,
+        })
+    );
+    assert_eq!(
+        cards[0].data[0],
+        NotePart::ClozeStart("{{[o:1]".to_string())
+    );
+}
+
+#[test]
+fn test_get_cards_inherit_and_move_are_exclusive() {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    for data in [r"{{[inh:dt/1;mv:dt/2]b}}", r"{{[mv:dt/1;mv:dt/2]b}}"] {
+        assert!(
+            get_cards(parser.as_ref(), None, data, false, MOVE_FILES).is_err(),
+            "{data}"
+        );
     }
 }
 
@@ -704,9 +743,12 @@ fn test_get_cards_inherit_with_order() {
             back_emphasis: false,
             back_type: BackType::NoteFilePath,
             type_answer: None,
-            inherit: Some(ReadableCardIdentifier {
-                note_id: "gir".parse().unwrap(),
-                order: 2,
+            inherit: Some(CardInheritance {
+                source: ReadableCardIdentifier {
+                    note_id: "gir".parse().unwrap(),
+                    order: 2,
+                },
+                mode: InheritMode::Copy,
             }),
             cloze_uid: None,
             data: vec![
@@ -720,16 +762,6 @@ fn test_get_cards_inherit_with_order() {
         }];
         assert_eq!(cards, expected);
     }
-}
-
-#[test]
-fn test_get_cards_inherit_numeric_note_id() {
-    // Old numeric note ids are rejected, with a hint to look them up.
-    let data = r"{{[inh:99/3]b}}";
-    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
-    let cards_res = get_cards(parser.as_ref(), None, data, false, MOVE_FILES);
-    let err = format!("{:?}", cards_res.unwrap_err());
-    assert!(err.contains("id-map.tsv"), "got: {err}");
 }
 
 #[test]
@@ -933,4 +965,70 @@ fn test_get_notes_type_answer_shortcut() {
             .to_string()
             .contains("Failed to parse type answer")
     );
+}
+
+/// Writes `data` back twice and checks that the first pass gives `expected` and the second
+/// changes nothing
+fn assert_settings_rewrite_to(data: &str, expected: &str) {
+    let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
+    let (new_data, _) =
+        crate::parsers::add_order_to_note_data(parser.as_ref(), data, None).unwrap();
+    assert_eq!(new_data, expected);
+    let (newer_data, _) =
+        crate::parsers::add_order_to_note_data(parser.as_ref(), &new_data, None).unwrap();
+    assert_eq!(newer_data, expected);
+}
+
+#[test]
+fn test_front_conceal_all_keeps_other_groupings() {
+    // A cloze is only hidden in the card of `d`, so it used to lose its `g:` key: `c` was made a
+    // card of its own, and with `b` alone in grouping 2 too, the note could not be read again
+    assert_settings_rewrite_to(
+        r"{{[g:2]a}} {{[f:all]b}} {{[g:2]c}}",
+        r"{{[g:2;o:1]a}} {{[o:2;f:all]b}} {{[g:2]c}}",
+    );
+    assert_settings_rewrite_to(
+        r"{{a}} {{[g:1,2]b}} {{[g:2]c}} {{[f:all]d}}",
+        r"{{[o:1]a}} {{[g:1;o:2; g:2;o:3]b}} {{[g:2]c}} {{[o:4;f:all]d}}",
+    );
+}
+
+#[test]
+fn test_front_conceal_all_hides_a_cloze_once() {
+    // Each cloze of a card with `f:all` hid the other clozes, so once the setting was written on
+    // each of them, a card had a cloze several times, and the note's text did too
+    assert_settings_rewrite_to(
+        r"{{a}} {{[g:*;f:all]b}} {{c}}",
+        r"{{[o:1;f:all]a}} {{[g:*;f:all]b}} {{[o:2;f:all]c}}",
+    );
+    let parser = MarkdownParser::new();
+    let cards = get_cards(
+        &parser,
+        None,
+        r"{{[o:1;f:all]a}} {{[g:*;f:all]b}} {{[o:2;f:all]c}}",
+        true,
+        false,
+    )
+    .unwrap();
+    for card in cards {
+        let clozes = card
+            .data
+            .iter()
+            .filter(|part| matches!(part, NotePart::ClozeData(..)))
+            .count();
+        assert_eq!(clozes, 3, "{:?}", card.data);
+    }
+}
+
+#[test]
+fn test_back_emphasis_value() {
+    // `be:false` is written back for a cloze that turns emphasis off, but was read as `be:`
+    let parser = MarkdownParser::new();
+    let emphasis =
+        |data: &str| get_cards(&parser, None, data, false, false).unwrap()[0].back_emphasis;
+    assert!(emphasis(r"{{[be:]a}}"));
+    assert!(emphasis(r"{{[be:true]a}}"));
+    assert!(!emphasis(r"{{[be:false]a}}"));
+    assert!(!emphasis(r"{{[be:n]a}}"));
+    assert_settings_rewrite_to(r"{{[be:false]a}}", r"{{[o:1]a}}");
 }

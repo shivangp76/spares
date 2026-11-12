@@ -1,25 +1,26 @@
-use std::sync::Arc;
-
 use axum::Json;
+use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use spares_core::api::undo::get_latest_note_event_id;
 use spares_core::api::undo::group_events;
+use spares_core::api::undo::list_events;
 use spares_core::api::undo::redo_event;
 use spares_core::api::undo::undo_event;
 use spares_core::notes_vcs::run_exclusive;
 use spares_core::schema::undo::GroupEventsRequest;
 use spares_core::schema::undo::LatestEventResponse;
+use spares_core::schema::undo::ListEventsRequest;
 use spares_core::schema::undo::RedoEventRequest;
 use spares_core::schema::undo::RedoEventResponse;
 use spares_core::schema::undo::UndoEventRequest;
 use spares_core::schema::undo::UndoEventResponse;
 
-use crate::AppState;
+use crate::Coll;
 use crate::handlers::error_to_response;
 
 pub(crate) async fn get_latest_note_event_id_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let latest_event_id = get_latest_note_event_id(&data.db)
         .await
@@ -27,8 +28,19 @@ pub(crate) async fn get_latest_note_event_id_handler(
     Ok(Json(LatestEventResponse { latest_event_id }))
 }
 
+/// `GET /api/events?before=&limit=&ratings=`: a page of the history of changes, newest first.
+pub(crate) async fn list_events_handler(
+    Coll(data): Coll,
+    Query(request): Query<ListEventsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let entries = list_events(&data.db, request)
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(entries))
+}
+
 pub(crate) async fn undo_event_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<UndoEventRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -40,7 +52,7 @@ pub(crate) async fn undo_event_handler(
 }
 
 pub(crate) async fn redo_event_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<RedoEventRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();
@@ -52,7 +64,7 @@ pub(crate) async fn redo_event_handler(
 }
 
 pub(crate) async fn group_events_handler(
-    axum::extract::State(data): axum::extract::State<Arc<AppState>>,
+    Coll(data): Coll,
     Json(body): Json<GroupEventsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = data.db.clone();

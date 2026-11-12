@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use chrono::NaiveDate;
 use chrono::Utc;
@@ -16,7 +17,9 @@ use sqlx::SqlitePool;
 
 use crate::LibraryError;
 use crate::api::queue::waiting_on_links;
+use crate::api::statistics::local_time::Zone;
 use crate::config::QueueConfig;
+use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::helpers::get_or_compile_regex;
 use crate::helpers::get_start_end_local_date;
@@ -973,7 +976,7 @@ impl Field {
                     special_state(crate::model::SpecialState::SchedulerBuried)
                 }
                 CardField::WaitingOnLinks => {
-                    unreachable!("needs the config, see `waiting_on_links_sql`")
+                    unreachable!("needs the config, see `evaluate_comparison`")
                 }
                 CardField::Leech => unreachable!("needs the config, see `leech_sql`"),
                 CardField::State => with_op("c.state"),
@@ -1216,6 +1219,9 @@ struct EvaluationContext {
     scope_clause: Option<String>,
     /// The words results are ranked by, for [`relevance_cte`].
     relevance_match: Option<String>,
+    /// `config.toml`, read the first time a comparison needs it and shared with the children, so
+    /// that a query comparing several such fields reads it once
+    config: Arc<OnceLock<Result<SparesExternalConfig, String>>>,
 }
 
 impl EvaluationContext {
@@ -1233,12 +1239,28 @@ impl EvaluationContext {
             output_type,
             scope_clause,
             relevance_match: None,
+            config: Arc::default(),
         }
+    }
+
+    /// The zone days are told apart in. See [`Zone::from_config`].
+    fn zone(&self) -> Result<Zone, Error> {
+        Ok(Zone::from_config(self.config()?))
+    }
+
+    fn config(&self) -> Result<&SparesExternalConfig, Error> {
+        self.config
+            .get_or_init(|| read_external_config().map_err(|e| e.to_string()))
+            .as_ref()
+            .map_err(|e| miette!("{e}"))
     }
 
     /// A fresh context for evaluating a subtree of this one's expression.
     fn child(&self) -> Self {
-        Self::new(self.output_type, self.scope_clause.clone())
+        Self {
+            config: Arc::clone(&self.config),
+            ..Self::new(self.output_type, self.scope_clause.clone())
+        }
     }
 
     /// Compiles this context, which holds an `or` branch that set its own `limit`, into an
@@ -1841,7 +1863,7 @@ fn evaluate_comparison(
         && RelativeDate::starts_with_word_anchor(s)
     {
         let date = RelativeDate::parse(s)?;
-        value_context.params = vec![date.to_sql()];
+        value_context.params = vec![date.to_sql(context.zone()?)];
         value_type = FieldType::DateTime;
         relative_date = Some(date);
     }
@@ -1888,21 +1910,34 @@ fn evaluate_comparison(
                 op
             ));
         }
-        (_, _, Some((start, months))) => Some((
-            local_month_start_sql(start, 0),
-            local_month_start_sql(start, months),
-        )),
+        (_, _, Some((start, months))) => {
+            let zone = context.zone()?;
+            Some((
+                local_month_start_sql(start, 0, zone),
+                local_month_start_sql(start, months, zone),
+            ))
+        }
         (TokenTree::Atom(Atom::Date(date), _), _, _)
             if matches!(field_type, FieldType::DateTime) =>
         {
-            Some((local_day_start_sql(*date, 0), local_day_start_sql(*date, 1)))
+            let zone = context.zone()?;
+            Some((
+                local_day_start_sql(*date, 0, zone),
+                local_day_start_sql(*date, 1, zone),
+            ))
         }
         (TokenTree::Atom(Atom::Date(date), _), _, _) => {
             value_context.params = vec![date.to_string()];
             value_type = FieldType::String;
             None
         }
-        (_, Some(date), _) => date.next_day().map(|next| (date.to_sql(), next.to_sql())),
+        (_, Some(date), _) => match date.next_day() {
+            Some(next) => {
+                let zone = context.zone()?;
+                Some((date.to_sql(zone), next.to_sql(zone)))
+            }
+            None => None,
+        },
         _ => None,
     };
 
@@ -2048,9 +2083,11 @@ fn evaluate_comparison(
                 } else if matches!(field, Field::Card(CardField::Retrievability))
                     && let Ok(value) = value_param.parse::<f64>()
                 {
-                    value_context.params.push(retrievability_sql(|key| {
-                        format!("{} {}", key.sql, key_bound(op, value, &key.at))
-                    })?);
+                    value_context.params.push(retrievability_key_sql(
+                        context.config()?,
+                        &retrievability_elapsed_sql(),
+                        |key| format!("{} {}", key.sql, key_bound(op, value, &key.at)),
+                    ));
                 } else if matches!(field_type, FieldType::Float)
                     && matches!(op, Op::Equal)
                     && let Ok(value) = value_param.parse::<f64>()
@@ -2119,8 +2156,11 @@ fn evaluate_comparison(
         .map_err(|e| label_error(e, value.span(), &format!("not {}", field_type.describe())))?;
 
     let sql_condition = match field {
-        Field::Card(CardField::WaitingOnLinks) => waiting_on_links_sql(&value_str)?,
-        Field::Card(CardField::Leech) => leech_sql(&value_str)?,
+        Field::Card(CardField::WaitingOnLinks) => {
+            let config = context.config()?;
+            waiting_on_links_condition(&config.queue, Zone::from_config(config), &value_str)
+        }
+        Field::Card(CardField::Leech) => leech_sql(context.config()?, &value_str),
         _ => field.to_sql_str(&value_str)?,
     };
     context.add_where_clause(sql_condition);
@@ -2153,17 +2193,14 @@ pub(crate) fn lapses_sql() -> String {
 /// The SQL of `c.leech` compared with `value_str`: whether the card lapsed at least
 /// [`crate::config::LeechConfig::lapses_threshold`] times, the cards
 /// [`crate::schedulers::SrsScheduler::get_leeches`] lists, and the suspended and buried ones too.
-fn leech_sql(value_str: &str) -> Result<String, Error> {
-    let threshold = read_external_config()
-        .map_err(|e| miette!("{e}"))?
-        .leech
-        .lapses_threshold;
+fn leech_sql(config: &SparesExternalConfig, value_str: &str) -> String {
+    let threshold = config.leech.lapses_threshold;
     let leech = format!("{} >= {threshold}", lapses_sql());
-    Ok(if value_str.contains("false") {
+    if value_str.contains("false") {
         format!("NOT ({leech})")
     } else {
         format!("({leech})")
-    })
+    }
 }
 
 /// Days from the card's last review to when it is due, as in statistics, or NULL for a new card.
@@ -2179,11 +2216,19 @@ pub(crate) fn interval_sql() -> String {
 /// as [`retrievability_key_sql`] describes.
 fn retrievability_sql(sql_for: impl Fn(&RetrievabilityKey) -> String) -> Result<String, Error> {
     let config = read_external_config().map_err(|e| miette!("{e}"))?;
-    let elapsed = format!(
+    Ok(retrievability_key_sql(
+        &config,
+        &retrievability_elapsed_sql(),
+        sql_for,
+    ))
+}
+
+/// Seconds since the card's last review, for [`retrievability_key_sql`]
+fn retrievability_elapsed_sql() -> String {
+    format!(
         "(CAST(strftime('%s', 'now') AS INTEGER) - {})",
         last_rated_sql()
-    );
-    Ok(retrievability_key_sql(&config, &elapsed, sql_for))
+    )
 }
 
 /// The bound on a [`RetrievabilityKey`] that is the same as the card's retrievability comparing
@@ -2304,18 +2349,15 @@ fn review_time_sql(field: &str, range: &str) -> Result<String, Error> {
     context.where_clauses.pop().ok_or_else(invalid)
 }
 
-/// The SQL of `c.waiting_on_links` compared with `value_str`, with the `[queue]` settings of
-/// `config.toml`. See [`waiting_on_links_condition`].
-fn waiting_on_links_sql(value_str: &str) -> Result<String, Error> {
-    let queue = read_external_config().map_err(|e| miette!("{e}"))?.queue;
-    Ok(waiting_on_links_condition(&queue, value_str))
-}
-
 /// The SQL of `c.waiting_on_links` compared with `value_str`: the cards that
 /// [`QueueConfig::new_after_linked_notes`] and [`QueueConfig::reviews_after_linked_notes`] hold
 /// back today, so `true` matches nothing while both are off.
-pub(crate) fn waiting_on_links_condition(queue: &QueueConfig, value_str: &str) -> String {
-    let (_, card_due_limit) = get_start_end_local_date(&Utc::now());
+pub(crate) fn waiting_on_links_condition(
+    queue: &QueueConfig,
+    zone: Zone,
+    value_str: &str,
+) -> String {
+    let (_, card_due_limit) = get_start_end_local_date(&Utc::now(), zone);
     let waiting = waiting_on_links(queue, card_due_limit, None).unwrap_or_else(|| "0".to_string());
     if value_str.contains("false") {
         format!("NOT {waiting}")
@@ -2720,20 +2762,27 @@ impl Evaluate for Atom<'_> {
             }
             Atom::Date(d) => {
                 context.value_type = Some(FieldType::DateTime);
-                context.params.push(local_day_start_sql(*d, 0));
+                let sql = local_day_start_sql(*d, 0, context.zone()?);
+                context.params.push(sql);
                 Ok(())
             }
             Atom::LocalDateTime(d) => {
                 context.value_type = Some(FieldType::DateTime);
-                context.params.push(format!(
-                    "(SELECT CAST(strftime('%s', '{}', 'utc') AS INTEGER))",
-                    d.format("%Y-%m-%d %H:%M:%S")
-                ));
+                let zone = context.zone()?;
+                context.params.push(if zone.is_server() {
+                    format!(
+                        "(SELECT CAST(strftime('%s', '{}', 'utc') AS INTEGER))",
+                        d.format("%Y-%m-%d %H:%M:%S")
+                    )
+                } else {
+                    zone.to_utc(*d).timestamp().to_string()
+                });
                 Ok(())
             }
             Atom::RelativeDate(d) => {
                 context.value_type = Some(FieldType::DateTime);
-                context.params.push(d.to_sql());
+                let sql = d.to_sql(context.zone()?);
+                context.params.push(sql);
                 Ok(())
             }
             Atom::Regex(r) => {
@@ -3089,7 +3138,7 @@ mod tests {
             // Field type and operator type do not match
             "data>2", // Strings do not have an order
             "id~2",   // Numbers cannot use containment operator
-            // Note ids are letters, so old numeric ids are rejected rather than reinterpreted.
+            // Note ids are letters, so numbers are rejected
             "id>100",
             "id=42",
             "linked_to_note=12",
@@ -3153,8 +3202,7 @@ mod tests {
     #[allow(clippy::too_many_lines, reason = "test data is long")]
     fn test_relative_dates() {
         let gir = "(SELECT created_at FROM note WHERE id = 76967537148)";
-        let today =
-            "(SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', 'utc') AS INTEGER))";
+        let today = "(SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', 'utc') AS INTEGER))";
         let inputs = [
             (
                 "created_at<=note[gir].created_at",
@@ -3181,33 +3229,33 @@ mod tests {
             // A day stands for the whole day, so this is up to the end of the day 3 days from now.
             (
                 "c.due<=today+3d",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due < (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+3 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE c.due < (SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', '+3 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "created_at=today",
-                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN {today} AND ((SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '+1 days', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC"),
+                format!("SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN {today} AND ((SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', '+1 days', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC"),
             ),
             (
                 "created_at>today-1w",
-                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', 'now', 'localtime', 'start of day', '-7 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', '-7 days', '+1 days', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
             ),
             // A fixed date is a local day too.
             (
                 "created_at=2026-10-17",
-                "SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', '+4 hours', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-17', '+1 days', '+4 hours', 'utc') AS INTEGER)) - 1) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "created_at<2026-10-17 c.due<=2026-10-17",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at < (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', 'utc') AS INTEGER)) AND c.due < (SELECT CAST(strftime('%s', '2026-10-17', '+1 days', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at < (SELECT CAST(strftime('%s', '2026-10-17', '+0 days', '+4 hours', 'utc') AS INTEGER)) AND c.due < (SELECT CAST(strftime('%s', '2026-10-17', '+1 days', '+4 hours', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
             ),
             // So are a month and a year.
             (
                 "created_at=2026-10 c.due<2026",
-                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-01', '+0 months', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-01', '+1 months', 'utc') AS INTEGER)) - 1) AND c.due < (SELECT CAST(strftime('%s', '2026-01-01', '+0 months', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n LEFT JOIN card c ON n.id = c.note_id WHERE (n.created_at BETWEEN (SELECT CAST(strftime('%s', '2026-10-01', '+0 months', '+4 hours', 'utc') AS INTEGER)) AND ((SELECT CAST(strftime('%s', '2026-10-01', '+1 months', '+4 hours', 'utc') AS INTEGER)) - 1) AND c.due < (SELECT CAST(strftime('%s', '2026-01-01', '+0 months', '+4 hours', 'utc') AS INTEGER))) ORDER BY n.id ASC".to_string(),
             ),
             (
                 "created_at>2026",
-                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', '2026-01-01', '+12 months', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
+                "SELECT DISTINCT n.id FROM note n WHERE n.created_at >= (SELECT CAST(strftime('%s', '2026-01-01', '+12 months', '+4 hours', 'utc') AS INTEGER)) ORDER BY n.id ASC".to_string(),
             ),
             // A time without a zone is local.
             (
@@ -3373,21 +3421,24 @@ mod tests {
                 .unwrap();
         };
         exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
-        let yesterday = chrono::Local::now().date_naive() - chrono::Days::new(1);
-        let start_of_yesterday = yesterday
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(chrono::Local)
-            .earliest()
-            .unwrap()
-            .timestamp();
+        // Days start at 4 AM, so before then, yesterday is the day before the calendar's.
+        let zone = crate::api::queue::tests::zone();
+        let today = crate::helpers::study_date(chrono::Utc::now(), zone);
+        let yesterday = today - chrono::Days::new(1);
+        let (start_of_yesterday, end_of_yesterday) = crate::helpers::get_start_end_local_date(
+            &(crate::helpers::get_start_end_local_date(&chrono::Utc::now(), zone).0
+                - chrono::Duration::seconds(1)),
+            zone,
+        );
+        let (start_of_yesterday, end_of_yesterday) =
+            (start_of_yesterday.timestamp(), end_of_yesterday.timestamp());
         // `a` to `c` have cards, `d` has none. `b` was created at the start of yesterday, `c` at
         // the end of it, and the others today.
         let now = chrono::Utc::now().timestamp();
         let notes = [
             ("a", "don't use snake_case", now),
             ("b", "dont use snakeXcase", start_of_yesterday),
-            ("c", "100% orbit", start_of_yesterday + 24 * 60 * 60 - 1),
+            ("c", "100% orbit", end_of_yesterday),
             ("d", "1000 or bit", now),
         ];
         for (letters, data, created_at) in notes {
@@ -3479,7 +3530,6 @@ mod tests {
         assert_eq!(search("c.desired_retention=0.9").await, ["a", "b", "c"]);
         // `a` and `d` were created this month and year, and `b` and `c` too unless yesterday was in
         // the last one.
-        let today = chrono::Local::now().date_naive();
         let this_month = search(&format!("created_at={}", today.format("%Y-%m"))).await;
         assert!(
             this_month.starts_with(&["a".to_string()]) && this_month.contains(&"d".to_string())

@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 use chrono::DateTime;
 use chrono::Duration;
-use chrono::Local;
 use chrono::NaiveDate;
 use chrono::Utc;
 use indoc::formatdoc;
@@ -24,12 +23,15 @@ use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
 use crate::api::browser_render::add_browser_render_sources;
+use crate::api::browser_render::add_device_sources;
 use crate::api::browser_render::load_review_card;
 use crate::api::card::build_update_card_payload;
 use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards_logged_as;
 use crate::api::fetch_review_logs_for_replay;
+use crate::api::note::get_render_note_data;
+use crate::api::note::render_note_data_to_generate_files_request;
 use crate::api::note::update_notes;
 use crate::api::preset::CardConfigs;
 use crate::api::preset::PresetLimitsLeft;
@@ -41,9 +43,10 @@ use crate::api::queue::QueueCaps;
 use crate::api::queue::linked_notes_clause;
 use crate::api::queue::queue_order_by;
 use crate::api::queue::waiting_on_links;
+use crate::api::statistics::local_time::Zone;
 use crate::api::study_pace::MIN_CARD_REVIEWS;
 use crate::api::study_pace::StudyPaces;
-use crate::api::study_pace::capped_review_seconds;
+use crate::api::study_pace::pace_answer_seconds;
 use crate::api::tag::create_tag;
 use crate::api::tag::restore_review_tags;
 use crate::api::undo::insert_events;
@@ -56,7 +59,6 @@ use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
 use crate::config::LeechAction;
 use crate::config::LeechConfig;
-use crate::config::QueueConfig;
 use crate::config::QueuePreset;
 use crate::config::SparesExternalConfig;
 use crate::config::get_files_dir;
@@ -65,6 +67,7 @@ use crate::config::read_internal_config;
 use crate::config::resolve_in_files_dir;
 use crate::config::write_internal_config;
 use crate::helpers::get_start_end_local_date;
+use crate::helpers::study_date;
 use crate::ids::IdTable;
 use crate::ids::next_id_in;
 use crate::model::Card;
@@ -79,6 +82,9 @@ use crate::model::StateId;
 use crate::model::Tag;
 use crate::model::TagId;
 use crate::parsers::BackType;
+use crate::parsers::CardData;
+use crate::parsers::ClozeHiddenReplacement;
+use crate::parsers::NotePart;
 use crate::parsers::Parseable;
 use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::audio::card_audio;
@@ -88,8 +94,14 @@ use crate::parsers::find_parser;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_all_parsers;
+use crate::parsers::get_cards;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::has_web_render_file;
+use crate::parsers::image_occlusion::ImageOcclusionData;
+use crate::parsers::image_occlusion::cloze_count;
+use crate::parsers::image_occlusion::image_occlusion_caption;
+use crate::parsers::image_occlusion::masks_on_back;
+use crate::parsers::image_occlusion::unmasked_overlay_svg;
 use crate::parsers::tts::TtsSetting;
 use crate::parsers::typed_answer::typed_answer_info;
 use crate::parsers::web_render_filepath;
@@ -116,6 +128,9 @@ use crate::schema::review::StateRole;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
 use crate::schema::review::SubmitStudyActionResponse;
+use crate::schema::review::UnmaskedImageOcclusion;
+use crate::schema::review::UnmaskedImageOcclusionPart;
+use crate::schema::review::UnmaskedImageOcclusionRequest;
 use crate::schema::tag::CreateTagRequest;
 use crate::search::evaluator::Evaluator;
 /// Makes a path relative to the [files directory](get_files_dir), when it is inside it.
@@ -225,6 +240,7 @@ fn build_review_card_response(
     all_parsers: &[fn() -> Box<dyn Parseable>],
     linked_notes: Vec<ReviewLinkedNote>,
     keywords: Vec<String>,
+    tags: Vec<String>,
 ) -> Result<GetReviewCardResponse, Error> {
     let parser = find_parser(parser_name.as_str(), all_parsers)?;
 
@@ -367,10 +383,13 @@ fn build_review_card_response(
         note_updated_at,
         parser_name,
         keywords,
+        tags,
         cli,
         browser_sources: None,
+        device_sources: None,
         typed_answer: None,
         audio: None,
+        image_occlusions: None,
         cards_left_by_state,
         time_estimate,
         linked_notes,
@@ -385,15 +404,9 @@ pub(crate) struct DailyLimitsLeft {
     pub(crate) new: u32,
     pub(crate) reviews: u32,
     /// What is left of each [preset](crate::config::QueuePreset)'s own limits, by its index in
-    /// [`QueueConfig::presets`]. Empty when no preset has limits.
+    /// [`QueueConfig::presets`](crate::config::QueueConfig::presets). Empty when no preset has
+    /// limits.
     pub(crate) presets: Vec<PresetLimitsLeft>,
-}
-
-pub(crate) async fn daily_limits_left(
-    db: &SqlitePool,
-    requested_date: DateTime<Utc>,
-) -> Result<DailyLimitsLeft, Error> {
-    daily_limits_left_with(db, &read_external_config()?, requested_date).await
 }
 
 /// See [`DailyLimitsLeft`].
@@ -410,7 +423,7 @@ pub(crate) async fn daily_limits_left_with(
     config: &SparesExternalConfig,
     requested_date: DateTime<Utc>,
 ) -> Result<DailyLimitsLeft, Error> {
-    let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date);
+    let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date, config.zone());
     // The preset is only needed for the presets' own limits
     let preset = limited_preset_sql(&config.queue);
     // `LEFT JOIN`, so that the reviews of a deleted card still count, with no preset
@@ -575,8 +588,8 @@ async fn review_eligibility_clause(
     query: &str,
     requested_date: DateTime<Utc>,
 ) -> Result<String, Error> {
-    let (_, card_due_limit) = get_start_end_local_date(&requested_date);
     let config = read_external_config()?;
+    let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.zone());
     let not_new_card_str = daily_limits_clause(
         &daily_limits_left_with(db, &config, requested_date).await?,
         &limited_preset_sql(&config.queue),
@@ -608,10 +621,10 @@ fn review_snapshot_tag_name(query: &str) -> String {
     format!("review-{}", &hash[..8])
 }
 
-/// Whether `tag`, a review snapshot, was built on the local day of `requested_date`, so review
-/// works through it as it is rather than rebuilding it.
-fn snapshot_built_today(tag: &Tag, requested_date: DateTime<Utc>) -> bool {
-    let (start_of_day, _) = get_start_end_local_date(&requested_date);
+/// Whether `tag`, a review snapshot, was built on the day of `requested_date`, so review works
+/// through it as it is rather than rebuilding it.
+fn snapshot_built_today(tag: &Tag, requested_date: DateTime<Utc>, zone: Zone) -> bool {
+    let (start_of_day, _) = get_start_end_local_date(&requested_date, zone);
     tag.updated_at >= start_of_day
 }
 
@@ -620,6 +633,7 @@ pub(crate) async fn todays_review_snapshot(
     db: &SqlitePool,
     query: &str,
     requested_date: DateTime<Utc>,
+    zone: Zone,
 ) -> Result<Option<TagId>, Error> {
     let tag: Option<Tag> = sqlx::query_as(r"SELECT * FROM tag WHERE name = ?")
         .bind(review_snapshot_tag_name(query))
@@ -627,7 +641,7 @@ pub(crate) async fn todays_review_snapshot(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     Ok(tag
-        .filter(|tag| snapshot_built_today(tag, requested_date))
+        .filter(|tag| snapshot_built_today(tag, requested_date, zone))
         .map(|tag| tag.id))
 }
 
@@ -644,6 +658,7 @@ pub async fn create_review_snapshot_tag(
     requested_date: DateTime<Utc>,
 ) -> Result<ReviewSnapshotResponse, Error> {
     let ReviewSnapshotRequest { query } = body;
+    let zone = read_external_config()?.zone();
     let tag_name = review_snapshot_tag_name(&query);
     let existing_tag: Option<Tag> = sqlx::query_as(r"SELECT * FROM tag WHERE name = ?")
         .bind(&tag_name)
@@ -652,7 +667,7 @@ pub async fn create_review_snapshot_tag(
         .map_err(|e| Error::Sqlx { source: e })?;
 
     let (tag_id, rebuilt) = match existing_tag {
-        Some(tag) if snapshot_built_today(&tag, requested_date) => (tag.id, false),
+        Some(tag) if snapshot_built_today(&tag, requested_date, zone) => (tag.id, false),
         Some(tag) => (tag.id, true),
         None => {
             // `auto_delete` stays off: if finishing the snapshot deleted the tag, running the
@@ -729,6 +744,10 @@ pub(crate) struct ReviewFilterQuery {
     pub(crate) where_clause: String,
     pub(crate) is_filtered_tag: bool,
     pub(crate) card_due_limit: DateTime<Utc>,
+    /// The zone days are counted in. See [`Zone::from_config`].
+    pub(crate) zone: Zone,
+    /// See [`SparesExternalConfig::maximum_answer_time`].
+    pub(crate) maximum_answer_seconds: Option<i64>,
     /// What is left of today's limits. Filtered tags have no limits.
     pub(crate) caps: QueueCaps,
     /// The SQL of a card's preset, for the presets' own limits in `caps`: `c.preset`, or `NULL`
@@ -764,13 +783,13 @@ pub(crate) struct ReviewFilterQuery {
 /// Returns `Ok(Some(…))` on success.
 pub(crate) async fn build_review_filter_query(
     db: &SqlitePool,
+    config: &SparesExternalConfig,
     filter: Option<&GetReviewCardFilterRequest>,
     requested_date: DateTime<Utc>,
     learn_ahead: bool,
 ) -> Result<Option<ReviewFilterQuery>, Error> {
-    let (_, card_due_limit) = get_start_end_local_date(&requested_date);
-    let config = read_external_config()?;
-    let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
+    let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.zone());
+    let limits_left = daily_limits_left_with(db, config, requested_date).await?;
     let cards = cards_with_preset(&config.queue.presets);
     let preset_sql = if limited_preset_sql(&config.queue) == "NULL" {
         "NULL"
@@ -855,6 +874,8 @@ pub(crate) async fn build_review_filter_query(
         where_clause,
         is_filtered_tag,
         card_due_limit,
+        zone: config.zone(),
+        maximum_answer_seconds: config.maximum_answer_seconds(),
         caps,
         preset_sql,
         held_back_clause,
@@ -873,7 +894,8 @@ pub(crate) async fn build_review_filter_query(
 /// own reviews in the state it is in now, once it has [`MIN_CARD_REVIEWS`], since a card's first
 /// sight as a new card can take minutes while its later reviews take seconds, or else that of
 /// the pace. A card already reviewed today counts one more review, as it is through part of its
-/// day. Each review counts for at most [`MAX_REVIEW_SECONDS`].
+/// day. Each review counts for at most `filter.maximum_answer_seconds`, or [`MAX_REVIEW_SECONDS`]
+/// when it is unset.
 ///
 /// New and review cards are capped by `filter.caps`, what is left of today's limits, since the
 /// queue shows no more than that. For example, with `reviews_daily_limit = 200`, 600 reviews due
@@ -900,7 +922,13 @@ pub(crate) async fn get_cards_left_by_state_and_time_estimate(
     db: &SqlitePool,
     filter: &ReviewFilterQuery,
 ) -> Result<(HashMap<StateId, u32>, Duration), Error> {
-    let paces = StudyPaces::load(db, &filter.cards).await?;
+    let paces = StudyPaces::load(
+        db,
+        &filter.cards,
+        filter.zone,
+        filter.maximum_answer_seconds,
+    )
+    .await?;
     let bind = (!filter.is_filtered_tag).then(|| filter.card_due_limit.timestamp());
     let rows = card_times(db, filter, &paces, &filter.where_clause, bind).await?;
     // The preset of each row is the card's own, which caps the counts only if it has limits of
@@ -935,7 +963,7 @@ async fn card_times(
     where_clause: &str,
     bind: Option<i64>,
 ) -> Result<Vec<(StateId, Option<usize>, u32, f64)>, Error> {
-    let (day_start, _) = get_start_end_local_date(&filter.card_due_limit);
+    let (day_start, _) = get_start_end_local_date(&filter.card_due_limit, filter.zone);
     // These are the cards grouped by state, preset and whether they were reviewed today, with how
     // many have enough reviews of their own and the seconds those take. Note that this is _not_
     // equivalent to the cards by state in `get_statistics()` because that does not filter by
@@ -965,7 +993,7 @@ async fn card_times(
         GROUP BY 1, 2, 3",
         cards = filter.cards,
         day_start = day_start.timestamp(),
-        seconds = capped_review_seconds("rl"),
+        seconds = pace_answer_seconds("rl", filter.maximum_answer_seconds),
         review = ReviewLogKind::Review as u8,
     };
     let mut query = sqlx::query_as(AssertSqlSafe(query_str));
@@ -996,15 +1024,20 @@ async fn card_times(
         .collect())
 }
 
-pub(crate) async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<(), Error> {
+pub(crate) async fn unbury_cards_and_update_config(
+    db: &SqlitePool,
+    external: &SparesExternalConfig,
+) -> Result<(), Error> {
     let mut config = read_internal_config(db).await?;
     let now = Utc::now();
-    // Compare dates in local timezone to determine if cards should be unburied.
-    // This ensures that cards are unburied when the calendar date changes in the user's timezone,
+    // Compare days of study, which start at `day_starts_at` in the configured zone, to determine
+    // if cards should be unburied. This ensures that cards are unburied when a new day starts,
     // regardless of when reviews were performed (e.g., late at night vs. early morning).
     // For example, if a user reviews at 11 PM on day 1 and then at 6 AM on day 2, the cards
-    // will be unburied on day 2 even though less than 24 hours have passed.
-    let now_local_date = now.with_timezone(&Local).date_naive();
+    // will be unburied on day 2 even though less than 24 hours have passed. A review at 1 AM
+    // still belongs to day 1, so it does not unbury them.
+    let zone = external.zone();
+    let now_local_date = study_date(now, zone);
     // Handle the case where last_unburied might be MIN_UTC or out of range for local timezone
     // If it's MIN_UTC, treat it as never unburied, so we should always unbury
     let last_unburied_local_date = if config.last_unburied == DateTime::<Utc>::MIN_UTC {
@@ -1012,7 +1045,7 @@ pub(crate) async fn unbury_cards_and_update_config(db: &SqlitePool) -> Result<()
         // This ensures we always unbury on the first run
         NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
     } else {
-        config.last_unburied.with_timezone(&Local).date_naive()
+        study_date(config.last_unburied, zone)
     };
     if now_local_date > last_unburied_local_date {
         // Unbury
@@ -1034,12 +1067,13 @@ pub async fn get_review_card(
 ) -> Result<Option<GetReviewCardResponse>, Error> {
     let GetReviewCardRequest { filter } = body;
 
+    let config = read_external_config()?;
     // Unbury cards, if needed
-    unbury_cards_and_update_config(db).await?;
+    unbury_cards_and_update_config(db, &config).await?;
 
     // Build the filter query for matching cards
     let Some(review_filter) =
-        build_review_filter_query(db, filter.as_ref(), requested_date, true).await?
+        build_review_filter_query(db, &config, filter.as_ref(), requested_date, true).await?
     else {
         return Ok(None);
     };
@@ -1055,7 +1089,6 @@ pub async fn get_review_card(
         ..
     } = review_filter;
 
-    let config = read_external_config()?;
     let order_by = queue_order_by(
         &config,
         requested_date,
@@ -1105,10 +1138,11 @@ pub async fn next_review_card_available_at(
     GetReviewCardRequest { filter }: GetReviewCardRequest,
     requested_date: DateTime<Utc>,
 ) -> Result<Option<DateTime<Utc>>, Error> {
+    let config = read_external_config()?;
     let Some(ReviewFilterQuery {
         held_back_clause: Some(held_back_clause),
         ..
-    }) = build_review_filter_query(db, filter.as_ref(), requested_date, true).await?
+    }) = build_review_filter_query(db, &config, filter.as_ref(), requested_date, true).await?
     else {
         return Ok(None);
     };
@@ -1118,7 +1152,7 @@ pub async fn next_review_card_available_at(
     .fetch_one(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let learn_ahead_limit = read_external_config()?.queue.learn_ahead_limit;
+    let learn_ahead_limit = config.queue.learn_ahead_limit;
     Ok(due
         .and_then(|due| DateTime::from_timestamp(due, 0))
         .map(|due| (due - learn_ahead_limit).max(requested_date)))
@@ -1144,6 +1178,14 @@ pub(crate) async fn review_card_response(
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
+    let tags: Vec<String> = sqlx::query_scalar(
+        r"SELECT t.name FROM tag t JOIN note_tag nt ON nt.tag_id = t.id
+        WHERE nt.note_id = ? ORDER BY t.name",
+    )
+    .bind(review_card.note_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
     let note_updated_at: DateTime<Utc> =
         sqlx::query_scalar(r"SELECT updated_at FROM note WHERE id = ?")
             .bind(review_card.note_id)
@@ -1159,13 +1201,14 @@ pub(crate) async fn review_card_response(
         all_parsers,
         linked_notes,
         keywords,
+        tags,
     )?;
     add_card_extras(db, &mut response, all_parsers).await?;
     Ok(response)
 }
 
 /// Fills in the parts of `response` that come from parsing its card's note: the sources to compile
-/// in the browser, the answers to type and the audio clips and text to play.
+/// in the browser or to show on a device, the answers to type and the audio clips and text to play.
 async fn add_card_extras(
     db: &SqlitePool,
     response: &mut GetReviewCardResponse,
@@ -1187,10 +1230,174 @@ async fn add_card_extras(
         Err(e) => return Err(e),
     };
     add_browser_render_sources(parser.as_ref(), response, &request, &card)?;
+    add_device_sources(parser.as_ref(), response, &request, &card)?;
     response.typed_answer = typed_answer_info(parser.as_ref(), &card)?;
     let note_tts = TtsSetting::of_note(&request.custom_data);
     response.audio = card_audio(parser.as_ref(), &card, note_tts.as_ref());
+    response.image_occlusions = masked_image_occlusions(response, &card);
     Ok(())
+}
+
+/// The image occlusions of `card`, `response`'s card, that its back still masks some of (see
+/// [`masks_on_back`]), for the review page to show without masks. `None` if there are none, or if
+/// the back is the note, which shows the original images.
+fn masked_image_occlusions(
+    response: &GetReviewCardResponse,
+    card: &CardData,
+) -> Option<Vec<UnmaskedImageOcclusion>> {
+    if !matches!(
+        response.card_back_rendered_path,
+        CardBackRenderedPath::CardBack(_)
+    ) {
+        return None;
+    }
+    let masked: Vec<_> = card_image_occlusions(card)
+        .enumerate()
+        .filter(|(_, (cloze_indices, data))| {
+            masks_on_back(cloze_indices, data, || cloze_count(&data.clozes_filepath))
+        })
+        .map(|(i, (_, data))| UnmaskedImageOcclusion {
+            caption: image_occlusion_caption(data),
+            order: i + 1,
+        })
+        .collect();
+    (!masked.is_empty()).then_some(masked)
+}
+
+/// The image occlusions of `card`, in its order, with the clozes it asks for.
+fn card_image_occlusions(
+    card: &CardData,
+) -> impl Iterator<Item = (&[(usize, ClozeHiddenReplacement)], &ImageOcclusionData)> {
+    card.data.iter().filter_map(|part| match part {
+        NotePart::ImageOcclusion {
+            cloze_indices,
+            data,
+        } => Some((cloze_indices.as_slice(), data.as_ref())),
+        _ => None,
+    })
+}
+
+/// A part of the `order`th image occlusion (from 1) of card `card_order` of note `note_id`, without
+/// masks, for the review page (see [`crate::parsers::image_occlusion::unmasked_overlay_svg`]).
+///
+/// A note's settings name its image occlusion's files by any path, so they are read only if they
+/// are where the collection's renders may read (see [`readable_file`]).
+pub async fn unmasked_image_occlusion(
+    db: &SqlitePool,
+    request: &UnmaskedImageOcclusionRequest,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+) -> Result<UnmaskedImageOcclusionFile, Error> {
+    let &UnmaskedImageOcclusionRequest {
+        note_id,
+        card_order,
+        order,
+        part,
+    } = request;
+    let Some(note_data) = get_render_note_data(db, Some(vec![note_id]))
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(UnmaskedImageOcclusionFile::NotFound);
+    };
+    let parser = find_parser(&note_data.parser_name, all_parsers)?;
+    let generate_request = render_note_data_to_generate_files_request::<
+        std::collections::hash_map::RandomState,
+    >(&note_data, None);
+    let cards = get_cards(
+        parser.as_ref(),
+        None,
+        &generate_request.note_data,
+        false,
+        false,
+    )?;
+    let data = (card_order as usize)
+        .checked_sub(1)
+        .and_then(|i| cards.get(i))
+        .and_then(|card| {
+            order
+                .checked_sub(1)
+                .and_then(|i| card_image_occlusions(card).nth(i))
+        })
+        .map(|(_, data)| data.clone());
+    let Some(data) = data else {
+        return Ok(UnmaskedImageOcclusionFile::NotFound);
+    };
+    let Some(original_image_filepath) = readable_file(&data.original_image_filepath) else {
+        return Ok(UnmaskedImageOcclusionFile::NotFound);
+    };
+    let original_image = crate::platform::read(&original_image_filepath)
+        .await
+        .map_err(|e| Error::Io {
+            description: format!("Failed to read {}", original_image_filepath.display()),
+            source: e,
+        })?;
+    match part {
+        UnmaskedImageOcclusionPart::Image => Ok(UnmaskedImageOcclusionFile::file(
+            image::guess_format(&original_image)
+                .map_or("application/octet-stream", |format| format.to_mime_type()),
+            original_image,
+        )),
+        UnmaskedImageOcclusionPart::Markup => {
+            let Some(clozes_filepath) = readable_file(&data.clozes_filepath) else {
+                return Ok(UnmaskedImageOcclusionFile::NotFound);
+            };
+            let data = ImageOcclusionData {
+                clozes_filepath,
+                ..data
+            };
+            Ok(match unmasked_overlay_svg(&data, &original_image)? {
+                Some(contents) => UnmaskedImageOcclusionFile::file("image/svg+xml", contents),
+                None => UnmaskedImageOcclusionFile::NoMarkup,
+            })
+        }
+    }
+}
+
+/// What [`unmasked_image_occlusion`] found.
+#[derive(Debug, PartialEq, Eq)]
+pub enum UnmaskedImageOcclusionFile {
+    File {
+        contents: Vec<u8>,
+        media_type: &'static str,
+        /// Of `contents`, by blake3, for an `ETag`
+        hash: String,
+    },
+    /// The image occlusion's Markup layer has no shapes
+    NoMarkup,
+    /// No such note, card or image occlusion, or its files aren't where renders may read
+    NotFound,
+}
+
+impl UnmaskedImageOcclusionFile {
+    fn file(media_type: &'static str, contents: Vec<u8>) -> Self {
+        Self::File {
+            hash: blake3::hash(&contents).to_hex().to_string(),
+            contents,
+            media_type,
+        }
+    }
+}
+
+/// `path`, without symbolic links, if it is a file in what a render of the collection may read
+/// ([`crate::render::readable_dirs`]).
+#[cfg(not(target_family = "wasm"))]
+fn readable_file(path: &Path) -> Option<PathBuf> {
+    let path = path.canonicalize().ok()?;
+    let readable = crate::render::readable_dirs()
+        .iter()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .any(|dir| path.starts_with(dir));
+    (readable && path.is_file()).then_some(path)
+}
+
+/// `path`, if it has no `..`. A device has only its collection's files, and no links.
+#[cfg(target_family = "wasm")]
+fn readable_file(path: &Path) -> Option<PathBuf> {
+    let inside = !path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir));
+    inside.then(|| path.to_path_buf())
 }
 
 pub async fn get_review_card_by_id(
@@ -1221,14 +1428,21 @@ pub async fn get_review_card_by_id(
     match review_card_opt {
         Some(review_card) => {
             // Compute cards_left_by_state and time_estimate using the same filter as the review session
-            let (cards_left_by_state, time_estimate) =
-                match build_review_filter_query(db, filter, requested_date, true).await? {
-                    Some(review_filter) => {
-                        get_cards_left_by_state_and_time_estimate(db, &review_filter).await?
-                    }
-                    // Tag not found — no cards left to review under this filter
-                    None => (HashMap::new(), Duration::zero()),
-                };
+            let (cards_left_by_state, time_estimate) = match build_review_filter_query(
+                db,
+                &read_external_config()?,
+                filter,
+                requested_date,
+                true,
+            )
+            .await?
+            {
+                Some(review_filter) => {
+                    get_cards_left_by_state_and_time_estimate(db, &review_filter).await?
+                }
+                // Tag not found — no cards left to review under this filter
+                None => (HashMap::new(), Duration::zero()),
+            };
 
             let response = review_card_response(
                 db,
@@ -1339,6 +1553,7 @@ pub(crate) async fn rate_card_with_config(
     reviewed_at: DateTime<Utc>,
     log: bool,
 ) -> Result<Option<i64>, Error> {
+    let (recall_duration, rate_duration) = config.cap_answer_time(recall_duration, rate_duration);
     // Validate input
     let filtered_tag_opt = if let Some(tag_id) = tag_id {
         let tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
@@ -1461,10 +1676,10 @@ pub(crate) async fn rate_card_with_config(
 
     // Siblings are buried until the day is over, so a review of an earlier day, sent late by an
     // offline client, would bury them a day too long.
-    let reviewed_today = reviewed_at.with_timezone(&Local).date_naive()
-        >= Utc::now().with_timezone(&Local).date_naive();
+    let reviewed_today =
+        study_date(reviewed_at, config.zone()) >= study_date(Utc::now(), config.zone());
     let buried_siblings = if filtered_tag_opt.is_none() && reviewed_today {
-        bury_siblings(db, &config.queue, &before_card, reviewed_at).await?
+        bury_siblings(db, config, &before_card, reviewed_at).await?
     } else {
         Vec::new()
     };
@@ -1556,10 +1771,9 @@ pub(crate) async fn rate_card_with_config(
 /// logged as a [`ReviewLogKind::Cram`].
 ///
 /// The cram row is what makes the rating count in statistics and the review heatmap. Every replay
-/// of the card's history (rating, `spares card reschedule`, the optimizer, sync, offline reviews
-/// inserted into the history) skips it, so the card keeps its memory state and due date, as if
-/// the rating had never happened. The undo event records the row in
-/// [`RateCardPayload::review_log_id`], so undo deletes it.
+/// of the card's history (rating, `spares card reschedule`, the optimizer, sync) skips it, so the
+/// card keeps its memory state and due date, as if the rating had never happened. The undo event
+/// records the row in [`RateCardPayload::review_log_id`], so undo deletes it.
 ///
 /// For example, rating a card Good in an `exam-cram` tag while its next review is in 10 days
 /// leaves it due in 10 days, writes a cram with rating Good, `previous_state` the card's state
@@ -1654,9 +1868,8 @@ async fn rate_card_without_rescheduling(
 }
 
 /// Adds [`LeechConfig::tag_name`] to the note of a card that just became a leech, recording an
-/// undo event if `log`. With `group_with`, the event that made it one (the rating, or the
-/// suspension of a card an inserted offline review made a leech), the tag's events join that
-/// event's group, so undoing it untags the note too.
+/// undo event if `log`. With `group_with`, the event that made it one (the rating), the tag's
+/// events join that event's group, so undoing it untags the note too.
 pub(crate) async fn tag_leech(
     db: &SqlitePool,
     leech: &LeechConfig,
@@ -1690,14 +1903,16 @@ pub(crate) async fn tag_leech(
 }
 
 /// Buries the siblings of `card` (the other cards of its note) that
-/// [`QueueConfig::bury_new_siblings`] and [`QueueConfig::bury_review_siblings`] say to, now that it
-/// was rated at `reviewed_at`. Returns their changes, for the rating's undo event.
+/// [`QueueConfig::bury_new_siblings`](crate::config::QueueConfig::bury_new_siblings) and
+/// [`QueueConfig::bury_review_siblings`](crate::config::QueueConfig::bury_review_siblings) say
+/// to, now that it was rated at `reviewed_at`. Returns their changes, for the rating's undo event.
 async fn bury_siblings(
     db: &SqlitePool,
-    queue: &QueueConfig,
+    config: &SparesExternalConfig,
     card: &Card,
     reviewed_at: DateTime<Utc>,
 ) -> Result<Vec<UpdateCardPayload>, Error> {
+    let queue = &config.queue;
     let roles = [
         (queue.bury_new_siblings, StateRole::New),
         (queue.bury_review_siblings, StateRole::Review),
@@ -1709,7 +1924,7 @@ async fn bury_siblings(
     if states.is_empty() {
         return Ok(Vec::new());
     }
-    let (_, end_of_day) = get_start_end_local_date(&reviewed_at);
+    let (_, end_of_day) = get_start_end_local_date(&reviewed_at, config.zone());
     let sibling_ids: Vec<CardId> = sqlx::query_scalar(AssertSqlSafe(format!(
         r"UPDATE card SET special_state = ?, updated_at = ?
         WHERE note_id = ? AND id != ? AND special_state IS NULL AND due <= ? AND state IN ({states})
@@ -1976,14 +2191,15 @@ pub async fn submit_study_action(
 /// Recomputes every card's memory state from its review log and gives it a new due date, with
 /// the steps of each card's [preset](crate::config::QueuePreset).
 ///
-/// Logs the cards it changed as an [`EventType::RescheduleCards`] event. Undoing it restores
-/// those cards, not the scheduler settings that called for the reschedule.
+/// Logs the cards it changed as an [`EventType::RescheduleCards`] event, and returns its id (none
+/// if no card changed). Undoing it by id restores those cards, not the scheduler settings that
+/// called for the reschedule.
 pub(crate) async fn reschedule_all_cards(
     db: &SqlitePool,
     scheduler: &dyn SrsScheduler,
     config: &SparesExternalConfig,
     at: DateTime<Utc>,
-) -> Result<(), Error> {
+) -> Result<Option<i64>, Error> {
     // Suspended and buried cards are included: they keep their special state, but should come
     // back with a memory state and due date that match their history.
     let cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card")
@@ -2038,21 +2254,23 @@ pub(crate) async fn reschedule_all_cards(
             Some(build_update_card_payload(old.id, old, new)).filter(UpdateCardPayload::has_changes)
         })
         .collect();
-    if !changes.is_empty() {
-        insert_events(
-            db,
-            &[(EventType::RescheduleCards, to_value(&changes).unwrap())],
-            at,
-            None,
-        )
-        .await?;
+    if changes.is_empty() {
+        return Ok(None);
     }
-    Ok(())
+    let event_ids = insert_events(
+        db,
+        &[(EventType::RescheduleCards, to_value(&changes).unwrap())],
+        at,
+        None,
+    )
+    .await?;
+    Ok(event_ids.first().copied())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::image_occlusion::list_note_image_occlusions;
     use crate::api::note::tests::tests::create_note_helper;
     use crate::api::note::update_notes;
     use crate::api::statistics::get_statistics;
@@ -2095,6 +2313,41 @@ mod tests {
         assert!(!cards.is_empty());
 
         (last_note.clone(), cards)
+    }
+
+    /// The note's keywords and tags come with the card, for clients to show beside it.
+    #[sqlx::test]
+    async fn test_review_card_keywords_and_tags(pool: SqlitePool) -> () {
+        use crate::api::note::create_notes;
+        use crate::api::parser::tests::create_parser_helper;
+        use crate::schema::note::CreateNoteRequest;
+        use crate::schema::note::CreateNotesRequest;
+
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let request = CreateNotesRequest {
+            parser_id: parser.id,
+            requests: vec![CreateNoteRequest {
+                data: "The capital of France is {{Paris}}.".to_string(),
+                keywords: vec!["France".to_string()],
+                tags: vec!["geography".to_string(), "europe".to_string()],
+                is_suspended: false,
+                custom_data: serde_json::Map::new(),
+            }],
+        };
+        let now = Utc::now();
+        create_notes(&pool, request, now, &get_all_parsers(), false)
+            .await
+            .unwrap();
+        let card_id: CardId = sqlx::query_scalar(r"SELECT id FROM card")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let review_card = get_review_card_by_id(&pool, card_id, None, now, &get_all_parsers())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(review_card.keywords, ["France"]);
+        assert_eq!(review_card.tags, ["europe", "geography"]);
     }
 
     #[sqlx::test]
@@ -2217,6 +2470,241 @@ mod tests {
                 ],
             })
         );
+    }
+
+    /// A Markdown note of `parser_id` with an image occlusion of two clozes and a markup circle,
+    /// with `edit` applied to its snippet, and the original image's contents.
+    async fn create_image_occlusion_note(
+        pool: &SqlitePool,
+        parser_id: i64,
+        name: &str,
+        edit: impl FnOnce(String) -> String,
+    ) -> (NoteId, Vec<u8>) {
+        use crate::api::image_occlusion::create_image_occlusion;
+        use crate::api::note::create_notes;
+        use crate::schema::note::CreateNoteRequest;
+        use crate::schema::note::CreateNotesRequest;
+
+        let mut image = Vec::new();
+        image::RgbaImage::new(40, 30)
+            .write_to(
+                &mut std::io::Cursor::new(&mut image),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        let clozes = r##"<svg width="40" height="30" xmlns="http://www.w3.org/2000/svg"><g class="layer" id="markup-group"><title>Markup</title><circle id="svg_9" cx="20" cy="15" r="3" fill="red"/></g><g class="layer" id="clozes-group"><title>Clozes</title><rect id="svg_1" x="1" y="1" width="5" height="5" fill="#FFEBA2"/><rect id="svg_2" x="20" y="20" width="5" height="5" fill="#FFEBA2"/></g></svg>"##;
+        let created = create_image_occlusion(
+            pool,
+            parser_id,
+            &image,
+            &format!("{name}.png"),
+            clozes,
+            &get_all_parsers(),
+        )
+        .await
+        .unwrap();
+        let request = CreateNotesRequest {
+            parser_id,
+            requests: vec![CreateNoteRequest {
+                data: format!("{name}\n\n{}", edit(created.snippet)),
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                is_suspended: false,
+                custom_data: serde_json::Map::new(),
+            }],
+        };
+        let notes = create_notes(pool, request, Utc::now(), &get_all_parsers(), false)
+            .await
+            .unwrap();
+        (notes.notes[0].id, image)
+    }
+
+    /// The `image_occlusions` of the review cards of `note_id`, by card order.
+    async fn review_image_occlusions(
+        pool: &SqlitePool,
+        note_id: NoteId,
+    ) -> Vec<Option<Vec<UnmaskedImageOcclusion>>> {
+        let card_ids: Vec<CardId> =
+            sqlx::query_scalar(r#"SELECT id FROM card WHERE note_id = ? ORDER BY "order""#)
+                .bind(note_id)
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        let mut image_occlusions = Vec::new();
+        for card_id in card_ids {
+            let review_card =
+                get_review_card_by_id(pool, card_id, None, Utc::now(), &get_all_parsers())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            image_occlusions.push(review_card.image_occlusions);
+        }
+        image_occlusions
+    }
+
+    #[sqlx::test]
+    async fn test_review_card_unmasked_image_occlusions(pool: SqlitePool) -> () {
+        use crate::api::parser::tests::create_parser_helper;
+
+        let parser = create_parser_helper(&pool, "markdown").await;
+        // By default the back emphasizes its answer and masks the other cloze
+        let (note_id, image) =
+            create_image_occlusion_note(&pool, parser.id, "unmask-default", |s| s).await;
+        let data = &list_note_image_occlusions(&pool, note_id, &get_all_parsers())
+            .await
+            .unwrap()[0];
+        let masked = Some(vec![UnmaskedImageOcclusion {
+            caption: image_occlusion_caption(data),
+            order: 1,
+        }]);
+        assert!(
+            masked.as_ref().unwrap()[0]
+                .caption
+                .starts_with("Unmask Default")
+        );
+        assert_eq!(
+            review_image_occlusions(&pool, note_id).await,
+            vec![masked.clone(), masked]
+        );
+
+        let unmasked = |card_order, order, part| {
+            let pool = pool.clone();
+            async move {
+                let request = UnmaskedImageOcclusionRequest {
+                    note_id,
+                    card_order,
+                    order,
+                    part,
+                };
+                unmasked_image_occlusion(&pool, &request, &get_all_parsers())
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(
+            unmasked(2, 1, UnmaskedImageOcclusionPart::Image).await,
+            UnmaskedImageOcclusionFile::file("image/png", image)
+        );
+        let UnmaskedImageOcclusionFile::File {
+            contents,
+            media_type,
+            ..
+        } = unmasked(1, 1, UnmaskedImageOcclusionPart::Markup).await
+        else {
+            panic!("no markup");
+        };
+        let markup = String::from_utf8(contents).unwrap();
+        assert_eq!(media_type, "image/svg+xml");
+        assert!(
+            markup.contains("<circle") && !markup.contains("<rect"),
+            "{markup}"
+        );
+        assert_eq!(
+            unmasked(1, 2, UnmaskedImageOcclusionPart::Image).await,
+            UnmaskedImageOcclusionFile::NotFound
+        );
+        assert_eq!(
+            unmasked(3, 1, UnmaskedImageOcclusionPart::Image).await,
+            UnmaskedImageOcclusionFile::NotFound
+        );
+
+        // Without markup
+        let (no_markup, _) =
+            create_image_occlusion_note(&pool, parser.id, "unmask-plain", |s| s).await;
+        std::fs::write(
+            &list_note_image_occlusions(&pool, no_markup, &get_all_parsers())
+                .await
+                .unwrap()[0]
+                .clozes_filepath,
+            r#"<svg width="40" height="30" xmlns="http://www.w3.org/2000/svg"><g class="layer" id="markup-group"><title>Markup</title></g><g class="layer" id="clozes-group"><title>Clozes</title><rect x="1" y="1" width="5" height="5"/></g></svg>"#,
+        )
+        .unwrap();
+        let request = UnmaskedImageOcclusionRequest {
+            note_id: no_markup,
+            card_order: 1,
+            order: 1,
+            part: UnmaskedImageOcclusionPart::Markup,
+        };
+        assert_eq!(
+            unmasked_image_occlusion(&pool, &request, &get_all_parsers())
+                .await
+                .unwrap(),
+            UnmaskedImageOcclusionFile::NoMarkup
+        );
+
+        // A back that reveals the whole note masks nothing
+        let (full_note, _) = create_image_occlusion_note(&pool, parser.id, "unmask-full", |s| {
+            s.replace(
+                r#"back_reveal = "only_answered""#,
+                r#"back_reveal = "full_note""#,
+            )
+            .replace("back_emphasis = true", "back_emphasis = false")
+        })
+        .await;
+        assert_eq!(
+            review_image_occlusions(&pool, full_note).await,
+            vec![None, None]
+        );
+
+        // Nor does a card without image occlusions
+        let (plain, _) = create_image_occlusion_note(&pool, parser.id, "unmask-none", |_| {
+            "{{Paris}}".to_string()
+        })
+        .await;
+        assert_eq!(review_image_occlusions(&pool, plain).await, vec![None]);
+    }
+
+    /// A note's settings may name any path, but only what renders may read is served.
+    #[sqlx::test]
+    async fn test_unmasked_image_occlusion_outside_collection(pool: SqlitePool) -> () {
+        use crate::api::parser::tests::create_parser_helper;
+
+        // Not in the collection's directories, which are in /tmp/spares under tests
+        let outside = std::env::temp_dir().join(format!("spares-unmask-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&outside).unwrap();
+        let outside_image = outside.join("secret.png");
+        let parser = create_parser_helper(&pool, "markdown").await;
+        let (note_id, image) =
+            create_image_occlusion_note(&pool, parser.id, "unmask-outside", |s| s).await;
+        std::fs::write(&outside_image, &image).unwrap();
+        let data = &list_note_image_occlusions(&pool, note_id, &get_all_parsers())
+            .await
+            .unwrap()[0];
+        let original = data.original_image_filepath.display().to_string();
+        let note: (String,) = sqlx::query_as("SELECT data FROM note WHERE id = ?")
+            .bind(note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // As a sync could leave it: saving the note would move the image into the collection
+        sqlx::query("UPDATE note SET data = ? WHERE id = ?")
+            .bind(
+                note.0
+                    .replace(&original, &outside_image.display().to_string()),
+            )
+            .bind(note_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for part in [
+            UnmaskedImageOcclusionPart::Image,
+            UnmaskedImageOcclusionPart::Markup,
+        ] {
+            let request = UnmaskedImageOcclusionRequest {
+                note_id,
+                card_order: 1,
+                order: 1,
+                part,
+            };
+            // The note doesn't parse with it (see `read_image_occlusion_data`), and if it did, the
+            // file still wouldn't be read
+            let found = unmasked_image_occlusion(&pool, &request, &get_all_parsers()).await;
+            assert!(
+                !matches!(found, Ok(UnmaskedImageOcclusionFile::File { .. })),
+                "{found:?}"
+            );
+        }
+        std::fs::remove_dir_all(outside).unwrap();
     }
 
     #[sqlx::test]
@@ -2624,11 +3112,12 @@ mod tests {
 
     #[sqlx::test]
     async fn test_get_review_card_by_id_respects_filter(pool: sqlx::SqlitePool) -> () {
-        let now = Utc::now();
-
         // Create notes (3 notes from helper)
         let created_notes = create_note_helper(&pool).await;
         assert_eq!(created_notes.len(), 3);
+        // After the notes, whose cards are due when they're created, so that they're due today
+        // even if midnight passes while they're created
+        let now = Utc::now();
 
         // Get all cards (1 per note)
         let all_cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card ORDER BY id ASC")

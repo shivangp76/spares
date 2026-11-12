@@ -1,21 +1,46 @@
-import { useOfflineStatus } from '../offline/review';
+import { Link } from "react-router-dom";
+import { useServerReachable } from "../api/reachability";
+import { describeDownload, useLocalStatus } from "../local/copy";
 
-/** Whether the server can be reached, and what is waiting to be sent to it or downloaded from it. */
+/**
+ * Whether the server can be reached. On a device that keeps a copy of the collection, also its
+ * changes not yet synced, the files it is downloading, and whether it has to be set up again.
+ */
 export default function OfflineIndicator() {
-  const { online, pending, downloading } = useOfflineStatus();
+  const online = useServerReachable();
+  const local = useLocalStatus();
+  if (local.active && local.notEnrolled) {
+    return (
+      <Link
+        to="/settings"
+        role="status"
+        style={{ fontSize: 12, color: "var(--warning)", alignSelf: "center" }}
+      >
+        Removed from the server: set the copy up again
+      </Link>
+    );
+  }
   const parts = [
-    !online && 'Offline',
-    pending > 0 && `${pending} to sync`,
-    downloading && `Downloading cards ${downloading.done}/${downloading.total}`,
+    !online && "Offline",
+    local.active && local.dirty > 0 && `${local.dirty} unsynced`,
+    describeDownload(local),
   ].filter(Boolean);
   if (parts.length === 0) return null;
+  const offlineTitle = local.active
+    ? "The server cannot be reached. This device has the whole collection, and sends its changes once it can."
+    : "The server cannot be reached. To use the app without it, keep a copy of the collection on this device (Settings → This Device).";
   return (
     <span
       role="status"
-      title={online ? undefined : 'The server cannot be reached. Downloaded cards can still be reviewed, and ratings are sent once it can.'}
-      style={{ fontSize: 12, color: online ? 'var(--text-secondary)' : 'var(--warning)', alignSelf: 'center', whiteSpace: 'nowrap' }}
+      title={online ? undefined : offlineTitle}
+      style={{
+        fontSize: 12,
+        color: online ? "var(--text-secondary)" : "var(--warning)",
+        alignSelf: "center",
+        whiteSpace: "nowrap",
+      }}
     >
-      {parts.join(' · ')}
+      {parts.join(" · ")}
     </span>
   );
 }

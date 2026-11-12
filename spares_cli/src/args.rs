@@ -9,7 +9,6 @@ use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
 use spares_core::api::tag::DEFAULT_TAG_AUTO_DELETE;
-use spares_core::config::Environment;
 use spares_core::model::CardId;
 use spares_core::model::NoteId;
 use spares_core::model::Score;
@@ -37,8 +36,10 @@ pub(crate) fn get_current_utc_datetime() -> DateTime<Utc> {
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 pub(crate) struct Cli {
-    #[arg(short, long, default_value_t = Environment::Production)]
-    pub(crate) environment: Environment,
+    /// The spares host to talk to, such as `https://spares.example.com` (default: the one `spares
+    /// login` last logged in to, else the host in `SPARES_ROOT` on this machine)
+    #[arg(long, global = true, env = "SPARES_HOST")]
+    pub(crate) host: Option<String>,
 
     #[command(subcommand)]
     pub(crate) command: Commands,
@@ -77,7 +78,8 @@ pub(crate) enum Commands {
     /// server. They are not synced.
     #[command(arg_required_else_help = true)]
     SavedSearch(SavedSearchArgs),
-    /// Deploy spares to a VPS as the sync server, and set up this machine to sync with it
+    /// Deploy spares to a VPS as a host, the root of your collection's sync chain, and make this
+    /// machine's host sync with it
     ///
     /// spares is built here, from the checkout of the spares repository this runs in (or else the
     /// one this binary was built from), as it is, and uploaded: the server needs neither the
@@ -89,6 +91,16 @@ pub(crate) enum Commands {
     /// Keep notes in a git (or jj) repository synced with spares by push and fetch
     #[command(arg_required_else_help = true)]
     Vcs(VcsArgs),
+    /// Run a spares host: create one, add accounts, import a collection
+    ///
+    /// These work on the host's root directory directly, so they need no login: whoever can read
+    /// it is the host's admin.
+    #[command(arg_required_else_help = true)]
+    Host(spares_server::host::admin::HostArgs),
+    /// Log in to a host, keeping a device token for it (see `spares logout`)
+    Login(crate::login::LoginArgs),
+    /// Forget and revoke this machine's token for a host
+    Logout(crate::login::LogoutArgs),
 }
 
 #[derive(Args, Debug)]
@@ -121,6 +133,26 @@ pub(crate) enum ParserCommands {
         #[arg(short, long)]
         limit: Option<usize>,
     },
+    /// Write a parser's default template to its file in this machine's collection, to edit it
+    ///
+    /// Until then, the parser uses its default, which changes with spares. Prints the file's path.
+    /// A template that already has a file is left as it is.
+    Template {
+        /// The parser's name, e.g. `markdown`
+        name: String,
+        #[arg(value_enum, default_value_t = TemplateKind::Note)]
+        kind: TemplateKind,
+    },
+}
+
+/// See `spares_core::parsers::TemplateType`
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum TemplateKind {
+    /// Notes' files, and cards' without a card template
+    Note,
+    Card,
+    /// Exported notes
+    Export,
 }
 
 #[derive(Args, Debug)]
@@ -285,7 +317,7 @@ pub(crate) struct VcsArgs {
 pub(crate) enum VcsCommands {
     /// Keep notes in a git (or jj) repository you push to, instead of syncing local files
     ///
-    /// Spares writes notes to a repository it commits to (`notes-spares` in the data directory),
+    /// Spares writes notes to a repository it commits to (`notes.git` in the collection's directory),
     /// and your notes directory becomes a clone of it. Fetch to get changes made in spares; push
     /// to `main` to import your changes. The server must be running. Rerunning continues an
     /// interrupted setup.
@@ -411,7 +443,9 @@ pub(crate) enum CardCommands {
     /// each seeing the due dates already given to the others, so rescheduling only some of them
     /// would leave the load spread across days unbalanced.
     ///
-    /// It cannot be undone, so it asks for confirmation.
+    /// It changes every card, so it asks for confirmation. It prints the event that logs the cards
+    /// it changed: `spares event undo <id>` restores them (a plain `spares event undo` skips it),
+    /// but not the settings that called for it.
     Reschedule(RescheduleArgs),
     /// Fit the scheduler's parameters to your review history and compare them with the current
     /// ones. Use `--apply` to save them and reschedule every card.
@@ -425,9 +459,26 @@ pub(crate) enum CardCommands {
     ///
     /// With `--apply`, the parameters are saved to `fsrs_parameters` in config.toml only if they
     /// predict your reviews better than the current ones, and every card is rescheduled. Like
-    /// `spares card reschedule`, this cannot be undone, so it asks for confirmation. Optimizing
+    /// `spares card reschedule`, it asks for confirmation, and undoing the event it prints restores
+    /// the cards but not the parameters it saved. Optimizing
     /// again every month or so keeps the parameters in step with your history.
     Optimize(OptimizeArgs),
+    /// Recommend learning and relearning steps from how quickly cards are forgotten in them
+    ///
+    /// Like fsrs4anki-helper's Steps Stats. Each review in a step is paired with the card's next
+    /// review, if it came within a day, and grouped by what came before: a new card's first rating
+    /// of Again, Hard or Good, Again then Good, or a lapse. Each group is fitted the stability whose
+    /// forgetting curve best predicts which of the next reviews were recalled. A step is the time it
+    /// takes recall to fall to the cards' desired retention:
+    ///
+    /// - first learning step: after Again
+    /// - second learning step: the shortest of Again then Good, Good, and twice Hard less the first
+    ///   step (Hard waits halfway between the first two steps)
+    /// - relearning step: after a lapse
+    ///
+    /// Steps are set per preset, so this looks at one preset's cards at a time. Groups with fewer
+    /// than 100 reviews recommend nothing. It changes nothing: set the steps in config.toml.
+    Steps(StepsArgs),
     /// Forget cards (reset scheduling, keep review logs)
     Forget(ForgetCardArgs),
     /// Unbury all cards
@@ -554,6 +605,17 @@ pub(crate) struct ExportArgs {
     pub(crate) query: String,
     #[arg(short, long)]
     pub(crate) output_dir: PathBuf,
+    /// Export the notes to share with someone else: another collection imports them as new notes,
+    /// and what is private or only means something here is left out, such as notes tagged
+    /// `private` (see `spares_core::api::note::export`). Without this, importing the file updates
+    /// the notes in this collection.
+    #[arg(long)]
+    pub(crate) share: bool,
+    /// With `--share`, write the notes' files and their media into one zip, named by
+    /// `--output-dir`, such as `-o shared.zip`, to send as one file. `spares import` and the web
+    /// app import it.
+    #[arg(long, requires = "share")]
+    pub(crate) zip: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -612,6 +674,17 @@ pub(crate) struct OptimizeArgs {
     /// Skip the confirmation prompt for `--apply`
     #[arg(short, long)]
     pub(crate) yes: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct StepsArgs {
+    /// The preset (`[queue.presets.<name>]`) whose cards to look at. Without it, the cards that use
+    /// no preset, which have the top-level steps.
+    #[arg(short, long)]
+    pub(crate) preset: Option<String>,
+    /// Only cards first reviewed in the last this many days, and lapses in them. 0 for all time.
+    #[arg(short, long, default_value_t = 365)]
+    pub(crate) days: u32,
 }
 
 #[derive(Args, Debug)]
@@ -881,15 +954,6 @@ mod tests {
     fn migrate_parses() {
         assert!(Cli::try_parse_from(["spares", "migrate", "--adapter", "anki"]).is_ok());
         assert!(Cli::try_parse_from(["spares", "migrate"]).is_err());
-        let cli = Cli::try_parse_from(["spares", "migrate", "ids", "--dry-run"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Commands::Migrate(MigrateArgs {
-                command: Some(crate::migrate::MigrateCommands::Ids { dry_run: true }),
-                ..
-            })
-        ));
-        assert!(Cli::try_parse_from(["spares", "migrate", "ids"]).is_ok());
     }
 
     #[test]

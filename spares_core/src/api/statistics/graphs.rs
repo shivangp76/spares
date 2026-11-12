@@ -21,6 +21,7 @@ use super::local_time::Zone;
 use super::local_time::date_of_day_number;
 use super::local_time::day_number;
 use crate::Error;
+use crate::api::study_pace::capped_answer_seconds;
 use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::model::CardId;
@@ -139,6 +140,9 @@ struct Context<'a> {
     period_first_day: NaiveDate,
     period_start: i64,
     mature_seconds: i64,
+    /// The seconds of a review, capped by
+    /// [`SparesExternalConfig::maximum_answer_time`].
+    answer_seconds: String,
 }
 
 impl Context<'_> {
@@ -194,7 +198,7 @@ pub(crate) async fn get_statistics_graphs_with(
     request: StatisticsGraphsRequest,
 ) -> Result<StatisticsGraphsResponse, Error> {
     let scheduler = get_scheduler_from_string(&request.scheduler_name)?;
-    let zone = Zone::parse(request.tz.as_deref())?;
+    let zone = Zone::for_client(request.tz.as_deref(), config)?;
     let cards = CardFilter::new(db, request.query.as_deref()).await?;
     let now = request.date;
     let today = zone.date(now);
@@ -219,6 +223,7 @@ pub(crate) async fn get_statistics_graphs_with(
         period_first_day,
         period_start: zone.start_of(period_first_day).timestamp(),
         mature_seconds: i64::from(mature_threshold_days) * SECONDS_PER_DAY,
+        answer_seconds: capped_answer_seconds("", config.maximum_answer_seconds()),
     };
     let forecast_days = request.forecast_days.clamp(1, MAX_FORECAST_DAYS);
     let (
@@ -285,13 +290,14 @@ async fn today_stats(context: &Context<'_>) -> Result<TodayStats, Error> {
     let rows: Vec<(u8, u8, bool, u32, i64)> = context
         .fetch_all(&format!(
             "SELECT kind, {class} AS class, {passed} AS passed, COUNT(*),
-                    COALESCE(SUM(recall_duration + rate_duration), 0)
+                    COALESCE(SUM({answer_seconds}), 0)
              FROM review_log
              WHERE reviewed_at >= {start} AND reviewed_at < {end} AND kind IN ({REVIEW}, {CRAM}){cards}
              GROUP BY kind, class, passed",
             class = context.class(),
             passed = context.passed(),
             start = context.today_start,
+            answer_seconds = context.answer_seconds,
             end = context.tomorrow_start,
             cards = context.cards.sql("card_id"),
         ))
@@ -396,12 +402,13 @@ async fn reviews(context: &Context<'_>) -> Result<(Vec<ReviewDay>, ReviewsSummar
     let rows: Vec<(i64, u8, u8, u32, i64)> = context
         .fetch_all(&format!(
             "SELECT {day} AS day, kind, {class} AS class, COUNT(*),
-                    COALESCE(SUM(recall_duration + rate_duration), 0)
+                    COALESCE(SUM({answer_seconds}), 0)
              FROM review_log{hint}
              WHERE reviewed_at >= {start} AND reviewed_at < {end} AND kind IN ({REVIEW}, {CRAM}){cards}
              GROUP BY day, kind, class",
             day = clock.day("reviewed_at"),
             class = context.class(),
+            answer_seconds = context.answer_seconds,
             hint = context.cards.scan_hint(context.period_first_day < context.today - Days::new(180)),
             start = context.period_start,
             end = context.tomorrow_start,
@@ -666,7 +673,7 @@ async fn cards_and_distributions(
     Ok(summarize_cards(
         counts,
         rows,
-        context.scheduler.retrievability(config),
+        context.scheduler.retrievability(config).as_ref(),
         context.now,
         context.mature_seconds,
     ))
@@ -686,7 +693,7 @@ type CardRow = (StateId, Option<u8>, i64, f64, f64, Option<i64>);
 fn summarize_cards(
     counts: Vec<StateCount>,
     rows: Vec<CardRow>,
-    retrievability: Option<RetrievabilityFn>,
+    retrievability: Option<&RetrievabilityFn>,
     now: DateTime<Utc>,
     mature_seconds: i64,
 ) -> (CardCounts, Distributions) {
@@ -705,33 +712,63 @@ fn summarize_cards(
     let mut stabilities = Vec::with_capacity(rows.len());
     let mut difficulties = Vec::with_capacity(rows.len());
     let mut recalls = Vec::with_capacity(rows.len());
+    // Over the cards in review (see `Distributions::daily_load`)
+    let mut daily_load = 0.0;
+    let mut review_recalls = Vec::new();
+    let mut review_stabilities = Vec::new();
     for (state, special_state, due, stability, difficulty, last_review) in rows {
         let interval = last_review.map(|last| due - last);
-        if state_role(state) == Some(StateRole::Review) && special_state.is_none() {
+        let in_review = state_role(state) == Some(StateRole::Review);
+        if in_review && special_state.is_none() {
             if interval.is_some_and(|interval| interval >= mature_seconds) {
                 card_counts.mature += 1;
             } else {
                 card_counts.young += 1;
             }
         }
-        intervals.extend(interval.map(|interval| interval.max(0) as f64 / SECONDS_PER_DAY as f64));
+        let interval_days =
+            interval.map(|interval| interval.max(0) as f64 / SECONDS_PER_DAY as f64);
+        intervals.extend(interval_days);
         stabilities.push(stability);
         difficulties.push(difficulty);
-        if let (Some(retrievability), Some(last)) = (&retrievability, last_review) {
-            recalls.push(retrievability(
+        let recall = match (retrievability, last_review) {
+            (Some(retrievability), Some(last)) => Some(retrievability(
                 stability,
                 (now - last) as f64 / SECONDS_PER_DAY as f64,
-            ));
+            )),
+            _ => None,
+        };
+        recalls.extend(recall);
+        if in_review
+            && special_state != Some(SpecialState::Suspended as u8)
+            && let Some(interval_days) = interval_days
+        {
+            daily_load += 1.0 / interval_days.max(1.0);
+            review_stabilities.push(stability);
+            review_recalls.extend(recall);
         }
     }
+    let has_curve = retrievability.is_some();
     let distributions = Distributions {
         interval: histogram(intervals, Some(0.0)),
         stability: histogram(stabilities, Some(0.0)),
         difficulty: histogram(difficulties, None),
-        total_knowledge: retrievability.as_ref().map(|_| recalls.iter().sum()),
-        retrievability: retrievability.map(|_| fixed_histogram(&recalls, 0.0, 1.0, 20)),
+        total_knowledge: has_curve.then(|| recalls.iter().sum()),
+        retrievability: has_curve.then(|| fixed_histogram(&recalls, 0.0, 1.0, 20)),
+        daily_load,
+        average_retrievability: mean(&review_recalls),
+        average_stability: if has_curve {
+            mean(&review_stabilities)
+        } else {
+            None
+        },
     };
     (card_counts, distributions)
+}
+
+#[expect(clippy::cast_precision_loss, reason = "card counts are far below 2^52")]
+fn mean(values: &[f64]) -> Option<f64> {
+    (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
 }
 
 /// The most buckets [`histogram`] makes.
@@ -778,7 +815,7 @@ fn histogram(mut values: Vec<f64>, lower: Option<f64>) -> Histogram {
     Histogram {
         edges,
         counts,
-        mean: Some(values.iter().sum::<f64>() / values.len() as f64),
+        mean: mean(&values),
     }
 }
 
@@ -811,7 +848,7 @@ fn fixed_histogram(values: &[f64], lower: f64, upper: f64, buckets: usize) -> Hi
     Histogram {
         edges: (0..=buckets).map(|i| lower + i as f64 * width).collect(),
         counts,
-        mean: (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64),
+        mean: mean(values),
     }
 }
 
@@ -835,6 +872,10 @@ mod tests {
         assert_eq!(distributions.retrievability, None);
         assert_eq!(distributions.total_knowledge, None);
         assert_eq!(distributions.interval.mean, Some(30.0));
+        assert_eq!(distributions.average_retrievability, None);
+        assert_eq!(distributions.average_stability, None);
+        // The load needs no forgetting curve
+        assert!((distributions.daily_load - 1.0 / 30.0).abs() < 1e-12);
     }
 
     #[test]

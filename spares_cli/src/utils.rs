@@ -182,3 +182,19 @@ pub(crate) fn local_timezone() -> Option<String> {
     zone.split_once("/zoneinfo/")
         .map(|(_, zone)| zone.to_string())
 }
+
+/// Awaits `work` while a spinner on stderr says what is being waited on and for how long, so a
+/// request the server takes a while to answer, e.g. rendering every note, does not look like a
+/// hang. The spinner is cleared when `work` is done and is not shown when stderr is not a
+/// terminal.
+pub(crate) async fn with_spinner<T>(message: &'static str, work: impl Future<Output = T>) -> T {
+    let spinner = indicatif::ProgressBar::new_spinner().with_message(message);
+    spinner.set_style(
+        indicatif::ProgressStyle::with_template("{spinner:.cyan} {msg} ({elapsed})")
+            .expect("the template is valid"),
+    );
+    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+    let output = work.await;
+    spinner.finish_and_clear();
+    output
+}

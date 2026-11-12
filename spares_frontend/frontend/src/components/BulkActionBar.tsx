@@ -1,15 +1,31 @@
-import { useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
-import { resolveSelection, selectedCount, type IdsOrQuery, type RowSelection } from '../selection';
-import { errorMessage } from '../utils';
-import ActionResult, { type ActionOutcome } from './ActionResult';
+import { useEffect, useId, useImperativeHandle, useRef, useState } from "react";
+import {
+  resolveSelection,
+  selectedCount,
+  type IdsOrQuery,
+  type RowSelection,
+} from "../selection";
+import { errorMessage } from "../utils";
+import ActionResult, { type ActionOutcome } from "./ActionResult";
 
 /** What an action asks for before it runs. */
 export type BulkInput =
-  | { kind: 'tags'; suggestions: () => Promise<string[]> }
-  | { kind: 'choice'; options: () => Promise<{ value: string; label: string }[]> }
-  | { kind: 'text'; placeholder: string }
-  | { kind: 'datetime' }
-  | { kind: 'number'; placeholder: string; min: number; max: number; step: number };
+  | { kind: "tags"; suggestions: () => Promise<string[]> }
+  /** `initial` is chosen to start with; without it, nothing is. */
+  | {
+      kind: "choice";
+      options: () => Promise<{ value: string; label: string }[]>;
+      initial?: string;
+    }
+  | { kind: "text"; placeholder: string }
+  | { kind: "datetime" }
+  | {
+      kind: "number";
+      placeholder: string;
+      min: number;
+      max: number;
+      step: number;
+    };
 
 export interface BulkAction {
   label: string;
@@ -19,29 +35,40 @@ export interface BulkAction {
   /** Whether it acts on a search rather than on rows, so needs the whole of one selected. */
   wholeSearch?: boolean;
   /**
-   * The question confirmed before running, given how many rows it acts on and what was asked for.
-   * Without one, it runs straight away, as for an action that changes nothing.
-   */
-  confirm?: (count: number, value: string[]) => string;
-  /**
    * Runs the action on `selector`, which has `count` rows. `value` holds the tags asked for, or the
    * one value typed or chosen.
    */
-  run: (selector: IdsOrQuery, value: string[], count: number) => Promise<ActionOutcome>;
+  run: (
+    selector: IdsOrQuery,
+    value: string[],
+    count: number,
+  ) => Promise<ActionOutcome>;
 }
 
-const input: React.CSSProperties = { padding: '4px 8px', fontSize: 13, border: '1px solid var(--border-strong)', borderRadius: 4 };
-const small: React.CSSProperties = { padding: '2px 8px', fontSize: 12 };
+const input: React.CSSProperties = {
+  padding: "4px 8px",
+  fontSize: 13,
+  border: "1px solid var(--border-strong)",
+  borderRadius: 4,
+};
+const small: React.CSSProperties = { padding: "2px 8px", fontSize: 12 };
 
 /** A checkbox that can show that only some of what it stands for is checked. */
-export function Checkbox({ checked, indeterminate = false, onClick, label }: {
+export function Checkbox({
+  checked,
+  indeterminate = false,
+  onClick,
+  label,
+}: {
   checked: boolean;
   indeterminate?: boolean;
   onClick: (e: React.MouseEvent) => void;
   label: string;
 }) {
   const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (ref.current) ref.current.indeterminate = indeterminate; }, [indeterminate]);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
   return (
     <input
       ref={ref}
@@ -49,21 +76,29 @@ export function Checkbox({ checked, indeterminate = false, onClick, label }: {
       checked={checked}
       // The click is handled rather than the change, for its shift key
       onChange={() => {}}
-      onClick={e => { e.stopPropagation(); onClick(e); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e);
+      }}
       aria-label={label}
-      style={{ cursor: 'pointer', margin: 0 }}
+      style={{ cursor: "pointer", margin: 0 }}
     />
   );
 }
 
 /** Tags typed one at a time, as tag names can have spaces in them. */
-function TagsInput({ tags, setTags, suggestions, onSubmit }: {
+function TagsInput({
+  tags,
+  setTags,
+  suggestions,
+  onSubmit,
+}: {
   tags: string[];
   setTags: (tags: string[]) => void;
   suggestions: string[];
   onSubmit: (tags: string[]) => void;
 }) {
-  const [text, setText] = useState('');
+  const [text, setText] = useState("");
   const listId = useId();
 
   /** The tags with what is typed, if anything. */
@@ -74,10 +109,32 @@ function TagsInput({ tags, setTags, suggestions, onSubmit }: {
 
   return (
     <>
-      {tags.map(tag => (
-        <span key={tag} style={{ ...small, border: '1px solid var(--border)', borderRadius: 10, display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+      {tags.map((tag) => (
+        <span
+          key={tag}
+          style={{
+            ...small,
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            display: "inline-flex",
+            gap: 4,
+            alignItems: "center",
+          }}
+        >
           {tag}
-          <button onClick={() => setTags(tags.filter(t => t !== tag))} aria-label={`Leave out ${tag}`} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-muted)' }}>×</button>
+          <button
+            onClick={() => setTags(tags.filter((t) => t !== tag))}
+            aria-label={`Leave out ${tag}`}
+            style={{
+              border: "none",
+              background: "none",
+              padding: 0,
+              cursor: "pointer",
+              color: "var(--text-muted)",
+            }}
+          >
+            ×
+          </button>
         </span>
       ))}
       <input
@@ -85,20 +142,31 @@ function TagsInput({ tags, setTags, suggestions, onSubmit }: {
         list={listId}
         value={text}
         autoFocus
-        onChange={e => setText(e.target.value)}
-        onKeyDown={e => {
-          if (e.key !== 'Enter') return;
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
           e.preventDefault();
           // Enter adds what is typed, or with nothing typed, applies
-          if (text.trim()) { setTags(withTyped()); setText(''); } else onSubmit(tags);
+          if (text.trim()) {
+            setTags(withTyped());
+            setText("");
+          } else onSubmit(tags);
         }}
-        placeholder={tags.length ? 'Another tag, or Enter to apply' : 'Tag, then Enter'}
+        placeholder={
+          tags.length ? "Another tag, or Enter to apply" : "Tag, then Enter"
+        }
         style={{ ...input, minWidth: 160 }}
       />
       <datalist id={listId}>
-        {suggestions.filter(s => !tags.includes(s)).map(s => <option key={s} value={s} />)}
+        {suggestions
+          .filter((s) => !tags.includes(s))
+          .map((s) => (
+            <option key={s} value={s} />
+          ))}
       </datalist>
-      <button onClick={() => onSubmit(withTyped())} style={small}>Apply</button>
+      <button onClick={() => onSubmit(withTyped())} style={small}>
+        Apply
+      </button>
     </>
   );
 }
@@ -113,7 +181,19 @@ export interface BulkActionBarHandle {
  * Runs actions on the rows of a list that are checked, or on all that a search finds. Undoable
  * actions offer Undo once done.
  */
-export default function BulkActionBar({ noun, selection, query, total, onSelectAll, onSelectNone, onInvert, search, actions, onDone, ref }: {
+export default function BulkActionBar({
+  noun,
+  selection,
+  query,
+  total,
+  onSelectAll,
+  onSelectNone,
+  onInvert,
+  search,
+  actions,
+  onDone,
+  ref,
+}: {
   /** What the rows are, as in `note`. */
   noun: string;
   selection: RowSelection;
@@ -144,41 +224,60 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Numbered so each new outcome gets a fresh ActionResult (and Undo button)
-  const [outcome, setOutcome] = useState<{ seq: number; outcome: ActionOutcome } | null>(null);
+  const [outcome, setOutcome] = useState<{
+    seq: number;
+    outcome: ActionOutcome;
+  } | null>(null);
 
-  const plural = (n: number) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+  const plural = (n: number) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
   function choose(action: BulkAction) {
     setError(null);
-    if (!action.input) { void run(action, []); return; }
-    setPending({ action, tags: [], text: '', suggestions: [], options: [] });
-    if (action.input.kind === 'tags') {
+    if (!action.input) {
+      void run(action, []);
+      return;
+    }
+    const text =
+      action.input.kind === "choice" ? (action.input.initial ?? "") : "";
+    setPending({ action, tags: [], text, suggestions: [], options: [] });
+    if (action.input.kind === "tags") {
       action.input.suggestions().then(
-        suggestions => setPending(prev => (prev?.action === action ? { ...prev, suggestions } : prev)),
+        (suggestions) =>
+          setPending((prev) =>
+            prev?.action === action ? { ...prev, suggestions } : prev,
+          ),
         (e: unknown) => setError(errorMessage(e)),
       );
-    } else if (action.input.kind === 'choice') {
+    } else if (action.input.kind === "choice") {
       action.input.options().then(
-        options => setPending(prev => (prev?.action === action ? { ...prev, options } : prev)),
+        (options) =>
+          setPending((prev) =>
+            prev?.action === action ? { ...prev, options } : prev,
+          ),
         (e: unknown) => setError(errorMessage(e)),
       );
     }
   }
 
   async function run(action: BulkAction, value: string[]) {
-    if (action.input && !value.some(v => v.trim())) { setError(`Nothing to ${action.label.toLowerCase()}`); return; }
-    if (action.input?.kind === 'number') {
+    if (action.input && !value.some((v) => v.trim())) {
+      setError(`Nothing to ${action.label.toLowerCase()}`);
+      return;
+    }
+    if (action.input?.kind === "number") {
       const { min, max } = action.input;
       const n = Number(value[0]);
-      if (!(n >= min && n <= max)) { setError(`${value[0]} isn't from ${min} to ${max}`); return; }
+      if (!(n >= min && n <= max)) {
+        setError(`${value[0]} isn't from ${min} to ${max}`);
+        return;
+      }
     }
-    if (action.confirm && !window.confirm(action.confirm(count, value))) return;
     setBusy(true);
     setError(null);
     try {
       const selector = await resolveSelection(selection, query, search);
       const result = await action.run(selector, value, count);
-      setOutcome(prev => ({ seq: (prev?.seq ?? 0) + 1, outcome: result }));
+      setOutcome((prev) => ({ seq: (prev?.seq ?? 0) + 1, outcome: result }));
       setPending(null);
       onDone();
     } catch (e) {
@@ -188,12 +287,14 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
     }
   }
 
-  const wholeSearch = query !== null && selection.all && selection.ids.size === 0;
-  const disabled = (action: BulkAction) => busy || count === 0 || (action.wholeSearch && !wholeSearch);
+  const wholeSearch =
+    query !== null && selection.all && selection.ids.size === 0;
+  const disabled = (action: BulkAction) =>
+    busy || count === 0 || (action.wholeSearch && !wholeSearch);
 
   useImperativeHandle(ref, () => ({
-    choose: label => {
-      const action = actions.find(a => a.label === label);
+    choose: (label) => {
+      const action = actions.find((a) => a.label === label);
       if (action && !disabled(action)) choose(action);
     },
   }));
@@ -206,69 +307,195 @@ export default function BulkActionBar({ noun, selection, query, total, onSelectA
       : `Check ${noun}s, or search for them, to act on them at once`;
 
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 13 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ color: 'var(--text-secondary)' }}>{scope}</span>
-        {query !== null && !wholeSearch && <button onClick={onSelectAll} style={small}>Select all found</button>}
-        {count > 0 && <button onClick={onSelectNone} style={small}>Select none</button>}
-        {(query !== null || count > 0) && <button onClick={onInvert} style={small} title="Check the unchecked, and uncheck the checked">Invert</button>}
-        <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
-          {actions.map(action => (
+    <div
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: 6,
+        padding: "8px 12px",
+        marginBottom: 12,
+        fontSize: 13,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
+        <span style={{ color: "var(--text-secondary)" }}>{scope}</span>
+        {query !== null && !wholeSearch && (
+          <button onClick={onSelectAll} style={small}>
+            Select all found
+          </button>
+        )}
+        {count > 0 && (
+          <button onClick={onSelectNone} style={small}>
+            Select none
+          </button>
+        )}
+        {(query !== null || count > 0) && (
+          <button
+            onClick={onInvert}
+            style={small}
+            title="Check the unchecked, and uncheck the checked"
+          >
+            Invert
+          </button>
+        )}
+        <span
+          style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            marginLeft: "auto",
+          }}
+        >
+          {actions.map((action) => (
             <button
               key={action.label}
               onClick={() => choose(action)}
               disabled={disabled(action)}
-              title={action.wholeSearch && !wholeSearch ? `Search, with every ${noun} found checked` : undefined}
+              title={
+                action.wholeSearch && !wholeSearch
+                  ? `Search, with every ${noun} found checked`
+                  : undefined
+              }
               aria-pressed={pending?.action === action}
-              style={{ ...small, ...(action.danger ? { color: 'var(--danger)' } : {}), ...(pending?.action === action ? { background: 'var(--selected)' } : {}) }}
+              style={{
+                ...small,
+                ...(action.danger ? { color: "var(--danger)" } : {}),
+                ...(pending?.action === action
+                  ? { background: "var(--selected)" }
+                  : {}),
+              }}
             >
-              {action.label}{action.input ? '…' : ''}
+              {action.label}
+              {action.input ? "…" : ""}
             </button>
           ))}
         </span>
       </div>
 
       {pending?.action.input && (
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            alignItems: "center",
+            flexWrap: "wrap",
+            marginTop: 8,
+          }}
+        >
           <span>{pending.action.label}:</span>
-          {pending.action.input.kind === 'tags' ? (
+          {pending.action.input.kind === "tags" ? (
             <TagsInput
               tags={pending.tags}
-              setTags={tags => setPending({ ...pending, tags })}
+              setTags={(tags) => setPending({ ...pending, tags })}
               suggestions={pending.suggestions}
-              onSubmit={tags => { setPending({ ...pending, tags }); void run(pending.action, tags); }}
+              onSubmit={(tags) => {
+                setPending({ ...pending, tags });
+                void run(pending.action, tags);
+              }}
             />
-          ) : pending.action.input.kind === 'choice' ? (
+          ) : pending.action.input.kind === "choice" ? (
             <>
-              <select value={pending.text} autoFocus onChange={e => setPending({ ...pending, text: e.target.value })} style={input}>
-                <option value="" disabled>Choose…</option>
-                {pending.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              <select
+                value={pending.text}
+                autoFocus
+                onChange={(e) =>
+                  setPending({ ...pending, text: e.target.value })
+                }
+                style={input}
+              >
+                <option value="" disabled>
+                  Choose…
+                </option>
+                {pending.options.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
-              <button onClick={() => void run(pending.action, [pending.text])} disabled={busy} style={small}>Apply</button>
+              <button
+                onClick={() => void run(pending.action, [pending.text])}
+                disabled={busy}
+                style={small}
+              >
+                Apply
+              </button>
             </>
           ) : (
             <>
               <input
-                type={{ datetime: 'datetime-local', number: 'number', text: 'text' }[pending.action.input.kind]}
+                type={
+                  {
+                    datetime: "datetime-local",
+                    number: "number",
+                    text: "text",
+                  }[pending.action.input.kind]
+                }
                 value={pending.text}
                 autoFocus
-                onChange={e => setPending({ ...pending, text: e.target.value })}
-                onKeyDown={e => { if (e.key === 'Enter') void run(pending.action, [pending.text]); }}
-                {...(pending.action.input.kind === 'number'
-                  ? { placeholder: pending.action.input.placeholder, min: pending.action.input.min, max: pending.action.input.max, step: pending.action.input.step }
-                  : pending.action.input.kind === 'text' ? { placeholder: pending.action.input.placeholder } : {})}
+                onChange={(e) =>
+                  setPending({ ...pending, text: e.target.value })
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter")
+                    void run(pending.action, [pending.text]);
+                }}
+                {...(pending.action.input.kind === "number"
+                  ? {
+                      placeholder: pending.action.input.placeholder,
+                      min: pending.action.input.min,
+                      max: pending.action.input.max,
+                      step: pending.action.input.step,
+                    }
+                  : pending.action.input.kind === "text"
+                    ? { placeholder: pending.action.input.placeholder }
+                    : {})}
                 style={input}
               />
-              <button onClick={() => void run(pending.action, [pending.text])} disabled={busy} style={small}>Apply</button>
+              <button
+                onClick={() => void run(pending.action, [pending.text])}
+                disabled={busy}
+                style={small}
+              >
+                Apply
+              </button>
             </>
           )}
-          <button onClick={() => setPending(null)} style={small}>Cancel</button>
+          <button onClick={() => setPending(null)} style={small}>
+            Cancel
+          </button>
         </div>
       )}
 
-      {busy && <div style={{ marginTop: 8, color: 'var(--text-secondary)' }}>Working…</div>}
-      {error && <pre style={{ color: 'var(--error)', fontSize: 13, margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{error}</pre>}
-      {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} onReverted={onDone} />}
+      {busy && (
+        <div style={{ marginTop: 8, color: "var(--text-secondary)" }}>
+          Working…
+        </div>
+      )}
+      {error && (
+        <pre
+          style={{
+            color: "var(--error)",
+            fontSize: 13,
+            margin: "8px 0 0",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {error}
+        </pre>
+      )}
+      {outcome && (
+        <ActionResult
+          key={outcome.seq}
+          outcome={outcome.outcome}
+          onReverted={onDone}
+        />
+      )}
     </div>
   );
 }

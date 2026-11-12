@@ -9,11 +9,11 @@ use sqlx::SqlitePool;
 use super::commit::commit_index;
 use super::commit::git_index_lock;
 use super::git::git;
+use super::note_file::NoteFileContext;
 use super::note_file::construct_db_note_file;
 use super::paths::enabled;
 use super::paths::note_rel_path;
 use super::paths::server_repo_dir;
-use super::paths::write_render_hash;
 use super::receive::StatusResponse;
 use super::receive::recover;
 use super::receive::status;
@@ -31,9 +31,7 @@ use crate::api::note::get_render_note_data;
 use crate::api::note::render_notes;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
-use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::find_parser;
-use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_all_parsers;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::RenderNotesRequest;
@@ -51,13 +49,12 @@ pub fn init_staging_dir() -> PathBuf {
 pub struct InitResponse {
     pub notes_dir: PathBuf,
     pub note_count: usize,
-    /// Notes whose existing rendered file stays valid, so they are not compiled again
-    pub render_hashes_kept: usize,
 }
 
 /// Creates the server copy of the notes repository from the database and activates it. The caller
 /// holds the exclusive notes lock, so no change can land between the snapshot and the activation.
 pub async fn init_server_repo(db: &SqlitePool) -> Result<InitResponse, Error> {
+    let context = NoteFileContext::default();
     let repo = server_repo_dir();
     if repo.exists() {
         return Err(Error::NotesVcs(format!(
@@ -97,41 +94,15 @@ pub async fn init_server_repo(db: &SqlitePool) -> Result<InitResponse, Error> {
         get_note_links_map(db, &ids).await?
     };
     let parsers = get_all_parsers();
-    let legacy_dir = get_data_dir().join("notes");
-    let mut render_hashes_kept = 0;
     for row in &rows {
         let parser = find_parser(&row.parser_name, &parsers)?;
         let rel = note_rel_path(parser.as_ref(), row.note_id);
-        let contents = construct_db_note_file(parser.as_ref(), row, &links)?;
+        let contents = construct_db_note_file(&context, parser.as_ref(), row, &links)?;
         let path = staging_repo.join(&rel);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
         }
         std::fs::write(&path, &contents).map_err(|e| io_error(&path, e))?;
-
-        // Keep the rendered file valid if it was compiled from exactly this content, which the
-        // legacy file's hash line records.
-        let hash = blake3::hash(contents.as_bytes()).to_hex().to_string();
-        let legacy_hash = std::fs::read_to_string(legacy_dir.join(&rel))
-            .ok()
-            .and_then(|legacy| {
-                legacy
-                    .lines()
-                    .rev()
-                    .find(|line| !line.is_empty())
-                    .and_then(|line| {
-                        parser
-                            .extract_comment(line)
-                            .strip_prefix("hash: ")
-                            .map(str::to_string)
-                    })
-            });
-        let mut rendered = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
-        rendered.push(parser.get_output_filename(RenderOutputType::Note, row.note_id));
-        if legacy_hash.as_deref() == Some(hash.as_str()) && rendered.exists() {
-            write_render_hash(parser.get_parser_name(), row.note_id, &hash);
-            render_hashes_kept += 1;
-        }
     }
 
     if !GITIGNORE.is_empty() {
@@ -146,6 +117,8 @@ pub async fn init_server_repo(db: &SqlitePool) -> Result<InitResponse, Error> {
             "commit",
             "-q",
             "--no-verify",
+            // A new account's collection has no notes yet.
+            "--allow-empty",
             "-m",
             "spares: initial import",
         ],
@@ -161,7 +134,6 @@ pub async fn init_server_repo(db: &SqlitePool) -> Result<InitResponse, Error> {
     Ok(InitResponse {
         notes_dir: repo,
         note_count: rows.len(),
-        render_hashes_kept,
     })
 }
 
@@ -234,17 +206,11 @@ fn check_hooks() {
     match hooks {
         Ok(hooks) if same_path(&hooks, &expected) => {
             for hook in ["pre-receive", "push-to-checkout", "post-receive"] {
-                match std::fs::read_to_string(expected.join(hook)) {
-                    Err(_) => log::warn!(
+                if !expected.join(hook).is_file() {
+                    log::warn!(
                         "The `{hook}` hook is missing from {}; run `spares vcs init --repair-hooks`",
                         expected.display()
-                    ),
-                    // Hooks written before `spares vcs` run `spares note vcs-hook`, which is gone
-                    Ok(script) if !script.contains(" vcs hook ") => log::warn!(
-                        "The `{hook}` hook in {} is from an older spares; run `spares vcs init --repair-hooks`",
-                        expected.display()
-                    ),
-                    Ok(_) => {}
+                    );
                 }
             }
         }

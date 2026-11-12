@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use clap::Args;
-use clap::Subcommand;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -16,31 +15,16 @@ use spares_core::schema::note::NotesSelector;
 use spares_core::schema::note::RenderNotesRequest;
 use sqlx::SqlitePool;
 
+use crate::utils::with_spinner;
+
 #[derive(Args, Debug)]
-#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 pub(crate) struct MigrateArgs {
-    #[command(subcommand)]
-    pub(crate) command: Option<MigrateCommands>,
-    #[arg(short, long, required = true)]
-    pub(crate) adapter: Option<String>,
+    #[arg(short, long)]
+    pub(crate) adapter: String,
     #[arg(short, long, default_value_t = false)]
     pub(crate) initial_migration: bool,
     #[arg(short, long, default_value_t = true)]
     pub(crate) dry_run: bool,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum MigrateCommands {
-    /// Renumber notes from numeric ids to letter ids, once
-    ///
-    /// Stop the server first. Renumbers notes in the database, renames their files in the notes
-    /// repository in one commit, and renders every note and card again. Old ids are written to
-    /// `id-map.tsv` in the data directory. Rerun it to finish if it stopped partway.
-    Ids {
-        /// Try it on a copy of the database and print what would change, without changing anything
-        #[arg(long)]
-        dry_run: bool,
-    },
 }
 
 fn migration_func(
@@ -99,7 +83,6 @@ fn migration_func(
 }
 
 async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result<(), String> {
-    println!("Rendering notes...");
     let start = Instant::now();
     let url = format!("{}/api/notes/generate_files", base_url);
     let request = RenderNotesRequest {
@@ -112,10 +95,7 @@ async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result
         force_generate_rendered: false,
     };
     if run {
-        let response = client
-            .post(url)
-            .json(&request)
-            .send()
+        let response = with_spinner("Rendering notes", client.post(url).json(&request).send())
             .await
             .map_err(|e| format!("{}", e))?;
         let status = response.status();

@@ -1,11 +1,14 @@
 pub mod adapters;
 pub mod api;
+pub mod collection;
 pub mod config;
 pub(crate) mod helpers;
 pub mod ids;
 pub mod model;
 pub mod notes_vcs;
 pub mod parsers;
+pub mod platform;
+pub mod render;
 pub mod schedulers;
 pub mod schema;
 pub mod search;
@@ -31,6 +34,7 @@ pub enum Error {
     },
     #[error(transparent)]
     ApiRequest(#[from] reqwest::Error),
+    #[cfg(not(target_family = "wasm"))]
     #[error(transparent)]
     Trash(#[from] trash::Error),
     #[error(transparent)]
@@ -49,6 +53,9 @@ pub enum Error {
     /// Sync failed. Nothing was committed on this side.
     #[error("Sync failed: {0}")]
     Sync(String),
+    /// The sync server could not be reached, e.g. offline. Nothing was committed on this side.
+    #[error("Sync failed: {0}")]
+    SyncUnreachable(String),
     /// The other replica changed while syncing, so the sync has to start over. Nothing was
     /// committed on the side that returns it.
     #[error("The other replica changed during the sync; retry")]
@@ -57,6 +64,10 @@ pub enum Error {
     /// database (`spares sync cloud --full-upload` or `--full-download`).
     #[error("A full sync is required: {0}")]
     FullSyncRequired(String),
+    /// A replica from 2 up asked to sync without being enrolled with the server (see
+    /// [`sync::devices`]). Its number may belong to another device by now.
+    #[error("Replica {0} is not enrolled with the sync server. Set up this device's copy again.")]
+    NotEnrolled(u8),
     // #[error("{0}")]
     // Other(String),
 }

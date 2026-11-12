@@ -1,6 +1,6 @@
 //! The client's half of a normal sync: merging the server's changes into the local database.
 //!
-//! [`merge_pulled`] runs inside the transaction that also pushes and stamps (see
+//! [`merge_pulled`] runs inside the transaction that also marks what to push (see
 //! [`super::run`]), with the triggers off. It writes every row it takes from the server with the
 //! pull's usn, and every row the server has to receive (local changes, merge results) with
 //! `usn = -1`, so the push is simply everything dirty afterwards.
@@ -24,7 +24,7 @@
 //! | Note tags, non-embedded keywords, card tags | Set merge: additions and removals from either side applied. |
 //! | Note and card `custom_data` | Key by key. A key both sides changed: local for notes, the newer change for cards. |
 //! | Note `parser_id`, `created_at` | Three-way; local wins a conflict. |
-//! | review_log | Union. A log keeps its card and tag where either side still has them. |
+//! | review_log | Union. A log keeps its card and tag where either side still has them. One an undo took back on either side (its grave) is deleted on both. |
 //! | Card scheduling (`due`, `stability`, `difficulty`, `state`) | As a whole from the side that changed it. Both changed: the side with the newer review, else the newer change. If both reviewed, the memory state is replayed from the merged logs. |
 //! | Card `special_state`, `desired_retention` | Three-way; the newer change wins a conflict. |
 //! | Card `order`, `back_type`, `note_id` | Follow the note text ([`reconcile_cards`]). |
@@ -193,7 +193,18 @@ pub async fn merge_pulled(
         merger.merge_card(record).await?;
     }
     for record in &pulled.review_logs {
-        upsert_review_log(merger.conn, record, usn).await?;
+        // One an undo here took back stays gone, and its grave is pushed
+        if !has_grave(merger.conn, SyncKind::ReviewLog, record.id).await? {
+            upsert_review_log(merger.conn, record, usn).await?;
+        }
+    }
+    // One an undo there took back, before the cards' memory states are replayed from their logs
+    for grave in pulled
+        .graves
+        .iter()
+        .filter(|g| g.kind == SyncKind::ReviewLog)
+    {
+        delete_row(merger.conn, grave.kind, grave.oid).await?;
     }
     merger.replay_cards().await?;
     for grave in pulled.graves.iter().filter(|g| g.kind == SyncKind::Card) {
@@ -645,9 +656,12 @@ impl Merger<'_> {
         let mut text = match &tokens {
             Some((b, l, r)) => match merge_text(b, l, r) {
                 // The sides name different cards in the same place (each replaced a card), but
-                // their texts may still merge, matching cards by position.
+                // their texts may still merge, matching cards by position. Also when both made
+                // the same edit, as when each added the same cloze without its order and gave it
+                // a card of its own.
                 TextMerge::Conflict => match merge_text(&base.data, &local.data, &remote.data) {
                     TextMerge::Merged(merged) => TextMerge::Merged(merged),
+                    _ if local.data == remote.data => TextMerge::Merged(local.data.clone()),
                     _ => TextMerge::Conflict,
                 },
                 text => text,

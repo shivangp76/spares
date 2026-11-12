@@ -1,182 +1,6 @@
-//! `spares import`: adding and updating notes from files.
-//!
-//! # Live notes
-//!
-//! Live notes let you write notes in a source file and keep them in sync with the database across
-//! repeated imports. Each "live sync group" is identified by a `live-sync-name` set in the file's
-//! global settings. Notes with the same `live-sync-name` are matched to the database by their
-//! position in the file (block 0, block 1, …), so edits to existing notes are updated rather than
-//! duplicated.
-//!
-//! Note boundaries are determined by file position. You can freely add, delete, or reorder notes in
-//! the file — each note is matched to the database by `(live_sync_name, block_order)`, where
-//! `block_order` is its 0-based index within that sync group. Content outside note boundaries
-//! (headings, comments, prose) is preserved verbatim across imports.
-//!
-//! ## 1. Mark notes as live
-//!
-//! Add `live-sync-name` to the global settings of your file, *before* any notes:
-//!
-//! ```md
-//! <!--- spares: start --->
-//! <!--- # live-sync-name: lecture_notes_501 --->
-//!
-//! # Oceans
-//!
-//! <!--- spares: note start --->
-//! The Pacific Ocean's deepest point is {{the Mariana Trench}}.
-//! <!--- spares: note end --->
-//!
-//! Some geographers split the Pacific into the North and South Pacific.
-//!
-//! <!--- spares: note start --->
-//! The Atlantic Ocean's deepest point is {{the Puerto Rico Trench}}.
-//! <!--- spares: note end --->
-//!
-//! <!--- spares: end --->
-//! ```
-//!
-//! Notes after a `live-sync-name` setting belong to that sync group and are assigned
-//! `live_block_order` 0, 1, 2, … in file order. The headings (`# Oceans`) and prose (`Some
-//! geographers split...`) sit outside note boundaries and are not part of any note — they are
-//! preserved across imports without being parsed. You can switch to a different sync group by
-//! setting `live-sync-name` again later in the file.
-//!
-//! ## 2. Import
-//!
-//! ```sh
-//! spares import --parser markdown ./oceans.md
-//! ```
-//!
-//! On import, spares:
-//! - Mints unique `id:` keys on each cloze (e.g. `{{[id:a1b2c3d4e5f6] the Mariana Trench}}`) for
-//!   stable card matching.
-//! - Sets `live_block_order` (the note's position) and `live:<name>` tag.
-//! - Creates a new note in the DB, or updates an existing one matched by `(live_sync_name,
-//!   block_order)`.
-//!
-//! The file is rewritten in place with the new `id:` keys, so subsequent imports see the same IDs:
-//!
-//! ```md
-//! <!--- spares: start --->
-//! <!--- # live-sync-name: lecture_notes_501 --->
-//!
-//! # Oceans
-//!
-//! <!--- spares: note start --->
-//! The Pacific Ocean's deepest point is {{[id:a1b2c3d4e5f6] the Mariana Trench}}.
-//! <!--- spares: note end --->
-//!
-//! Some geographers split the Pacific into the North and South Pacific.
-//!
-//! <!--- spares: note start --->
-//! The Atlantic Ocean's deepest point is {{[id:f6e5d4c3b2a1] the Puerto Rico Trench}}.
-//! <!--- spares: note end --->
-//!
-//! <!--- spares: end --->
-//! ```
-//!
-//! ## 3. Edit and re-import
-//!
-//! Edit the source file freely and re-run the same import command:
-//!
-//! ```sh
-//! spares import --parser markdown ./oceans.md
-//! ```
-//!
-//! Only notes whose content actually changed are updated. Existing cards keep their review history.
-//!
-//! A live note can only be imported from its source file. Importing it from any other file, such as
-//! a per-note file from `spares note generate` (which names its note by id), is refused, since the
-//! next import of the source file would overwrite the edit. `spares note edit` and the notes
-//! repository likewise refuse changes to a live note's data or custom data; its tags and keywords
-//! stay editable there and on the web.
-//!
-//! Matching is **positional**: the first note in the file matches DB entry `(live_sync_name, 0)`,
-//! the second matches `(live_sync_name, 1)`, and so on. This means you can freely adjust note
-//! boundaries and content between them — what matters is each note's ordinal position within its
-//! sync group.
-//!
-//! Here is the file from step 2 after some heavy editing — the Pacific note was deleted, a new
-//! Indian Ocean note was inserted at the top, and non-note content was added. Crucially, the
-//! Atlantic note is **unchanged**:
-//!
-//! ```md
-//! <!--- spares: start --->
-//! <!--- # live-sync-name: lecture_notes_501 --->
-//!
-//! # Deepest Ocean Points
-//!
-//! The five oceans are Pacific, Atlantic, Indian, Southern, and Arctic.
-//!
-//! <!--- spares: note start --->
-//! The Indian Ocean's deepest point is {{the Java Trench}}, which reaches over 7,000 meters.
-//! <!--- spares: note end --->
-//!
-//! Contrast this with the Atlantic:
-//!
-//! <!--- spares: note start --->
-//! The Atlantic Ocean's deepest point is {{[id:f6e5d4c3b2a1] the Puerto Rico Trench}}.
-//! <!--- spares: note end --->
-//!
-//! The Atlantic also contains the Romanche Trench near the equator.
-//!
-//! <!--- spares: end --->
-//! ```
-//!
-//! On re-import:
-//! - The heading changed to `# Deepest Ocean Points` — non-note content, preserved as-is.
-//! - The **new Indian Ocean note** at position 0 gets `block_order = 0` → matches the old Pacific
-//!   DB entry (`a1b2c3d4e5f6`) → **updates** it (the DB entry now stores Indian Ocean content). Its
-//!   cloze has no `id:` yet, so a fresh one is minted.
-//! - The **Atlantic note** stays at position 1 with `id:f6e5d4c3b2a1` intact → gets
-//!   `block_order = 1` → matches its own old DB entry → **updates** it. Because the `id:` key and
-//!   note content are the same, the existing card keeps its review history unchanged.
-//!
-//! The text outside note boundaries (`Contrast this with the Atlantic`, `The Atlantic also
-//! contains...`) is **not parsed** — only content inside `note start`/`note end` is.
-//!
-//! > **Key insight:** Because matching is by `(live_sync_name, block_order)` and block_order is the
-//! > note's file position, deleting or inserting notes shifts the positions of everything that
-//! > follows. Existing clozes keep their review history as long as their `id:` key survives (the
-//! > Atlantic cloze `f6e5d4c3b2a1` is untouched). When you insert a new note, its clozes get fresh
-//! > `id:` keys. The non-note content (headings, commentary) stays untouched.
-//!
-//! A cloze whose note moved to another position, or that you moved to another note (say, by
-//! splitting a note in two), takes its card along to the database note now at that position, so
-//! the card keeps its review history. The database notes themselves stay at their positions:
-//! - Database notes are only created at the end of the sync group, even for a note inserted into
-//!   the middle of the file, so reviewing new cards in the order their notes were created
-//!   (`new_order = "created"`) follows the file, even after stripping liveness.
-//! - A note's tags and keywords set outside the file (on the web, say) belong to its position, so
-//!   they apply to whichever note is there after notes are inserted or deleted before it.
-//! - When the file has fewer notes than before, the database notes past its end are deleted, along
-//!   with the cards of their clozes that are no longer in the file.
-//!
-//! Since a note that cannot be parsed would shift the positions of the notes after it, the import of
-//! a file with one is refused.
-//!
-//! ## 4. Strip liveness (finalize)
-//!
-//! Once the notes are stable, remove all live-sync machinery:
-//!
-//! ```sh
-//! spares import --parser markdown --strip-liveness ./oceans.md
-//! ```
-//!
-//! This:
-//! - Removes `live_sync_name`, `live_block_order` from custom data.
-//! - Removes the `live:<name>` tag from each note.
-//! - Removes `id:` keys from every cloze in the file (the file is rewritten).
-//! - Sets the action to `Update` (matched by `note-id`) so the existing database note is patched
-//!   instead of re-created.
-//!
-//! After stripping, the notes are ordinary notes and can no longer be matched by `live_sync_name`
-//! on subsequent imports.
-//!
-//! > **Note:** `--strip-liveness` requires the notes to already exist in the database. Import them
-//! > first without the flag.
-//!
+//! `spares import`: adding and updating notes from files. The import itself, and how live notes
+//! work, is in `spares_core::api::note::import`: this reads the files, uploads the media bundled
+//! with shared ones, prints what the import did, and writes back the files it rewrote.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -195,19 +19,18 @@ use serde_json::Value;
 use spares_core::Error;
 use spares_core::LibraryError;
 use spares_core::NoteErrorKind;
-use spares_core::ParserErrorKind;
 use spares_core::adapters::SrsAdapter;
-use spares_core::config::SparesExternalConfig;
-use spares_core::config::read_external_config;
-use spares_core::model::NoteId;
-use spares_core::parsers::NoteImportAction;
-use spares_core::parsers::NoteSettings;
+use spares_core::api::note::import::ImportFile;
+use spares_core::api::note::import::ImportOptions;
+use spares_core::api::note::import::ImportOutcome;
+use spares_core::api::note::import::ParserImport;
+use spares_core::api::note::share_bundle::read_bundle;
+use spares_core::api::note::share_bundle::refuse_note_ids;
+use spares_core::api::note::shared_media::bundled_media_references;
 use spares_core::parsers::Parseable;
-use spares_core::parsers::add_cloze_uid_to_file;
 use spares_core::parsers::get_all_parsers;
-use spares_core::parsers::get_file_notes;
-use spares_core::parsers::remove_cloze_uid_from_file;
-use spares_core::parsers::remove_cloze_uid_from_note_data;
+
+use crate::utils::with_spinner;
 
 #[derive(Args, Debug)]
 pub(crate) struct ImportArgs {
@@ -234,7 +57,7 @@ pub(crate) struct ImportArgs {
     /// Strip liveness from live notes (remove `live_sync_name`, `live_block_order`,
     /// `live:NAME` tag, `card.cloze_uid`, and `id:` keys from cloze syntax) instead of
     /// importing them, once the notes are stable. The notes must already exist in the database.
-    /// See "Live notes" in the docs of `spares_cli::import`.
+    /// See "Live notes" in the docs of `spares_core::api::note::import`.
     #[arg(long, default_value_t = false)]
     pub(crate) strip_liveness: bool,
 
@@ -243,18 +66,20 @@ pub(crate) struct ImportArgs {
     pub(crate) files: Vec<PathBuf>,
 }
 
-fn print_notes(notes: &[(NoteSettings, Option<String>)], quiet: bool, dry_run: bool) {
+fn print_notes(import: &ParserImport, quiet: bool, dry_run: bool) {
+    let notes = &import.notes;
     let warnings = notes
         .iter()
         .enumerate()
-        .filter(|(_, (s, _))| !s.errors_and_warnings.is_empty())
-        .map(|(i, (s, _))| (i, s.errors_and_warnings.clone()))
+        .filter(|(_, n)| !n.settings.errors_and_warnings.is_empty())
+        .map(|(i, n)| (i, n.settings.errors_and_warnings.clone()))
         .collect::<Vec<_>>();
     let notes_len = notes.len();
     let mut total_card_count = 0;
-    for (i, (local_settings, note_data_res)) in notes.iter().enumerate() {
+    for (i, note) in notes.iter().enumerate() {
         if !quiet {
-            let Some(note_data) = note_data_res else {
+            let local_settings = &note.settings;
+            let Some(note_data) = &note.data else {
                 continue;
             };
             let card_count = local_settings.cards_count.unwrap();
@@ -308,307 +133,161 @@ fn print_notes(notes: &[(NoteSettings, Option<String>)], quiet: bool, dry_run: b
                 }
             }
         }
-    }
-}
-
-type ParsedNotes = Vec<(NoteSettings, Option<String>)>;
-type GuessResult<'a> = Option<(&'a dyn Parseable, ParsedNotes)>;
-
-struct ParserAggregate<'a> {
-    parser: &'a dyn Parseable,
-    notes: Vec<(NoteSettings, Option<String>)>,
-    update_note_ids: Vec<NoteId>,
-    /// Live notes past the end of their sync group, which no note of its file matches any more
-    stale_live_note_ids: Vec<NoteId>,
-}
-
-fn parse_blocks(
-    parser: &dyn Parseable,
-    to_parser_opt: Option<&dyn Parseable>,
-    contents: &str,
-    adapter: &mut dyn SrsAdapter,
-    dry_run: bool,
-    external_config: Option<&SparesExternalConfig>,
-) -> Result<ParsedNotes, Error> {
-    get_file_notes(
-        parser,
-        to_parser_opt,
-        contents,
-        adapter,
-        !dry_run,
-        external_config.as_ref().map(|c| &c.overlapper),
-    )
-}
-
-fn guess_and_parse_notes<'a>(
-    file_contents: &str,
-    parsers_to_try: &[&'a dyn Parseable],
-    to_parser_opt: Option<&dyn Parseable>,
-    adapter: &mut dyn SrsAdapter,
-    dry_run: bool,
-    external_config: Option<&SparesExternalConfig>,
-) -> Result<GuessResult<'a>, Error> {
-    let mut max_parser: Option<&dyn Parseable> = None;
-    let mut max_parser_all_notes = Vec::new();
-    let mut max_notes_count = 0;
-    for parser in parsers_to_try {
-        let all_notes = parse_blocks(
-            *parser,
-            to_parser_opt,
-            file_contents,
-            adapter,
-            dry_run,
-            external_config,
-        )?;
-        if !all_notes.is_empty() {
-            if max_notes_count > 0 {
-                return Err(Error::Library(LibraryError::Parser(
-                    ParserErrorKind::FailedToGuess(
-                        "More than one parser parsed some notes from the file.".to_string(),
-                    ),
-                )));
-            }
-            max_notes_count = all_notes.len();
-            max_parser = Some(*parser);
-            max_parser_all_notes = all_notes;
+        if !import.deleted_live_note_ids.is_empty() {
+            println!(
+                "{} {} live note(s) past the end of their sync group: {}",
+                if dry_run { "Would delete" } else { "Deleted" },
+                import.deleted_live_note_ids.len(),
+                import.deleted_live_note_ids.iter().join(", ")
+            );
         }
     }
-    if max_notes_count == 0 {
-        Ok(None)
-    } else {
-        let parser = max_parser.ok_or_else(|| {
-            Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
-                "no parser matched but notes were found (internal error)".to_string(),
-            )))
-        })?;
-        Ok(Some((parser, max_parser_all_notes)))
-    }
 }
 
-/// Enriches the clozes between a file's start and end markers with `id:` keys if any are missing.
-/// Returns the enriched file content if any keys were minted, `None` otherwise.
-/// When keys are minted, the enriched content is also queued for deferred file write.
-fn handle_live_sync(
-    parser: &dyn Parseable,
-    file_path: &Path,
-    file_contents: &str,
-    notes: &[(NoteSettings, Option<String>)],
-    dry_run: bool,
-    deferred_writes: &mut Vec<(PathBuf, String)>,
-) -> Result<Option<String>, Error> {
-    let any_live = notes
-        .iter()
-        .any(|(s, _)| s.custom_data.contains_key("live_sync_name"));
-
-    if any_live {
-        let (enriched_contents, minted_count) = add_cloze_uid_to_file(parser, file_contents)?;
-        if minted_count > 0 {
-            if !dry_run {
-                deferred_writes.push((file_path.to_path_buf(), enriched_contents.clone()));
-            }
-            return Ok(Some(enriched_contents));
-        }
-    }
-    Ok(None)
-}
-
-/// Strips liveness from live notes in a file. Removes `live_sync_name`,
-/// `live_block_order`, the `live:{lsn}` tag, and `id:` keys from cloze syntax.
-/// Sets the note action to `Update` so the existing live note in the DB is patched, and adds its id
-/// to `stripped_note_ids`.
-#[expect(clippy::too_many_arguments)]
-async fn handle_strip_liveness(
-    parser: &dyn Parseable,
-    file_path: &Path,
-    file_contents: &str,
-    notes: &[(NoteSettings, Option<String>)],
-    adapter: &mut dyn SrsAdapter,
-    dry_run: bool,
-    deferred_writes: &mut Vec<(PathBuf, String)>,
-    stripped_note_ids: &mut HashSet<NoteId>,
-) -> Result<Option<ParsedNotes>, Error> {
-    let any_live = notes
-        .iter()
-        .any(|(s, _)| s.custom_data.contains_key("live_sync_name"));
-
-    if !any_live {
-        return Ok(None);
-    }
-
-    // Strip ids from the full file text
-    let (stripped_contents, stripped_count) = remove_cloze_uid_from_file(parser, file_contents)?;
-    if stripped_count > 0 && !dry_run {
-        deferred_writes.push((file_path.to_path_buf(), stripped_contents));
-    }
-
-    // Process each note
-    let mut result = Vec::with_capacity(notes.len());
-    let mut counters: HashMap<String, i64> = HashMap::new();
-    for (settings, note_data_opt) in notes {
-        let mut stripped_settings = settings.clone();
-
-        let lsn_opt = stripped_settings
-            .custom_data
-            .get("live_sync_name")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        if let Some(ref lsn) = lsn_opt {
-            // Find the existing live note so we can update (not re-create) it. A file that names
-            // its note, such as a per-note file from `spares note generate`, is trusted, since the
-            // position counter restarts at 0 for every file. Otherwise the note is found by its
-            // position: as the file states it, or as its place among the file's blocks.
-            let explicit_note_id = match stripped_settings.action {
-                NoteImportAction::Update(note_id) => Some(note_id),
-                NoteImportAction::Add | NoteImportAction::Delete(_) => None,
-            };
-            let explicit_block_order = stripped_settings
-                .custom_data
-                .get("live_block_order")
-                .and_then(Value::as_i64);
-            let existing_note_id = if let Some(note_id) = explicit_note_id {
-                if adapter.get_live_sync_name(note_id).await?.as_deref() != Some(lsn) {
-                    return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-                        description: format!(
-                            "Cannot strip liveness from note {note_id}: it is not a live note \
-                             of live-sync-name `{lsn}` in the database."
-                        ),
-                    })));
-                }
-                note_id
-            } else {
-                let block_order = explicit_block_order.unwrap_or_else(|| {
-                    let bo = counters.entry(lsn.clone()).or_insert(0);
-                    let block_order = *bo;
-                    *bo += 1;
-                    block_order
-                });
-                adapter
-                    .find_live_note_by_block_order(lsn, block_order)
-                    .await?
-                    .ok_or_else(|| {
-                        Error::Library(LibraryError::Parser(ParserErrorKind::FailedToGuess(
-                            format!(
-                                "Cannot strip liveness from note at \
-                                 (live_sync_name: {lsn}, block_order: {block_order}): \
-                                 no matching note in the database. Import it first \
-                                 with `spares import` without `--strip-liveness`."
-                            ),
-                        )))
-                    })?
-            };
-            stripped_settings.action = NoteImportAction::Update(existing_note_id);
-            stripped_note_ids.insert(existing_note_id);
-
-            // Remove the synthetic live tag
-            let live_tag = format!("live:{lsn}");
-            stripped_settings.tags.retain(|t| t != &live_tag);
-
-            // Strip the live keys from custom_data
-            stripped_settings.custom_data.remove("live_sync_name");
-            stripped_settings.custom_data.remove("live_block_order");
-        }
-
-        // Strip id: keys only from live notes (non-live notes keep their id: keys)
-        let stripped_data = if lsn_opt.is_some() {
-            match note_data_opt {
-                Some(data) => {
-                    let (stripped, _) = remove_cloze_uid_from_note_data(parser, data)?;
-                    Some(stripped)
-                }
-                None => None,
-            }
-        } else {
-            note_data_opt.clone()
-        };
-        result.push((stripped_settings, stripped_data));
-    }
-
-    Ok(Some(result))
-}
-
-async fn aggregate_note_into_parser_group(
-    mut local_settings: NoteSettings,
-    note_data_res: Option<String>,
-    agg: &mut ParserAggregate<'_>,
-    adapter: &mut dyn SrsAdapter,
-    file_counters: &mut HashMap<String, i64>,
-    stripped_note_ids: &HashSet<NoteId>,
-) -> Result<(), Error> {
-    let lsn_opt = local_settings
-        .custom_data
-        .get("live_sync_name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // A live note is imported only from its source file, whose blocks carry neither a note id nor
-    // a `live_block_order`, since their position within the file is their identity. Any other
-    // file, such as a per-note file from `spares note generate`, would be overwritten by the next
-    // import of the source file. A note whose liveness was just stripped is exempt.
-    let explicit_note_id = match local_settings.action {
-        NoteImportAction::Update(note_id) => Some(note_id),
-        NoteImportAction::Add | NoteImportAction::Delete(_) => None,
-    };
-    if !explicit_note_id.is_some_and(|note_id| stripped_note_ids.contains(&note_id)) {
-        let explicit_block_order = local_settings
-            .custom_data
-            .get("live_block_order")
-            .and_then(Value::as_i64);
-        let named_live_note = match explicit_note_id {
-            Some(note_id) => adapter
-                .get_live_sync_name(note_id)
-                .await?
-                .or_else(|| lsn_opt.clone())
-                .map(|lsn| format!("Note {note_id} is a live note (live-sync-name `{lsn}`)")),
-            None => lsn_opt.as_ref().zip(explicit_block_order).map(|(lsn, block_order)| {
-                format!(
-                    "The note at block {block_order} of live-sync-name `{lsn}` names its position"
-                )
-            }),
-        };
-        if let Some(description) = named_live_note {
-            return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-                description: format!(
-                    "{description}, so it can only be imported from its source file. Edit it \
-                     there and import that file instead."
-                ),
-            })));
-        }
-    }
-
-    if let Some(lsn) = lsn_opt {
-        let bo = file_counters.entry(lsn.clone()).or_insert(0);
-        let block_order = *bo;
-        *bo += 1;
-        match adapter
-            .find_live_note_by_block_order(&lsn, block_order)
-            .await?
-        {
-            Some(note_id) => {
-                local_settings.action = NoteImportAction::Update(note_id);
-                agg.update_note_ids.push(note_id);
-            }
-            None => {
-                local_settings.action = NoteImportAction::Add;
-            }
-        }
-        local_settings.custom_data.insert(
-            "live_block_order".to_string(),
-            Value::Number(block_order.into()),
+/// Prints what an import did, or would do in a dry run
+fn print_outcome(outcome: &ImportOutcome, quiet: bool, dry_run: bool) {
+    if outcome.skipped_note_count > 0 && !quiet {
+        eprintln!(
+            "{} {} note(s) had no parseable data and were skipped.",
+            "Warning:".black().on_bright_yellow(),
+            outcome.skipped_note_count
         );
+    }
+    for import in &outcome.parsers {
+        print_notes(import, quiet, dry_run);
+    }
+}
 
-        let live_tag = format!("live:{lsn}");
-        if !local_settings.tags.iter().any(|t| t == &live_tag) {
-            local_settings.tags.push(live_tag);
+/// Uploads the images, audio and image occlusions bundled with a shared file (see
+/// `spares_core::api::note::shared_media`) to the host, so its notes name them there.
+pub(crate) struct MediaUploader<'a> {
+    pub(crate) base_url: &'a str,
+    pub(crate) client: &'a reqwest::Client,
+}
+
+impl MediaUploader<'_> {
+    /// `contents` of the file at `file_path`, naming the files of the bundle next to it by their
+    /// paths on the host, once they are uploaded. In a dry run, nothing is uploaded and
+    /// `contents` is unchanged.
+    async fn upload_bundled(
+        &self,
+        file_path: &Path,
+        contents: String,
+        dry_run: bool,
+    ) -> Result<String, Error> {
+        let references = bundled_media_references(&contents)
+            .into_iter()
+            .filter(|r| r.path(file_path).is_file())
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return Ok(contents);
+        }
+        let mut uploaded: HashMap<PathBuf, String> = HashMap::new();
+        for reference in &references {
+            let path = reference.path(file_path);
+            if dry_run || uploaded.contains_key(&path) {
+                continue;
+            }
+            let body = std::fs::read(&path).map_err(|e| Error::Io {
+                description: format!("Failed to read {}", path.display()),
+                source: e,
+            })?;
+            let url = format!(
+                "{}/api/sync/media/{}/{}",
+                self.base_url,
+                reference.kind.as_str(),
+                reference.name
+            );
+            let response = self.client.put(url).body(body).send().await?;
+            let status = response.status();
+            let answer: Value = response.json().await?;
+            let host_path = answer.get("path").and_then(Value::as_str);
+            let Some(host_path) = host_path.filter(|_| status.is_success()) else {
+                let message = answer
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map_or_else(|| status.to_string(), ToString::to_string);
+                return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
+                    description: format!("Failed to upload {}: {message}", path.display()),
+                })));
+            };
+            uploaded.insert(path, host_path.to_string());
+        }
+        if dry_run {
+            println!(
+                "Would upload {} images, audio clips and image occlusion files",
+                references
+                    .iter()
+                    .map(|r| r.path(file_path))
+                    .collect::<HashSet<_>>()
+                    .len()
+            );
+            return Ok(contents);
+        }
+        let mut result = String::with_capacity(contents.len());
+        let mut last = 0;
+        for reference in &references {
+            result.push_str(&contents[last..reference.range.start]);
+            result.push_str(&uploaded[&reference.path(file_path)]);
+            last = reference.range.end;
+        }
+        result.push_str(&contents[last..]);
+        Ok(result)
+    }
+}
+
+/// `files`, with each zip of shared notes (`spares note export --share --zip`) unpacked into a
+/// directory of its own under `dir`, as `--share` without `--zip` writes them: its files of notes
+/// in place of the zip, next to their `media`.
+///
+/// `dir` is created, and must not be there yet, so no one else can have put anything in it: on
+/// Unix, only this user can read or write it. A zip whose files name notes by id is refused (see
+/// [`refuse_note_ids`]), so a shared zip only ever adds notes.
+pub(crate) fn unpack_bundles(files: &[PathBuf], dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let mut unpacked = Vec::new();
+    let mut created = false;
+    for (i, file) in files.iter().enumerate() {
+        if file
+            .extension()
+            .is_none_or(|e| !e.eq_ignore_ascii_case("zip"))
+        {
+            unpacked.push(file.clone());
+            continue;
+        }
+        let io = |path: &Path, e| Error::Io {
+            description: format!("Failed to unpack {}", path.display()),
+            source: e,
+        };
+        let bytes = std::fs::read(file).map_err(|e| io(file, e))?;
+        let bundle = read_bundle(&bytes)?;
+        refuse_note_ids(&bundle, &get_all_parsers())?;
+        if !created {
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder.create(dir).map_err(|e| io(dir, e))?;
+            created = true;
+        }
+        let out = dir.join(i.to_string());
+        let write = |name: &str, contents: &[u8]| -> Result<PathBuf, Error> {
+            let path = out.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| io(parent, e))?;
+            }
+            std::fs::write(&path, contents).map_err(|e| io(&path, e))?;
+            Ok(path)
+        };
+        for (name, contents) in &bundle.media {
+            write(name, contents)?;
+        }
+        for (name, contents) in &bundle.files {
+            unpacked.push(write(name, contents.as_bytes())?);
         }
     }
-
-    agg.notes.push((local_settings, note_data_res));
-    Ok(())
+    Ok(unpacked)
 }
 
 /// If `parser.is_none()`, then this function will attempt to automatically determine the parser.
-#[expect(clippy::too_many_lines)]
 pub(crate) async fn import_from_files<P>(
     adapter: &mut dyn SrsAdapter,
     parser_opt: Option<&dyn Parseable>,
@@ -621,217 +300,86 @@ pub(crate) async fn import_from_files<P>(
 where
     P: AsRef<Path>,
 {
+    import_files(
+        adapter,
+        parser_opt,
+        to_parser_opt,
+        file_paths,
+        dry_run,
+        quiet,
+        strip_liveness,
+        None,
+    )
+    .await
+}
+
+/// [`import_from_files`], uploading the files bundled with shared files with `media_uploader`.
+#[expect(clippy::too_many_arguments)]
+pub(crate) async fn import_files<P>(
+    adapter: &mut dyn SrsAdapter,
+    parser_opt: Option<&dyn Parseable>,
+    to_parser_opt: Option<&dyn Parseable>,
+    file_paths: &[P],
+    dry_run: bool,
+    quiet: bool,
+    strip_liveness: bool,
+    media_uploader: Option<&MediaUploader<'_>>,
+) -> Result<(), Error>
+where
+    P: AsRef<Path>,
+{
     if dry_run {
         println!("{}\n", "DRY RUN".black().on_bright_yellow());
     }
 
-    let all_parsers = get_all_parsers()
-        .into_iter()
-        .map(|x| x())
-        .collect::<Vec<_>>();
-    assert!(!all_parsers.is_empty(), "not possible by validation test");
-    let parsers_to_try = if let Some(parser) = parser_opt {
-        vec![parser]
-    } else {
-        all_parsers.iter().map(|x| x.as_ref()).collect::<Vec<_>>()
-    };
-
-    let external_config = read_external_config().ok();
-    let count = file_paths.len();
     let progress_bar = if quiet {
         ProgressBar::hidden()
     } else {
         // count is the number of file paths, always fits in u64
-        ProgressBar::new(count as u64)
+        ProgressBar::new(file_paths.len() as u64)
     };
-
-    let mut aggregates: HashMap<&str, ParserAggregate<'_>> = HashMap::new();
-    let mut skipped_note_count: usize = 0;
-    let mut deferred_writes: Vec<(PathBuf, String)> = Vec::new();
-    let mut stripped_note_ids: HashSet<NoteId> = HashSet::new();
-
+    let mut files = Vec::with_capacity(file_paths.len());
     for file_path in file_paths.iter().progress_with(progress_bar) {
-        let file_contents = read_to_string(file_path).map_err(|e| Error::Io {
-            description: format!("Failed to read {}", file_path.as_ref().display()),
+        let file_path = file_path.as_ref();
+        let contents = read_to_string(file_path).map_err(|e| Error::Io {
+            description: format!("Failed to read {}", file_path.display()),
             source: e,
         })?;
-
-        let parse_result = guess_and_parse_notes(
-            &file_contents,
-            &parsers_to_try,
-            to_parser_opt,
-            adapter,
-            dry_run,
-            external_config.as_ref(),
-        )?;
-
-        let Some((parser, mut max_parser_all_notes)) = parse_result else {
-            if parsers_to_try.len() > 1 {
-                return Err(Error::Library(LibraryError::Parser(
-                    ParserErrorKind::FailedToGuess("All parsers parsed 0 notes.".to_string()),
-                )));
+        let contents = match media_uploader {
+            Some(uploader) => {
+                uploader
+                    .upload_bundled(file_path, contents, dry_run)
+                    .await?
             }
-            if parser_opt.is_none() {
-                return Err(Error::Library(LibraryError::Parser(
-                    ParserErrorKind::FailedToGuess(String::new()),
-                )));
-            }
-            return Ok(());
+            None => contents,
         };
-
-        if strip_liveness {
-            if let Some(stripped) = handle_strip_liveness(
-                parser,
-                file_path.as_ref(),
-                &file_contents,
-                &max_parser_all_notes,
-                adapter,
-                dry_run,
-                &mut deferred_writes,
-                &mut stripped_note_ids,
-            )
-            .await?
-            {
-                max_parser_all_notes = stripped;
-            }
-        } else if let Some(enriched_contents) = handle_live_sync(
-            parser,
-            file_path.as_ref(),
-            &file_contents,
-            &max_parser_all_notes,
-            dry_run,
-            &mut deferred_writes,
-        )? {
-            // Re-parse enriched content so note data carries the same id: keys
-            // as what will be written to the file (fixes double-UID-minting bug).
-            let reparsed = guess_and_parse_notes(
-                &enriched_contents,
-                &parsers_to_try,
-                to_parser_opt,
-                adapter,
-                dry_run,
-                external_config.as_ref(),
-            )?;
-            if let Some((_, reparsed_notes)) = reparsed {
-                max_parser_all_notes = reparsed_notes;
-            }
-        }
-
-        let parser_name = parser.get_parser_name();
-        let agg = aggregates
-            .entry(parser_name)
-            .or_insert_with(|| ParserAggregate {
-                parser,
-                notes: Vec::new(),
-                update_note_ids: Vec::new(),
-                stale_live_note_ids: Vec::new(),
-            });
-
-        let mut file_counters: HashMap<String, i64> = HashMap::new();
-        for (local_settings, note_data_res) in max_parser_all_notes {
-            if note_data_res.is_none() {
-                // Skipping a live note would match every later note of its sync group to the
-                // database note of the one before it.
-                if let Some(lsn) = local_settings
-                    .custom_data
-                    .get("live_sync_name")
-                    .and_then(Value::as_str)
-                {
-                    let block_order = file_counters.get(lsn).copied().unwrap_or(0);
-                    let errors = local_settings
-                        .errors_and_warnings
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-                        description: format!(
-                            "The note at block {block_order} of live-sync-name `{lsn}` in {} \
-                             could not be parsed: {errors}. Live notes are matched by position, \
-                             so fix it before importing the file.",
-                            file_path.as_ref().display()
-                        ),
-                    })));
-                }
-                skipped_note_count += 1;
-                continue;
-            }
-            aggregate_note_into_parser_group(
-                local_settings,
-                note_data_res,
-                agg,
-                adapter,
-                &mut file_counters,
-                &stripped_note_ids,
-            )
-            .await?;
-        }
-
-        // A sync group with fewer notes than before leaves database notes past its end. The cards
-        // of their clozes that moved to other notes go along with them (see `process_data`).
-        for (lsn, count) in &file_counters {
-            let mut block_order = *count;
-            while let Some(note_id) = adapter
-                .find_live_note_by_block_order(lsn, block_order)
-                .await?
-            {
-                agg.stale_live_note_ids.push(note_id);
-                block_order += 1;
-            }
-        }
+        files.push(ImportFile {
+            name: file_path.display().to_string(),
+            contents,
+        });
     }
 
-    if skipped_note_count > 0 && !quiet {
-        eprintln!(
-            "{} {} note(s) had no parseable data and were skipped.",
-            "Warning:".black().on_bright_yellow(),
-            skipped_note_count
-        );
-    }
+    let options = ImportOptions {
+        parser: parser_opt,
+        to_parser: to_parser_opt,
+        dry_run,
+        strip_liveness,
+    };
+    let import = spares_core::api::note::import::import_files(adapter, &files, options, Utc::now());
+    let outcome = if quiet {
+        import.await?
+    } else {
+        with_spinner("Importing notes", import).await?
+    };
+    print_outcome(&outcome, quiet, dry_run);
 
-    let at = Utc::now();
-    for (_name, mut agg) in aggregates {
-        print_notes(&agg.notes, quiet, dry_run);
-        if !agg.stale_live_note_ids.is_empty() {
-            if !quiet {
-                println!(
-                    "Deleting {} live note(s) past the end of their sync group: {}",
-                    agg.stale_live_note_ids.len(),
-                    agg.stale_live_note_ids.iter().join(", ")
-                );
-            }
-            agg.notes
-                .extend(agg.stale_live_note_ids.iter().map(|&note_id| {
-                    let settings = NoteSettings {
-                        action: NoteImportAction::Delete(note_id),
-                        ..NoteSettings::default()
-                    };
-                    (settings, Some(String::new()))
-                }));
-        }
-        let mut update_ids = std::mem::take(&mut agg.update_note_ids);
-        update_ids.sort_unstable();
-        update_ids.dedup();
-        adapter
-            .process_data(
-                std::mem::take(&mut agg.notes),
-                agg.parser,
-                dry_run,
-                quiet,
-                at,
-                update_ids,
-            )
-            .await?;
-    }
-
-    // Flush deferred file writes only after DB commits (fixes Issue #1:
-    // file enriched/stripped before DB → partial inconsistency on crash).
-    // The enrichment/strip is idempotent, so if we crash after this point
-    // the file simply has its processed content and the DB is consistent.
+    // Written only after the database changed, so a crash in between leaves the file as it was
+    // and the database consistent. Rewriting is idempotent, so the next import does it again.
     if !dry_run {
-        for (file_path, contents) in &deferred_writes {
+        for rewritten in &outcome.rewritten {
+            let file_path = file_paths[rewritten.file].as_ref();
             let tmp_path = file_path.with_extension("tmp");
-            write(&tmp_path, contents).map_err(|e| Error::Io {
+            write(&tmp_path, &rewritten.contents).map_err(|e| Error::Io {
                 description: format!("Failed to write {}", tmp_path.display()),
                 source: e,
             })?;
@@ -2234,5 +1782,51 @@ mod tests {
         assert_eq!(note_count, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A zip is unpacked into a directory made for it, which no one else can have filled, and one
+    /// whose notes are named by id is refused.
+    #[test]
+    fn test_unpack_bundles_into_a_new_private_directory() {
+        use spares_core::api::note::share_bundle::write_bundle;
+        use spares_core::schema::note::ExportNotesResponse;
+
+        let base = std::env::temp_dir().join(format!("spares-unpack-test-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let shared = "<!--- spares: start --->\n\n<!--- # action: add --->\n<!--- spares: note start --->\n{{ Paris }} is the capital\n<!--- spares: note end --->\n\n<!--- spares: end --->\n";
+        let zip_of = |text: &str, name: &str| {
+            let export = ExportNotesResponse {
+                files: std::collections::HashMap::from([("md".to_string(), text.to_string())]),
+                ..ExportNotesResponse::default()
+            };
+            let path = base.join(name);
+            std::fs::write(&path, write_bundle(&export).unwrap()).unwrap();
+            path
+        };
+        let zip = zip_of(shared, "shared.zip");
+
+        let dir = base.join("unpacked");
+        let files = unpack_bundles(std::slice::from_ref(&zip), &dir).unwrap();
+        assert_eq!(files, [dir.join("0").join("export.md")]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        // Not into a directory that is already there
+        assert!(unpack_bundles(std::slice::from_ref(&zip), &dir).is_err());
+
+        let by_id = zip_of(
+            &shared.replace("# action: add", "# note-id: aaaa"),
+            "by_id.zip",
+        );
+        let error = unpack_bundles(&[by_id], &base.join("by_id")).unwrap_err();
+        assert!(
+            error.to_string().contains("names notes by their ids"),
+            "{error}"
+        );
+        assert!(!base.join("by_id").exists());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

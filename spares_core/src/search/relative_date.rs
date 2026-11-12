@@ -7,10 +7,17 @@
 
 use std::fmt;
 
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Months;
 use chrono::NaiveDate;
+use chrono::NaiveDateTime;
+use chrono::NaiveTime;
+use chrono::Utc;
 use miette::Error;
 use miette::miette;
 
+use crate::api::statistics::local_time::Zone;
 use crate::model::CardId;
 use crate::model::NoteId;
 
@@ -24,7 +31,10 @@ pub(crate) struct RelativeDate {
 pub(crate) enum Anchor {
     Note(NoteId, DateColumn),
     Card(CardId, DateColumn),
-    /// The start of the current local day.
+    /// The start of the current day, which starts at
+    /// [`SparesExternalConfig::day_starts_at`](crate::config::SparesExternalConfig::day_starts_at)
+    /// in local time, in the zone of
+    /// [`SparesExternalConfig::time_zone`](crate::config::SparesExternalConfig::time_zone).
     Today,
     Now,
 }
@@ -114,8 +124,107 @@ impl RelativeDate {
         Some(next)
     }
 
-    /// An SQL expression for the date as Unix time, matching how dates are stored.
-    pub(crate) fn to_sql(&self) -> String {
+    /// An SQL expression for the date as Unix time, matching how dates are stored. `today` is the
+    /// start of the day that is under way, with days starting `day_starts_at` hours after local
+    /// midnight, in `zone`.
+    ///
+    /// In the server's zone, SQLite's `'localtime'` does the local arithmetic. SQLite knows no
+    /// other zone, so in another one `today` and `now` are worked out here, and the local time of
+    /// another item's date is read with the zone's offsets written out (see
+    /// [`Zone::clock`]).
+    pub(crate) fn to_sql(&self, zone: Zone) -> String {
+        if zone.is_server() {
+            self.to_server_sql(zone.day_starts_at())
+        } else {
+            self.to_zone_sql(zone, Utc::now())
+        }
+    }
+
+    /// [`Self::to_sql`] in a zone that is not the server's, at `now`.
+    fn to_zone_sql(&self, zone: Zone, now: DateTime<Utc>) -> String {
+        let reference = match self.anchor {
+            Anchor::Today => {
+                let start = zone.date(now).and_time(NaiveTime::MIN)
+                    + Duration::hours(i64::from(zone.day_starts_at()));
+                return self
+                    .resolve(zone, Time::Local(start))
+                    .timestamp()
+                    .to_string();
+            }
+            Anchor::Now => return self.resolve(zone, Time::Utc(now)).timestamp().to_string(),
+            Anchor::Note(id, column) => {
+                format!(
+                    "(SELECT {} FROM note WHERE id = {})",
+                    column.name(),
+                    id.packed()
+                )
+            }
+            Anchor::Card(id, column) => {
+                format!("(SELECT {} FROM card WHERE id = {id})", column.name())
+            }
+        };
+        if self.offsets.is_empty() {
+            return reference;
+        }
+        // Exact for the dates within 40 years of now; further away the nearest offset, which can
+        // be an hour off.
+        let years = Duration::days(40 * 365).num_seconds();
+        let clock = zone.clock(now.timestamp() - years, now.timestamp() + years);
+        // Each conversion reads its input once, as `x`, rather than once per offset in the zone.
+        let convert = |sql: &str, convert: &dyn Fn(&str) -> String| {
+            format!("(SELECT {} FROM (SELECT {sql} AS x))", convert("x"))
+        };
+        let mut sql = reference;
+        let mut local = false;
+        for offset in &self.offsets {
+            if offset.unit.is_calendar() != local {
+                sql = if local {
+                    convert(&sql, &|x| clock.utc_seconds(x))
+                } else {
+                    convert(&sql, &|x| clock.seconds(x))
+                };
+                local = !local;
+            }
+            let (modifier, floor) = offset.sql_modifier();
+            let floor = if floor { ", 'floor'" } else { "" };
+            sql = format!("CAST(strftime('%s', {sql}, 'unixepoch', {modifier}{floor}) AS INTEGER)");
+        }
+        if local {
+            sql = convert(&sql, &|x| clock.utc_seconds(x));
+        }
+        format!("(SELECT {sql})")
+    }
+
+    /// The date, from `start`, in `zone`.
+    fn resolve(&self, zone: Zone, start: Time) -> DateTime<Utc> {
+        let mut time = start;
+        for offset in &self.offsets {
+            time = if offset.unit.is_calendar() {
+                let local = match time {
+                    Time::Local(local) => local,
+                    Time::Utc(at) => zone.to_local(at),
+                };
+                Time::Local(offset.add_to_local(local))
+            } else {
+                let at = match time {
+                    Time::Local(local) => zone.to_utc(local),
+                    Time::Utc(at) => at,
+                };
+                let amount = match offset.unit {
+                    OffsetUnit::Hours => Duration::try_hours(offset.amount),
+                    _ => Duration::try_minutes(offset.amount),
+                };
+                Time::Utc(amount.and_then(|a| at.checked_add_signed(a)).unwrap_or(at))
+            };
+        }
+        match time {
+            Time::Local(local) => zone.to_utc(local),
+            Time::Utc(at) => at,
+        }
+    }
+
+    /// [`Self::to_sql`] in the server's zone, which SQLite's `'localtime'` reads.
+    fn to_server_sql(&self, day_starts_at: u8) -> String {
         let reference = |table: &str, column: DateColumn, id: i64| {
             format!("(SELECT {} FROM {table} WHERE id = {id})", column.name())
         };
@@ -135,14 +244,20 @@ impl RelativeDate {
                 }
                 (vec![sql, "'unixepoch'".to_string()], false)
             }
-            Anchor::Today => (
-                vec![
-                    "'now'".to_string(),
-                    "'localtime'".to_string(),
-                    "'start of day'".to_string(),
-                ],
-                true,
-            ),
+            Anchor::Today => {
+                let mut args = vec!["'now'".to_string(), "'localtime'".to_string()];
+                if day_starts_at == 0 {
+                    args.push("'start of day'".to_string());
+                } else {
+                    // Before the day's start, the day under way began on the date before.
+                    args.extend([
+                        format!("'-{day_starts_at} hours'"),
+                        "'start of day'".to_string(),
+                        format!("'+{day_starts_at} hours'"),
+                    ]);
+                }
+                (args, true)
+            }
             Anchor::Now => (vec!["'now'".to_string()], false),
         };
         for offset in &self.offsets {
@@ -150,17 +265,9 @@ impl RelativeDate {
                 args.push(if local { "'utc'" } else { "'localtime'" }.to_string());
                 local = !local;
             }
-            let (amount, unit) = match offset.unit {
-                OffsetUnit::Minutes => (offset.amount, "minutes"),
-                OffsetUnit::Hours => (offset.amount, "hours"),
-                OffsetUnit::Days => (offset.amount, "days"),
-                OffsetUnit::Weeks => (offset.amount.saturating_mul(7), "days"),
-                OffsetUnit::Months => (offset.amount, "months"),
-                OffsetUnit::Years => (offset.amount, "years"),
-            };
-            args.push(format!("'{amount:+} {unit}'"));
-            // A month later than January 31st is the end of February, not March 3rd.
-            if matches!(offset.unit, OffsetUnit::Months | OffsetUnit::Years) {
+            let (modifier, floor) = offset.sql_modifier();
+            args.push(modifier);
+            if floor {
                 args.push("'floor'".to_string());
             }
         }
@@ -176,15 +283,95 @@ impl RelativeDate {
     }
 }
 
-/// An SQL expression for the start of the local day `days` days after `date`, as Unix time.
-pub(crate) fn local_day_start_sql(date: NaiveDate, days: i64) -> String {
-    format!("(SELECT CAST(strftime('%s', '{date}', '{days:+} days', 'utc') AS INTEGER))")
+/// A time before or after an offset of [`RelativeDate::resolve`]: calendar offsets move local
+/// times, exact ones instants.
+#[derive(Clone, Copy)]
+enum Time {
+    Local(NaiveDateTime),
+    Utc(DateTime<Utc>),
 }
 
-/// An SQL expression for the start of the local month `months` months after the month starting on
-/// `month`, as Unix time.
-pub(crate) fn local_month_start_sql(month: NaiveDate, months: i64) -> String {
-    format!("(SELECT CAST(strftime('%s', '{month}', '{months:+} months', 'utc') AS INTEGER))")
+impl Offset {
+    /// The `strftime` modifier that applies the offset, and whether `'floor'` must follow it: a
+    /// month later than January 31st is the end of February, not March 3rd.
+    fn sql_modifier(self) -> (String, bool) {
+        let (amount, unit) = match self.unit {
+            OffsetUnit::Minutes => (self.amount, "minutes"),
+            OffsetUnit::Hours => (self.amount, "hours"),
+            OffsetUnit::Days => (self.amount, "days"),
+            OffsetUnit::Weeks => (self.amount.saturating_mul(7), "days"),
+            OffsetUnit::Months => (self.amount, "months"),
+            OffsetUnit::Years => (self.amount, "years"),
+        };
+        (
+            format!("'{amount:+} {unit}'"),
+            matches!(self.unit, OffsetUnit::Months | OffsetUnit::Years),
+        )
+    }
+
+    /// `local` moved by this calendar offset, as SQLite's modifier and `'floor'` move it.
+    fn add_to_local(self, local: NaiveDateTime) -> NaiveDateTime {
+        let months = |months: i64| {
+            let magnitude = Months::new(u32::try_from(months.unsigned_abs()).unwrap_or(u32::MAX));
+            if months >= 0 {
+                local.checked_add_months(magnitude)
+            } else {
+                local.checked_sub_months(magnitude)
+            }
+        };
+        let days =
+            |days: i64| Duration::try_days(days).and_then(|days| local.checked_add_signed(days));
+        match self.unit {
+            OffsetUnit::Days => days(self.amount),
+            OffsetUnit::Weeks => days(self.amount.saturating_mul(7)),
+            OffsetUnit::Months => months(self.amount),
+            OffsetUnit::Years => months(self.amount.saturating_mul(12)),
+            OffsetUnit::Minutes | OffsetUnit::Hours => Some(local),
+        }
+        .unwrap_or(local)
+    }
+}
+
+/// An SQL expression for the start of the day `days` days after `date`, as Unix time, with days
+/// starting as `zone` says.
+pub(crate) fn local_day_start_sql(date: NaiveDate, days: i64, zone: Zone) -> String {
+    if !zone.is_server() {
+        let date = date
+            .checked_add_signed(Duration::days(days))
+            .unwrap_or(date);
+        return zone.start_of(date).timestamp().to_string();
+    }
+    format!(
+        "(SELECT CAST(strftime('%s', '{date}', '{days:+} days'{}, 'utc') AS INTEGER))",
+        hours_sql(zone.day_starts_at())
+    )
+}
+
+/// The `strftime` argument that moves midnight to the start of a day, if it is not midnight.
+fn hours_sql(day_starts_at: u8) -> String {
+    if day_starts_at == 0 {
+        String::new()
+    } else {
+        format!(", '+{day_starts_at} hours'")
+    }
+}
+
+/// An SQL expression for the start of the month `months` months after the month starting on
+/// `month`, as Unix time: the start of its first day (see [`local_day_start_sql`]).
+pub(crate) fn local_month_start_sql(month: NaiveDate, months: i64, zone: Zone) -> String {
+    if !zone.is_server() {
+        let magnitude = Months::new(u32::try_from(months.unsigned_abs()).unwrap_or(u32::MAX));
+        let date = if months >= 0 {
+            month.checked_add_months(magnitude)
+        } else {
+            month.checked_sub_months(magnitude)
+        };
+        return zone.start_of(date.unwrap_or(month)).timestamp().to_string();
+    }
+    format!(
+        "(SELECT CAST(strftime('%s', '{month}', '{months:+} months'{}, 'utc') AS INTEGER))",
+        hours_sql(zone.day_starts_at())
+    )
 }
 
 impl fmt::Display for RelativeDate {
@@ -355,8 +542,45 @@ mod tests {
     }
 
     #[test]
+    fn today_starts_at_the_hour_days_start() {
+        let sql = |input| {
+            RelativeDate::parse(input)
+                .unwrap()
+                .to_sql(Zone::parse(None, 4).unwrap())
+        };
+        assert_eq!(
+            sql("today"),
+            "(SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', 'utc') AS INTEGER))"
+        );
+        assert_eq!(
+            sql("today-1d+2h"),
+            "(SELECT CAST(strftime('%s', 'now', 'localtime', '-4 hours', 'start of day', '+4 hours', '-1 days', 'utc', '+2 hours') AS INTEGER))"
+        );
+        assert_eq!(
+            local_day_start_sql(
+                NaiveDate::from_ymd_opt(2026, 10, 17).unwrap(),
+                1,
+                Zone::parse(None, 4).unwrap()
+            ),
+            "(SELECT CAST(strftime('%s', '2026-10-17', '+1 days', '+4 hours', 'utc') AS INTEGER))"
+        );
+        assert_eq!(
+            local_month_start_sql(
+                NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+                1,
+                Zone::parse(None, 0).unwrap()
+            ),
+            "(SELECT CAST(strftime('%s', '2026-10-01', '+1 months', 'utc') AS INTEGER))"
+        );
+    }
+
+    #[test]
     fn compiles_to_sql() {
-        let sql = |input| RelativeDate::parse(input).unwrap().to_sql();
+        let sql = |input| {
+            RelativeDate::parse(input)
+                .unwrap()
+                .to_sql(Zone::parse(None, 0).unwrap())
+        };
         assert_eq!(
             sql("note[gir].created_at"),
             "(SELECT created_at FROM note WHERE id = 76967537148)"
@@ -393,6 +617,89 @@ mod tests {
                 .next_day()
                 .is_some()
         );
+    }
+
+    /// In a named zone, `today` is the start of that zone's day, whatever zone the server is in.
+    #[test]
+    fn today_and_now_in_a_named_zone() {
+        use chrono::TimeZone;
+
+        let zone = Zone::parse(Some("America/New_York"), 4).unwrap();
+        let sql = |input, now| {
+            RelativeDate::parse(input)
+                .unwrap()
+                .to_zone_sql(zone, now)
+                .parse::<i64>()
+                .unwrap()
+        };
+        let utc = |d, h, m| {
+            Utc.with_ymd_and_hms(2026, 11, d, h, m, 0)
+                .unwrap()
+                .timestamp()
+        };
+        // 03:59 and 04:01 in New York (UTC-5) on the 10th: before 4 AM it is still the 9th.
+        let before = Utc.with_ymd_and_hms(2026, 11, 10, 8, 59, 0).unwrap();
+        let after = Utc.with_ymd_and_hms(2026, 11, 10, 9, 1, 0).unwrap();
+        assert_eq!(sql("today", before), utc(9, 9, 0));
+        assert_eq!(sql("today", after), utc(10, 9, 0));
+        assert_eq!(sql("today+1d", before), utc(10, 9, 0));
+        assert_eq!(sql("today-1d+2h", after), utc(9, 11, 0));
+        assert_eq!(sql("now-30m", after), utc(10, 8, 31));
+        // Two weeks before the 10th is before the change from daylight saving time on the 1st,
+        // so 4 AM is an hour earlier in UTC.
+        assert_eq!(sql("today-2w", after), utc(3, 9, 0) - 7 * 86_400 - 3600);
+        assert_eq!(
+            sql("today-1mo", after),
+            Utc.with_ymd_and_hms(2026, 10, 10, 8, 0, 0)
+                .unwrap()
+                .timestamp()
+        );
+        assert_eq!(
+            local_day_start_sql(NaiveDate::from_ymd_opt(2026, 10, 31).unwrap(), 1, zone),
+            utc(1, 9, 0).to_string()
+        );
+        assert_eq!(
+            local_month_start_sql(NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(), 1, zone),
+            utc(1, 9, 0).to_string()
+        );
+    }
+
+    /// Another item's date moves by the calendar of the named zone: a day before a time just after
+    /// the change from daylight saving time is 25 hours before it.
+    #[sqlx::test]
+    async fn another_items_date_in_a_named_zone(pool: sqlx::SqlitePool) {
+        use chrono::TimeZone;
+
+        let zone = Zone::parse(Some("America/New_York"), 4).unwrap();
+        // 2026-11-01 12:00 in New York, EST.
+        let due = Utc
+            .with_ymd_and_hms(2026, 11, 1, 17, 0, 0)
+            .unwrap()
+            .timestamp();
+        // A temporary table of its own, on one connection, in place of the real `card` table.
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("CREATE TEMP TABLE card (id INTEGER PRIMARY KEY, due INTEGER)")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO temp.card VALUES (3, ?)")
+            .bind(due)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let mut value = async |input: &str| -> i64 {
+            let sql = RelativeDate::parse(input)
+                .unwrap()
+                .to_zone_sql(zone, Utc::now());
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {sql}")))
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap()
+        };
+        assert_eq!(value("card[3].due").await, due);
+        assert_eq!(value("card[3].due-1d").await, due - 25 * 3600);
+        assert_eq!(value("card[3].due-1d+2h").await, due - 23 * 3600);
+        assert_eq!(value("card[3].due+1mo").await, due + 30 * 86_400);
     }
 
     #[sqlx::test]

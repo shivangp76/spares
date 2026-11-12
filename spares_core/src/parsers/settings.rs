@@ -127,7 +127,7 @@ pub struct NoteSettingsKeys {
     pub custom_data: ReadWriteValue,
     /// A global setting that makes the notes after it live notes of the named sync group: they are
     /// matched to the database by their position in the file, so a file can be edited and imported
-    /// again. See "Live notes" in the docs of `spares_cli::import`.
+    /// again. See "Live notes" in the docs of `spares_core::api::note::import`.
     pub live_sync_name: ReadWriteValue,
     /// Speaks the note's text. It is stored in the note's custom data, under
     /// [`TtsSetting::KEY`]. See [`crate::parsers::tts`].
@@ -219,7 +219,7 @@ pub fn parse_note_settings(
             settings_indices,
             settings_delim,
             settings_key_value_delim,
-            false,
+            SettingsSyntax::Note,
         )
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
@@ -522,6 +522,144 @@ pub fn parse_note_settings(
     }
 }
 
+/// Which settings are split, as their syntax differs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsSyntax {
+    /// A note's settings. Their values are split at each delimiter, as they are, since some hold
+    /// JSON (`custom-data`).
+    Note,
+    /// A cloze's settings, such as `{{[h:city;t] Paris}}`.
+    /// - A key without a value, such as `t`, is read as having an empty value, like `t:`.
+    /// - A `\` escapes the character after it, so `\;` does not end the setting and `\]` does not
+    ///   end the settings, nor `\[` open a pair of brackets, which LaTeX and Typst nest.
+    /// - A value that starts with `"` runs to the next `"` that is not escaped, so it can hold the
+    ///   delimiter, as in `h:"a;b"`. It still escapes its brackets, as the note's syntax finds the
+    ///   end of the settings before they are split.
+    ///
+    /// The values are returned as written. [`unquote_setting_value`] reads one as text.
+    Cloze,
+}
+
+/// Splits `settings` at each delimiter that is not escaped or in a quoted value (see
+/// [`SettingsSyntax::Cloze`]). The parts keep their escapes and quotes.
+fn split_cloze_settings<'a>(
+    settings: &'a str,
+    settings_delim: &str,
+    settings_key_value_delim: &str,
+) -> Result<Vec<&'a str>, String> {
+    let mut parts = Vec::new();
+    let mut part_start = 0;
+    // Whether the current part has had its key-value delimiter, and whether only whitespace has
+    // followed it, so that a `"` opens a quoted value.
+    let (mut after_key, mut at_value_start, mut in_quotes) = (false, false, false);
+    let mut quote_start = 0;
+    let mut i = 0;
+    while let Some(c) = settings[i..].chars().next() {
+        if c == '\\' {
+            // Skips the escaped character too
+            i += 1 + settings[i + 1..].chars().next().map_or(0, char::len_utf8);
+            at_value_start = false;
+            continue;
+        }
+        if in_quotes {
+            in_quotes = c != '"';
+        } else if settings[i..].starts_with(settings_delim) {
+            parts.push(&settings[part_start..i]);
+            part_start = i + settings_delim.len();
+            (after_key, at_value_start) = (false, false);
+            i = part_start;
+            continue;
+        } else if !after_key && settings[i..].starts_with(settings_key_value_delim) {
+            (after_key, at_value_start) = (true, true);
+            i += settings_key_value_delim.len();
+            continue;
+        } else if at_value_start && c == '"' {
+            (in_quotes, at_value_start, quote_start) = (true, false, i);
+        } else if !c.is_whitespace() {
+            at_value_start = false;
+        }
+        i += c.len_utf8();
+    }
+    if in_quotes {
+        return Err(format!(
+            "The quoted value `{}` has no closing `\"`. Write `\\\"` for a `\"` inside it.",
+            &settings[quote_start..]
+        ));
+    }
+    parts.push(&settings[part_start..]);
+    Ok(parts)
+}
+
+/// The text of a cloze setting's value, as [`get_settings_pairs`] returns it for
+/// [`SettingsSyntax::Cloze`]: the inside of a value written entirely in quotes, with `\` before a
+/// `;`, `[`, `]`, `"` or `\` removed. Any other `\` is kept, since it belongs to the note's markup,
+/// such as `\textbf` in LaTeX or `\*` in Typst.
+pub fn unquote_setting_value(value: &str) -> String {
+    let inner = value
+        .strip_prefix('"')
+        .and_then(|rest| {
+            // The closing quote is the first one not escaped
+            let mut escaped = false;
+            let close = rest.char_indices().find_map(|(i, c)| match c {
+                _ if escaped => {
+                    escaped = false;
+                    None
+                }
+                '\\' => {
+                    escaped = true;
+                    None
+                }
+                '"' => Some(i),
+                _ => None,
+            })?;
+            (close + 1 == rest.len()).then(|| &rest[..close])
+        })
+        .unwrap_or(value);
+    let mut text = String::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (c, chars.peek()) {
+            ('\\', Some(&next @ (';' | '[' | ']' | '"' | '\\'))) => {
+                text.push(next);
+                chars.next();
+            }
+            _ => text.push(c),
+        }
+    }
+    text
+}
+
+/// Writes `text` as a cloze setting's value that [`unquote_setting_value`] reads back as `text`. It
+/// is quoted when it holds the delimiter, starts with `"`, or starts or ends with whitespace, which
+/// would be trimmed.
+pub fn quote_setting_value(text: &str, settings_delim: &str) -> String {
+    let quoted = text.contains(settings_delim) || text.starts_with('"') || text.trim() != text;
+    let mut value = String::with_capacity(text.len() + 2);
+    if quoted {
+        value.push('"');
+    }
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // A `\` before one of these, or at the end, would escape it
+            '\\' if chars
+                .peek()
+                .is_none_or(|next| matches!(next, ';' | '[' | ']' | '"' | '\\')) =>
+            {
+                value.push_str("\\\\");
+            }
+            '[' => value.push_str("\\["),
+            ']' => value.push_str("\\]"),
+            '"' if quoted => value.push_str("\\\""),
+            _ => value.push(c),
+        }
+    }
+    if quoted {
+        value.push('"');
+    }
+    value
+}
+
 #[allow(
     clippy::type_complexity,
     reason = "only the error variant is too complex"
@@ -531,12 +669,21 @@ pub fn get_settings_pairs<'a>(
     settings_indices: &Range<usize>,
     settings_delim: &str,
     settings_key_value_delim: &str,
-    // Whether a key without a value, such as `t` in `{{[t] Paris}}`, is read as having an empty
-    // value, like `t:`.
-    allow_bare_keys: bool,
+    syntax: SettingsSyntax,
 ) -> Vec<Result<(&'a str, &'a str), (String, Range<usize>)>> {
-    data[settings_indices.clone()]
-        .split(settings_delim)
+    let settings = &data[settings_indices.clone()];
+    let parts = match syntax {
+        SettingsSyntax::Note => settings.split(settings_delim).collect::<Vec<_>>(),
+        SettingsSyntax::Cloze => {
+            match split_cloze_settings(settings, settings_delim, settings_key_value_delim) {
+                Ok(parts) => parts,
+                Err(description) => return vec![Err((description, settings_indices.clone()))],
+            }
+        }
+    };
+    let allow_bare_keys = syntax == SettingsSyntax::Cloze;
+    parts
+        .into_iter()
         .filter(|x| !x.is_empty())
         .map(|s| {
             s.splitn(2, settings_key_value_delim)

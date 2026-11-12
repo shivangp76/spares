@@ -1,6 +1,5 @@
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::time::Duration;
 
 use tokio::sync::OwnedRwLockReadGuard;
@@ -9,10 +8,13 @@ use tokio::sync::RwLock;
 
 use crate::Error;
 
-/// Serializes changes to notes against pushes. Requests that change notes hold it shared for their
-/// whole duration (database write, file write and commit). A push holds it exclusively, from
-/// checking `HEAD` until git has updated the ref, so no other change can slip in between.
-static NOTES_LOCK: LazyLock<Arc<RwLock<()>>> = LazyLock::new(|| Arc::new(RwLock::new(())));
+/// Serializes changes to a collection's notes against pushes. Requests that change notes hold it
+/// shared for their whole duration (database write, file write and commit). A push holds it
+/// exclusively, from checking `HEAD` until git has updated the ref, so no other change can slip in
+/// between. Each collection has its own (`VcsState::lock`).
+fn notes_lock() -> Arc<RwLock<()>> {
+    Arc::clone(&crate::collection::state().vcs.lock)
+}
 
 /// How long a request that changes notes waits for a push before giving up with
 /// [`Error::NotesVcsBusy`]. Nothing has been written at that point, so it can simply be retried.
@@ -25,7 +27,12 @@ pub enum NotesGuard {
 }
 
 pub async fn shared_guard() -> Result<NotesGuard, Error> {
-    tokio::time::timeout(WRITER_WAIT, Arc::clone(&NOTES_LOCK).read_owned())
+    let lock = notes_lock().read_owned();
+    // A browser has no pushes to wait for, and no Tokio timer to wait with.
+    if cfg!(target_family = "wasm") {
+        return Ok(NotesGuard::Shared(lock.await));
+    }
+    tokio::time::timeout(WRITER_WAIT, lock)
         .await
         .map(NotesGuard::Shared)
         .map_err(|_| Error::NotesVcsBusy)
@@ -33,7 +40,11 @@ pub async fn shared_guard() -> Result<NotesGuard, Error> {
 
 /// Waits for the exclusive guard, forever if `wait` is `None`.
 pub async fn exclusive_guard(wait: Option<Duration>) -> Result<NotesGuard, Error> {
-    let lock = Arc::clone(&NOTES_LOCK).write_owned();
+    let lock = notes_lock().write_owned();
+    // As in `shared_guard`
+    if cfg!(target_family = "wasm") {
+        return Ok(NotesGuard::Exclusive(lock.await));
+    }
     match wait {
         Some(wait) => tokio::time::timeout(wait, lock)
             .await
@@ -51,7 +62,12 @@ where
     T: Send + 'static,
     F: Future<Output = Result<T, Error>> + Send + 'static,
 {
-    let handle = tokio::spawn(async move {
+    // A browser has no Tokio runtime to spawn on, and nothing there cancels a request midway.
+    if cfg!(target_family = "wasm") {
+        let _guard = guard;
+        return future.await;
+    }
+    let handle = crate::collection::spawn(async move {
         let _guard = guard;
         future.await
     });

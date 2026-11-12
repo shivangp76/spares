@@ -240,11 +240,14 @@ button:disabled {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* The links take the first row and the buttons the next, so the Sync button appearing once its
+   status loads can't push the buttons from beside the links onto a row of their own */
 .navbar-links {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   min-width: 0;
+  flex-basis: 100%;
 }
 
 .navbar-link,
@@ -254,7 +257,9 @@ button:disabled {
   color: var(--text-secondary);
   text-decoration: none;
   font-size: 15px;
-  transition: background-color 0.15s, color 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
 .navbar-link:hover {
@@ -286,12 +291,109 @@ button:disabled {
   font: inherit;
   font-size: 13px;
   cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
 .navbar-button:hover {
   background: var(--hover);
   color: var(--text);
+}
+
+/* The More link opens a menu, so it is a button that looks like the links beside it */
+button.navbar-link {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+button.navbar-link-current {
+  cursor: pointer;
+}
+
+/* Undo, with its menu of Redo and History joined to its right */
+.navbar-split {
+  display: inline-flex;
+}
+
+.navbar-split > .navbar-button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.navbar-split-end {
+  margin-left: -1px;
+  padding-left: 6px;
+  padding-right: 6px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.navbar-split-end svg {
+  margin-left: 0 !important;
+}
+
+/* A navbar button's menu (`NavMenu`) */
+.nav-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.15);
+}
+
+.nav-menu-item,
+.nav-menu-item:visited {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.nav-menu-item:hover:not(:disabled),
+.nav-menu-item:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
+.nav-menu-item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.nav-menu-item[aria-current="page"] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-menu-key {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: normal;
+}
+
+/* What the navbar's last undo, redo or sync did, in a `status-line` of its own */
+.navbar-status {
+  flex-basis: 100%;
+  margin-top: 4px;
 }
 
 /* Notes a sync could not merge (`sync-conflict`) */
@@ -306,6 +408,10 @@ button:disabled {
   line-height: 16px;
 }
 
+a.sync-conflict-badge {
+  text-decoration: none;
+}
+
 /* Where a note's text matches a search */
 mark.search-match {
   background-color: light-dark(#fde68a, #5c4a0b);
@@ -317,7 +423,12 @@ mark.search-match {
    Narrow screens are phones; a coarse pointer without hover is a touchscreen. */
 
 /* Remove the double-tap-to-zoom delay on taps */
-button, a, summary, label, input[type="radio"], input[type="checkbox"] {
+button,
+a,
+summary,
+label,
+input[type="radio"],
+input[type="checkbox"] {
   touch-action: manipulation;
 }
 
@@ -407,7 +518,8 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
     flex-wrap: wrap;
   }
 
-  .search-row > input, .search-row > .search-input {
+  .search-row > input,
+  .search-row > .search-input {
     flex-basis: 100% !important;
     max-width: none !important;
   }
@@ -457,6 +569,13 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   width: min(640px, calc(100% - 32px));
 }
 
+/* A card's image occlusions without masks, as large as the window allows */
+.help-dialog.unmasked-image-occlusions {
+  width: auto;
+  max-width: calc(100% - 32px);
+  min-width: min(440px, calc(100% - 32px));
+}
+
 .help-dialog td:first-child button {
   padding: 2px 6px;
   font-size: 12px;
@@ -493,6 +612,10 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
   box-sizing: border-box;
 }
 
+.audio-recorder.import-dialog {
+  width: min(720px, calc(100% - 32px));
+}
+
 .audio-recorder::backdrop {
   background: rgb(0 0 0 / 0.4);
 }
@@ -510,11 +633,144 @@ button, a, summary, label, input[type="radio"], input[type="checkbox"] {
 }
 
 @keyframes audio-recorder-pulse {
-  50% { opacity: 0.3; }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Shared text and controls, used instead of the same inline styles on each page */
+
+/* A page's title (`PageTitle`), and what the page is for under it */
+.page-title {
+  margin: 0 0 16px;
+}
+
+.page-title:has(+ .page-description) {
+  margin-bottom: 8px;
+}
+
+.page-description {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+/* A compact button beside a line of text, as Undo after an action */
+.button-small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* Read by screen readers but not shown, as the name of a button that only shows an icon */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The help under a form field */
+.field-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* A short note beside or under a control, quieter than the text around it */
+.hint {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Text a step quieter than the page's, at a smaller size */
+.secondary-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* What an action did, or what is shown, in a line of its own */
+.status-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.error-text {
+  color: var(--error);
+}
+
+.error-text-small {
+  font-size: 13px;
+  color: var(--error);
+}
+
+/* An error with details to read as they are, e.g. a query's position */
+.error-detail {
+  margin-bottom: 8px;
+  font-family: monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  color: var(--error);
+}
+
+/* A checkbox or radio button with its label beside it */
+.checkbox-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+}
+
+/* A table of rows, as the Tags or Parsers page lists */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+/* Grey blocks in the shape of what is loading, so the page doesn't jump when it comes */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--hover) 0%,
+    var(--border-subtle) 50%,
+    var(--hover) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-block {
+  border-radius: 6px;
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .audio-recorder-dot { animation: none; }
+  .audio-recorder-dot,
+  .skeleton-line {
+    animation: none;
+  }
 }
 
 .help-dialog-content {
@@ -585,7 +841,8 @@ kbd {
   right: 0;
   bottom: 0;
   z-index: 1;
-  padding: 12px max(24px, (100% - 800px) / 2) calc(12px + env(safe-area-inset-bottom));
+  padding: 12px max(24px, (100% - 800px) / 2)
+    calc(12px + env(safe-area-inset-bottom));
   background: var(--bg);
   border-top: 1px solid var(--border-subtle);
 }
@@ -684,7 +941,9 @@ html:has(.review-answer-bar) {
 
   /* iOS zooms into inputs with text smaller than 16px when they are focused. `!important`
      overrides the inline font sizes. */
-  input, select, textarea {
+  input,
+  select,
+  textarea {
     font-size: 16px !important;
   }
 
@@ -697,21 +956,25 @@ html:has(.review-answer-bar) {
   /* The links scroll sideways on one row instead of wrapping onto several */
   .navbar-links {
     flex-wrap: nowrap;
+    gap: 2px;
     overflow-x: auto;
     scrollbar-width: none;
-    flex-basis: 100%;
   }
 
   .navbar-links::-webkit-scrollbar {
     display: none;
   }
 
-  .navbar-link {
+  /* Tighter, so the main links and More fit across a phone */
+  .navbar-link,
+  button.navbar-link {
+    padding: 4px 6px;
+    font-size: 14px;
     white-space: nowrap;
   }
 
   /* The buttons also stay on one row and scroll sideways, so a status appearing beside them
-     (`Downloading cards 3/40`) can't squeeze them onto two lines and push the page down */
+     (`Downloading files 3/40`) can't squeeze them onto two lines and push the page down */
   .navbar-actions {
     min-width: 0;
     max-width: 100%;
@@ -783,7 +1046,8 @@ html:has(.review-answer-bar) {
     flex-wrap: wrap;
   }
 
-  .search-row > input, .search-row > .search-input {
+  .search-row > input,
+  .search-row > .search-input {
     flex-basis: 100% !important;
     max-width: none !important;
   }
@@ -988,6 +1252,21 @@ html:has(.review-answer-bar) {
 }
 
 @keyframes loading-delayed-appear {
-  from { visibility: hidden; }
-  to { visibility: visible; }
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
+  }
+}
+
+/* A review session's summary, an hour after the session ended */
+.review-summary-fading {
+  animation: review-summary-fade 2s ease-out forwards;
+}
+
+@keyframes review-summary-fade {
+  to {
+    opacity: 0;
+  }
 }

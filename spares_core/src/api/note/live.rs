@@ -202,6 +202,138 @@ pub async fn relocate_live_cards(
     })
 }
 
+/// A card that `mv:` moves: `(destination note, destination order, source note, source order)`.
+/// The destination is the card just created for the cloze, which the source card replaces.
+pub(crate) type CardMove = (NoteId, u32, NoteId, usize);
+
+/// Checks that each `mv:` can be carried out, before anything is changed for it: its source card
+/// exists and is in another note, and no two clozes move the same card.
+pub(crate) async fn check_card_moves(
+    conn: &mut sqlx::sqlite::SqliteConnection,
+    moves: &[CardMove],
+) -> Result<(), Error> {
+    let invalid = |description: String| {
+        Error::Library(LibraryError::Card(crate::CardErrorKind::InvalidInput(
+            description,
+        )))
+    };
+    let mut sources = HashSet::new();
+    for &(dst_note_id, _, src_note_id, src_order) in moves {
+        let source = format!("{}/{src_order}", src_note_id.letters());
+        if src_note_id == dst_note_id {
+            return Err(invalid(format!(
+                "`mv:{source}` moves a card within its own note. Reorder the clozes instead."
+            )));
+        }
+        if !sources.insert((src_note_id, src_order)) {
+            return Err(invalid(format!(
+                "`mv:{source}` is used by more than one cloze, but a card can only move once."
+            )));
+        }
+        let found: Option<i64> =
+            sqlx::query_scalar(r#"SELECT 1 FROM card WHERE note_id = ? AND "order" = ?"#)
+                .bind(src_note_id)
+                .bind(src_order as u32)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+        if found.is_none() {
+            return Err(invalid(format!(
+                "`mv:` source card not found: note_id={}, order={src_order}. `spares card get -n \
+                 NOTE_ID` lists a note's orders.",
+                src_note_id.letters()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Carries out `mv:`: each source card moves into its destination's note and order, keeping its
+/// id, scheduling and review history, and the card created for the cloze is deleted. The source
+/// note is left without a card for the moved cloze.
+///
+/// Call it after the event of the import that created the destination cards is logged, so that
+/// event holds the cards as created. With `log`, the moves are a [`EventType::RelocateCards`]
+/// event, whose id is returned; undoing it moves the cards back and restores the created ones.
+pub(crate) async fn move_cards(
+    db: &SqlitePool,
+    moves: &[CardMove],
+    at: DateTime<Utc>,
+    log: bool,
+) -> Result<Option<i64>, Error> {
+    if moves.is_empty() {
+        return Ok(None);
+    }
+    let mut tx = db.begin().await.map_err(|e| Error::Sqlx { source: e })?;
+    check_card_moves(&mut tx, moves).await?;
+    let mut payload = RelocateCardsPayload {
+        moved: Vec::new(),
+        deleted_cards: Vec::new(),
+        restored_cards: Vec::new(),
+    };
+    for &(dst_note_id, dst_order, src_note_id, src_order) in moves {
+        let (card_id, from_back_type): (CardId, BackType) =
+            sqlx::query_as(r#"SELECT id, back_type FROM card WHERE note_id = ? AND "order" = ?"#)
+                .bind(src_note_id)
+                .bind(src_order as u32)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+        let created_card: Card =
+            sqlx::query_as(r#"DELETE FROM card WHERE note_id = ? AND "order" = ? RETURNING *"#)
+                .bind(dst_note_id)
+                .bind(dst_order)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| Error::Sqlx { source: e })?;
+        sqlx::query(
+            r#"UPDATE card SET note_id = ?, "order" = ?, back_type = ?, updated_at = ? WHERE id = ?"#,
+        )
+        .bind(dst_note_id)
+        .bind(dst_order)
+        .bind(created_card.back_type)
+        .bind(at.timestamp())
+        .bind(card_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        payload.moved.push(MovedCard {
+            card_id,
+            note_id: Transition {
+                before: src_note_id,
+                after: dst_note_id,
+            },
+            order: Transition {
+                before: src_order as u32,
+                after: dst_order,
+            },
+            back_type: Transition {
+                before: from_back_type,
+                after: created_card.back_type,
+            },
+        });
+        payload.deleted_cards.push(NoteCardSnapshot {
+            note_id: dst_note_id,
+            card: CardSnapshot::from_card(&created_card),
+        });
+    }
+    tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    if !log {
+        return Ok(None);
+    }
+    let event_ids = insert_events(
+        db,
+        &[(
+            EventType::RelocateCards,
+            serde_json::to_value(&payload).unwrap(),
+        )],
+        at,
+        None,
+    )
+    .await?;
+    Ok(event_ids.first().copied())
+}
+
 /// Applies a [`EventType::RelocateCards`] event's payload, when undoing or redoing it
 pub(crate) async fn relocate_cards_event(
     db: &SqlitePool,

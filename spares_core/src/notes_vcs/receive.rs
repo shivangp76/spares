@@ -6,17 +6,14 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-use super::commit::NEEDS_RECONCILE;
 use super::commit::commit_index;
 use super::commit::commit_message;
 use super::commit::git_index_lock;
@@ -30,13 +27,13 @@ use super::git::nul_split;
 use super::git::rev_parse;
 use super::lock::NotesGuard;
 use super::lock::exclusive_guard;
+use super::note_file::NoteFileContext;
 use super::note_file::ParsedNoteFile;
+use super::note_file::ParsedPushedFile;
 use super::note_file::construct_db_note_file;
 use super::note_file::db_note_fields;
 use super::note_file::file_note_fields;
-use super::note_file::is_warning;
-use super::note_file::parse_new_note_file;
-use super::note_file::parse_note_file;
+use super::note_file::parse_pushed_file;
 use super::note_file::same_note;
 use super::paths::enabled;
 use super::paths::note_rel_paths_all_parsers;
@@ -52,6 +49,7 @@ use super::reconcile::write_db_note_files;
 use crate::Error;
 use crate::api::note::create_notes;
 use crate::api::note::delete_notes;
+#[cfg(not(target_family = "wasm"))]
 use crate::api::note::get_note;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
@@ -61,9 +59,12 @@ use crate::api::undo::join_event_group;
 use crate::api::undo::undo_event;
 use crate::config::get_data_dir;
 use crate::model::NoteId;
-use crate::parsers::NoteSettings;
+use crate::parsers::CardInheritance;
+use crate::parsers::InheritMode;
 use crate::parsers::Parseable;
+use crate::parsers::ReadableCardIdentifier;
 use crate::parsers::get_all_parsers;
+use crate::parsers::get_cards;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
 use crate::schema::note::DeleteNotesRequest;
@@ -165,20 +166,27 @@ struct Journal {
     state: JournalState,
 }
 
-struct Session {
+/// A push being imported, in the collection's state (`VcsState`).
+pub(crate) struct Session {
     journal: Journal,
     _guard: NotesGuard,
 }
 
-static SESSION: Mutex<Option<Session>> = Mutex::new(None);
-static LAST_INCIDENT: Mutex<Option<String>> = Mutex::new(None);
-
-fn session() -> MutexGuard<'static, Option<Session>> {
-    SESSION.lock().unwrap_or_else(|e| e.into_inner())
+/// Runs `f` on the collection's push session.
+fn with_session<T>(f: impl FnOnce(&mut Option<Session>) -> T) -> T {
+    let state = crate::collection::state();
+    let mut session = crate::collection::lock(&state.vcs.receive_session);
+    f(&mut session)
 }
 
 fn set_incident(incident: Option<String>) {
-    *LAST_INCIDENT.lock().unwrap_or_else(|e| e.into_inner()) = incident;
+    let state = crate::collection::state();
+    *crate::collection::lock(&state.vcs.last_incident) = incident;
+}
+
+fn last_incident() -> Option<String> {
+    let state = crate::collection::state();
+    crate::collection::lock(&state.vcs.last_incident).clone()
 }
 
 fn journal_path() -> PathBuf {
@@ -217,12 +225,9 @@ pub fn status() -> StatusResponse {
         notes_dir: enabled
             .then(|| server_repo_dir().canonicalize().ok())
             .flatten(),
-        needs_reconcile: NEEDS_RECONCILE.load(Ordering::SeqCst),
-        receive_in_progress: session().is_some(),
-        last_incident: LAST_INCIDENT
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone(),
+        needs_reconcile: super::needs_reconcile(),
+        receive_in_progress: with_session(|session| session.is_some()),
+        last_incident: last_incident(),
         overwritten_dir: enabled.then(overwritten_dir),
         saved_copies: if enabled { saved_copies() } else { Vec::new() },
     }
@@ -238,7 +243,7 @@ enum Outcome {
 pub async fn receive(db: SqlitePool, request: ReceiveRequest) -> Result<ReceiveResponse, Error> {
     let guard = exclusive_guard(None).await?;
     // Its own task, so a hook killed mid-request cannot stop the import halfway.
-    let handle = tokio::spawn(async move {
+    let handle = crate::collection::spawn(async move {
         set_incident(None);
         let outcome = receive_locked(&db, &request).await.unwrap_or_else(|e| {
             Outcome::Rejected(format!("spares failed to process the push: {e}"))
@@ -253,12 +258,14 @@ pub async fn receive(db: SqlitePool, request: ReceiveRequest) -> Result<ReceiveR
             Outcome::Accepted { journal, message } => {
                 let session_id = journal.session.clone();
                 let imported = imported_ids(&journal);
-                *session() = Some(Session {
-                    journal,
-                    _guard: guard,
+                with_session(|session| {
+                    *session = Some(Session {
+                        journal,
+                        _guard: guard,
+                    });
                 });
                 let watchdog_session = session_id.clone();
-                tokio::spawn(async move {
+                crate::collection::spawn(async move {
                     tokio::time::sleep(WATCHDOG_DELAY).await;
                     if let Some(session) = take_session(Some(&watchdog_session)) {
                         log::warn!(
@@ -293,18 +300,19 @@ pub async fn finish(db: SqlitePool, request: FinishRequest) -> Result<FinishResp
             anki_links: Vec::new(),
         });
     };
-    let handle = tokio::spawn(async move { settle(&db, session).await });
+    let handle = crate::collection::spawn(async move { settle(&db, session).await });
     handle
         .await
         .map_err(|e| Error::NotesVcs(format!("Settling the push failed: {e}")))?
 }
 
 fn take_session(id: Option<&str>) -> Option<Session> {
-    let mut session = session();
-    if id.is_some_and(|id| session.as_ref().is_some_and(|s| s.journal.session != id)) {
-        return None;
-    }
-    session.take()
+    with_session(|session| {
+        if id.is_some_and(|id| session.as_ref().is_some_and(|s| s.journal.session != id)) {
+            return None;
+        }
+        session.take()
+    })
 }
 
 /// Settles a push from a journal left by a server that stopped mid-receive. Called at startup.
@@ -382,7 +390,16 @@ async fn settle(db: &SqlitePool, session: Session) -> Result<FinishResponse, Err
     })
 }
 
+/// The Anki ids of `created` notes that have one. A browser has no notes repository, and so no
+/// pushes, nor Anki.
+#[cfg(target_family = "wasm")]
+#[allow(clippy::unused_async)] // The native one awaits.
+async fn anki_links(_db: &SqlitePool, _created: &[NoteId]) -> Result<Vec<(i64, NoteId)>, Error> {
+    Ok(Vec::new())
+}
+
 /// The Anki ids of `created` notes that have one
+#[cfg(not(target_family = "wasm"))]
 async fn anki_links(db: &SqlitePool, created: &[NoteId]) -> Result<Vec<(i64, NoteId)>, Error> {
     let mut links = Vec::new();
     for id in created {
@@ -423,8 +440,7 @@ fn add_existing(repo: &Path, paths: &[PathBuf]) -> Result<Vec<u8>, Error> {
 /// Undoes the import's events, newest first, then regenerates its notes from the database. Returns
 /// a description of the outcome for the user.
 ///
-/// The import's events form one group, so the first undo reverts them all. Journals written before
-/// imports were grouped hold one ungrouped event per note, which the later iterations revert.
+/// The import's events form one group, so the first undo reverts them all.
 async fn rollback(db: &SqlitePool, journal: &Journal) -> String {
     // Undoing reconciles the notes it changes, which would save created files as written by
     // someone else. If the undo fails, reconciling writes them again.
@@ -456,7 +472,7 @@ async fn rollback(db: &SqlitePool, journal: &Journal) -> String {
         None => {
             let result = reconcile(db, ReconcileScope::Notes(journal.ids.clone()), None).await;
             if let Err(e) = result {
-                NEEDS_RECONCILE.store(true, Ordering::SeqCst);
+                super::set_needs_reconcile(true);
                 log::error!("Failed to regenerate notes after rolling back: {e}");
             }
             "it was rolled back, so nothing was imported".to_string()
@@ -474,7 +490,7 @@ async fn rollback(db: &SqlitePool, journal: &Journal) -> String {
             )
             .await;
             if let Err(e) = result {
-                NEEDS_RECONCILE.store(true, Ordering::SeqCst);
+                super::set_needs_reconcile(true);
                 log::error!("Failed to commit a partial import: {e}");
             }
             format!(
@@ -524,10 +540,23 @@ pub(crate) fn wrong_repo(hook_repo: &Path) -> Option<String> {
     ))
 }
 
-struct PushedNote {
+/// A pushed note file. It may hold several notes (see [`ParsedPushedFile`]): one it belongs to, and
+/// notes it creates.
+struct PushedFile {
     rel: PathBuf,
     parser: Box<dyn Parseable>,
     change: PushedChange,
+    /// How many notes it creates
+    creates: usize,
+    /// The cards its notes' `mv:` settings take from other notes
+    moves: Vec<CardMove>,
+}
+
+/// A card that a pushed `mv:` setting takes
+struct CardMove {
+    source: ReadableCardIdentifier,
+    /// Whether the note the file belongs to moves it, rather than a note the file creates
+    by_own_note: bool,
 }
 
 enum PushedChange {
@@ -540,14 +569,14 @@ enum PushedChange {
         id: NoteId,
         old_blob: Vec<u8>,
     },
-    /// A `new-*` file
+    /// A `new-*` file, which creates all its notes
     Create {
         new_blob: String,
     },
 }
 
-impl PushedNote {
-    /// The note the push changes, and the file it is based on, unless it creates one
+impl PushedFile {
+    /// The note the push changes, and the file it is based on, unless it only creates notes
     fn existing(&self) -> Option<(NoteId, &[u8])> {
         match &self.change {
             PushedChange::Update { id, old_blob, .. } | PushedChange::Delete { id, old_blob } => {
@@ -560,6 +589,8 @@ impl PushedNote {
 
 #[expect(clippy::too_many_lines)]
 async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Outcome, Error> {
+    // config.toml and the note templates, read once for every pushed file
+    let context = NoteFileContext::default();
     // 1. The hook's repository must be the one this server writes to.
     if let Some(reason) = wrong_repo(&request.repo) {
         return Ok(Outcome::Rejected(reason));
@@ -623,7 +654,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
         .collect();
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
-    let mut pushed: Vec<PushedNote> = Vec::new();
+    let mut pushed: Vec<PushedFile> = Vec::new();
     let mut readme_changed = false;
     let mut tokens = nul_split(&raw);
     while let Some(header) = tokens.next() {
@@ -748,47 +779,62 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
             }
             *new_blob = blob;
         }
-        let parsed_settings = match &change {
-            PushedChange::Update {
-                id,
-                old_blob,
-                new_blob,
-            } => match parse_note_file(parser.as_ref(), new_blob, *id, false) {
-                Ok(parsed) => {
-                    if let Some(reason) = live_note_edit(parser.as_ref(), *id, old_blob, &parsed) {
-                        errors.push(format!("{path}: {reason}"));
-                        continue;
-                    }
-                    Ok(parsed.settings)
-                }
-                Err(problems) => Err(problems),
-            },
-            PushedChange::Create { new_blob } => {
-                parse_new_note_file(parser.as_ref(), new_blob, false).map(|parsed| parsed.settings)
-            }
-            PushedChange::Delete { .. } => Ok(NoteSettings::default()),
-        };
-        match parsed_settings {
-            Ok(settings) => warnings.extend(
-                settings
-                    .errors_and_warnings
-                    .iter()
-                    .filter(|e| is_warning(e))
-                    .map(|e| format!("{path}: {e}")),
-            ),
+        let parsed = match &change {
+            PushedChange::Update { id, new_blob, .. } => Some((Some(*id), new_blob)),
+            PushedChange::Create { new_blob } => Some((None, new_blob)),
+            PushedChange::Delete { .. } => None,
+        }
+        .map(|(file_id, new_blob)| {
+            parse_pushed_file(&context, parser.as_ref(), new_blob, file_id, false)
+        })
+        .transpose();
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
             Err(problems) => {
                 for problem in problems {
                     errors.push(format!("{path}: {problem}"));
                 }
                 continue;
             }
+        };
+        if let (PushedChange::Update { id, old_blob, .. }, Some(own)) =
+            (&change, parsed.as_ref().and_then(|p| p.own.as_ref()))
+            && let Some(reason) = live_note_edit(&context, parser.as_ref(), *id, old_blob, own)
+        {
+            errors.push(format!("{path}: {reason}"));
+            continue;
         }
-        pushed.push(PushedNote {
+        let mut moves = Vec::new();
+        let mut creates = 0;
+        if let Some(parsed) = &parsed {
+            warnings.extend(parsed.warnings.iter().map(|w| format!("{path}: {w}")));
+            creates = parsed.new.len();
+            let mut failed = false;
+            for (_, data, by_own_note) in parsed.notes() {
+                match card_move_sources(parser.as_ref(), data) {
+                    Ok(sources) => moves.extend(sources.into_iter().map(|source| CardMove {
+                        source,
+                        by_own_note,
+                    })),
+                    Err(e) => {
+                        errors.push(format!("{path}: {e}"));
+                        failed = true;
+                    }
+                }
+            }
+            if failed {
+                continue;
+            }
+        }
+        pushed.push(PushedFile {
             rel: PathBuf::from(&path),
             parser,
             change,
+            creates,
+            moves,
         });
     }
+    errors.extend(card_move_errors(db, &pushed).await?);
     if !errors.is_empty() {
         return Ok(Outcome::Rejected(format!(
             "spares rejected the push, so nothing was imported:\n{}",
@@ -801,7 +847,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
     }
 
     // 6. Compare-and-swap: the database must still hold what the push is based on.
-    let existing: Vec<(&PushedNote, NoteId, &[u8])> = pushed
+    let existing: Vec<(&PushedFile, NoteId, &[u8])> = pushed
         .iter()
         .filter_map(|note| note.existing().map(|(id, old_blob)| (note, id, old_blob)))
         .collect();
@@ -820,15 +866,21 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
                 changed.push(*id);
                 continue;
             }
-            let db_file = construct_db_note_file(note.parser.as_ref(), row, &links)?;
+            let db_file = construct_db_note_file(&context, note.parser.as_ref(), row, &links)?;
             if db_file.as_bytes() == *old_blob {
                 continue;
             }
             let base_fields = std::str::from_utf8(old_blob)
                 .ok()
-                .and_then(|old| file_note_fields(note.parser.as_ref(), old, *id));
+                .and_then(|old| file_note_fields(&context, note.parser.as_ref(), old, *id));
             let unchanged = base_fields.is_some_and(|base| {
-                same_note(note.parser.as_ref(), *id, &base, &db_note_fields(row))
+                same_note(
+                    &context,
+                    note.parser.as_ref(),
+                    *id,
+                    &base,
+                    &db_note_fields(row),
+                )
             });
             if !unchanged {
                 changed.push(*id);
@@ -886,7 +938,7 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
     start_deferring();
 
     // 8. Import
-    if let Err(e) = import(db, &pushed, &mut journal).await {
+    if let Err(e) = import(db, &context, &pushed, &mut journal).await {
         stop_deferring();
         let outcome = rollback(db, &journal).await;
         remove_journal();
@@ -951,94 +1003,238 @@ async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Out
     Ok(Outcome::Accepted { journal, message })
 }
 
+/// The cards that the `mv:` settings in a note's data take from other notes
+fn card_move_sources(
+    parser: &dyn Parseable,
+    data: &str,
+) -> Result<Vec<ReadableCardIdentifier>, Error> {
+    Ok(get_cards(parser, None, data, false, false)?
+        .into_iter()
+        .filter_map(|card| match card.inherit {
+            Some(CardInheritance {
+                source,
+                mode: InheritMode::Move,
+            }) => Some(source),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Why the `mv:` settings of the pushed notes cannot be carried out: a source card that does not
+/// exist (the push cannot create it, since a pushed note gets its id only once it is imported), is
+/// in the note that moves it, or is moved by more than one cloze. A note that a file creates may
+/// take cards from the note the file belongs to, which splits that note.
+async fn card_move_errors(db: &SqlitePool, pushed: &[PushedFile]) -> Result<Vec<String>, Error> {
+    let mut errors = Vec::new();
+    let mut moved_by: Vec<(ReadableCardIdentifier, &Path)> = Vec::new();
+    for note in pushed {
+        let own_id = note.existing().map(|(id, _)| id);
+        for CardMove {
+            source,
+            by_own_note,
+        } in &note.moves
+        {
+            let path = note.rel.display();
+            let setting = format!("`mv:{}/{}`", source.note_id.letters(), source.order);
+            if *by_own_note && own_id == Some(source.note_id) {
+                errors.push(format!(
+                    "{path}: {setting} moves a card within its own note; reorder the clozes instead"
+                ));
+            } else if let Some((_, other)) = moved_by.iter().find(|(s, _)| s == source) {
+                errors.push(format!(
+                    "{path}: {setting} moves a card that `{}` moves too, but a card can only move once",
+                    other.display()
+                ));
+            } else if !card_exists(db, *source).await? {
+                errors.push(format!(
+                    "{path}: {setting} names a card spares does not have (`spares card get -n {}` lists the note's orders)",
+                    source.note_id.letters()
+                ));
+            }
+            moved_by.push((*source, &note.rel));
+        }
+    }
+    Ok(errors)
+}
+
 /// Imports the push: deletes first, then updates, then creates, so a note moved to another parser
-/// (deleted, and created from a `new-*` file) and keywords of linked notes stay consistent. Its
-/// events form one group, so one undo reverts it all.
+/// (deleted, and created from a `new-*` file) and keywords of linked notes stay consistent. Notes
+/// that a pushed `mv:` takes cards from are the exception: they are updated and deleted last, once
+/// their cards have moved, so a push can merge notes and delete or edit their sources, or split a
+/// note into notes its file creates. Its events form one group, so one undo reverts it all.
 async fn import(
     db: &SqlitePool,
-    pushed: &[PushedNote],
+    context: &NoteFileContext,
+    pushed: &[PushedFile],
     journal: &mut Journal,
 ) -> Result<(), Error> {
-    let parsers = get_all_parsers();
-    let at = Utc::now();
-    // The first event of the import, whose group the later ones join
-    let mut leader = None;
-    if !journal.deleted.is_empty() {
+    let sources: BTreeSet<NoteId> = pushed
+        .iter()
+        .flat_map(|note| note.moves.iter().map(|m| m.source.note_id))
+        .collect();
+    let (deleted_last, deleted_first): (Vec<NoteId>, Vec<NoteId>) =
+        journal.deleted.iter().partition(|id| sources.contains(id));
+    let updated_last = |file: &PushedFile| match &file.change {
+        PushedChange::Update { id, .. } => Some(sources.contains(id)),
+        _ => None,
+    };
+    let mut import = Import {
+        db,
+        context,
+        parsers: get_all_parsers(),
+        at: Utc::now(),
+        leader: None,
+        journal,
+        pushed,
+        parsed: pushed.iter().map(|_| None).collect(),
+    };
+    import.delete(deleted_first).await?;
+    for (i, file) in pushed.iter().enumerate() {
+        if updated_last(file) == Some(false) {
+            import.update(i).await?;
+        }
+    }
+    for i in 0..pushed.len() {
+        import.create(i).await?;
+    }
+    for (i, file) in pushed.iter().enumerate() {
+        if updated_last(file) == Some(true) {
+            import.update(i).await?;
+        }
+    }
+    import.delete(deleted_last).await
+}
+
+/// An import in progress
+struct Import<'a> {
+    db: &'a SqlitePool,
+    context: &'a NoteFileContext,
+    parsers: Vec<fn() -> Box<dyn Parseable>>,
+    at: DateTime<Utc>,
+    /// The first event of the import, whose group the later ones join
+    leader: Option<i64>,
+    journal: &'a mut Journal,
+    pushed: &'a [PushedFile],
+    /// Each pushed file, parsed when its first note is imported. Parsing moves the files of image
+    /// occlusions, so each file is parsed once.
+    parsed: Vec<Option<ParsedPushedFile>>,
+}
+
+impl Import<'_> {
+    async fn delete(&mut self, ids: Vec<NoteId>) -> Result<(), Error> {
+        if ids.is_empty() {
+            return Ok(());
+        }
         let response = delete_notes(
-            db,
+            self.db,
             DeleteNotesRequest {
-                selector: NotesSelector::Ids(journal.deleted.clone()),
+                selector: NotesSelector::Ids(ids),
             },
-            &parsers,
+            &self.parsers,
             true,
         )
         .await?;
-        join_import_group(db, &mut leader, response.event_id, journal).await?;
-        write_journal(journal)?;
+        self.join(response.event_id).await
     }
 
-    for note in pushed {
-        let PushedChange::Update { id, new_blob, .. } = &note.change else {
-            continue;
+    /// Parses pushed file `i`, the first time only.
+    fn parsed(&mut self, i: usize) -> Result<&mut ParsedPushedFile, Error> {
+        let file = &self.pushed[i];
+        if self.parsed[i].is_none() {
+            let (contents, file_id) = match &file.change {
+                PushedChange::Update { id, new_blob, .. } => (new_blob, Some(*id)),
+                PushedChange::Create { new_blob } => (new_blob, None),
+                PushedChange::Delete { .. } => {
+                    return Err(Error::NotesVcs(format!(
+                        "{} is deleted, so it has no notes",
+                        file.rel.display()
+                    )));
+                }
+            };
+            let parsed =
+                parse_pushed_file(self.context, file.parser.as_ref(), contents, file_id, true)
+                    .map_err(|problems| {
+                        Error::NotesVcs(format!("{}: {}", file.rel.display(), problems.join("; ")))
+                    })?;
+            self.parsed[i] = Some(parsed);
+        }
+        self.parsed[i]
+            .as_mut()
+            .ok_or_else(|| Error::NotesVcs(format!("{} was not parsed", file.rel.display())))
+    }
+
+    /// Updates the note that pushed file `i` belongs to.
+    async fn update(&mut self, i: usize) -> Result<(), Error> {
+        let file = &self.pushed[i];
+        let PushedChange::Update { id, .. } = file.change else {
+            return Ok(());
         };
-        let parser_id = parser_id(db, note.parser.get_parser_name())
-            .await?
-            .ok_or_else(|| {
-                Error::NotesVcs(format!("no parser `{}`", note.parser.get_parser_name()))
+        let parser_id = self.parser_id(file).await?;
+        let parsed =
+            self.parsed(i)?.own.take().ok_or_else(|| {
+                Error::NotesVcs(format!("{} has no note {id}", file.rel.display()))
             })?;
-        let parsed = parse_note_file(note.parser.as_ref(), new_blob, *id, true)
-            .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
         let request = UpdateNotesRequest {
-            selector: NotesSelector::Ids(vec![*id]),
+            selector: NotesSelector::Ids(vec![id]),
             parser_id: Some(parser_id),
             data: Some(parsed.data),
             keywords: Some(parsed.settings.keywords),
             tags: UpdateTags::SetTags(parsed.settings.tags),
             custom_data: Some(parsed.settings.custom_data),
         };
-        let response = update_notes(db, request, at, &parsers, true).await?;
-        join_import_group(db, &mut leader, response.event_id, journal).await?;
-        write_journal(journal)?;
+        let response = update_notes(self.db, request, self.at, &self.parsers, true).await?;
+        self.join(response.event_id).await
     }
 
-    for note in pushed {
-        let PushedChange::Create { new_blob } = &note.change else {
-            continue;
-        };
-        let parser_id = parser_id(db, note.parser.get_parser_name())
-            .await?
-            .ok_or_else(|| {
-                Error::NotesVcs(format!("no parser `{}`", note.parser.get_parser_name()))
-            })?;
-        let parsed = parse_new_note_file(note.parser.as_ref(), new_blob, true)
-            .map_err(|problems| Error::NotesVcs(problems.join("; ")))?;
+    /// Creates the notes of pushed file `i`, if it creates any.
+    async fn create(&mut self, i: usize) -> Result<(), Error> {
+        let file = &self.pushed[i];
+        if file.creates == 0 {
+            return Ok(());
+        }
+        let parser_id = self.parser_id(file).await?;
+        let new = std::mem::take(&mut self.parsed(i)?.new);
         let response = create_notes(
-            db,
+            self.db,
             CreateNotesRequest {
                 parser_id,
-                requests: vec![CreateNoteRequest {
-                    data: parsed.data,
-                    keywords: parsed.settings.keywords,
-                    tags: parsed.settings.tags,
-                    is_suspended: parsed.settings.is_suspended,
-                    custom_data: parsed.settings.custom_data,
-                }],
+                requests: new
+                    .into_iter()
+                    .map(|parsed| CreateNoteRequest {
+                        data: parsed.data,
+                        keywords: parsed.settings.keywords,
+                        tags: parsed.settings.tags,
+                        is_suspended: parsed.settings.is_suspended,
+                        custom_data: parsed.settings.custom_data,
+                    })
+                    .collect(),
             },
-            at,
-            &parsers,
+            self.at,
+            &self.parsers,
             true,
         )
         .await?;
         for created in &response.notes {
-            journal.created.push(created.id);
-            journal.ids.push(created.id);
+            self.journal.created.push(created.id);
+            self.journal.ids.push(created.id);
         }
         // Before the event, so a failure from here on still reconciles the created files away
-        write_journal(journal)?;
-        join_import_group(db, &mut leader, response.event_id, journal).await?;
-        write_journal(journal)?;
+        write_journal(self.journal)?;
+        self.join(response.event_id).await
     }
-    Ok(())
+
+    async fn parser_id(&self, note: &PushedFile) -> Result<i64, Error> {
+        let name = note.parser.get_parser_name();
+        parser_id(self.db, name)
+            .await?
+            .ok_or_else(|| Error::NotesVcs(format!("no parser `{name}`")))
+    }
+
+    /// Records an event of the import, in the group of its first event, in the journal.
+    async fn join(&mut self, event_id: Option<i64>) -> Result<(), Error> {
+        join_import_group(self.db, &mut self.leader, event_id, self.journal).await?;
+        write_journal(self.journal)
+    }
 }
 
 /// Records an event of the import, in the group of its first event.
@@ -1065,6 +1261,17 @@ async fn parser_id(db: &SqlitePool, parser_name: &str) -> Result<Option<i64>, Er
         .fetch_optional(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })
+}
+
+async fn card_exists(db: &SqlitePool, card: ReadableCardIdentifier) -> Result<bool, Error> {
+    let found: Option<i64> =
+        sqlx::query_scalar(r#"SELECT 1 FROM card WHERE note_id = ? AND "order" = ?"#)
+            .bind(card.note_id)
+            .bind(card.order as u32)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(found.is_some())
 }
 
 async fn note_exists(db: &SqlitePool, id: NoteId) -> Result<bool, Error> {
@@ -1117,6 +1324,7 @@ fn imported_ids(journal: &Journal) -> Vec<NoteId> {
 /// live note's data and custom data come from its source file, so an edit here would be overwritten
 /// by the next `spares import` of that file. Its tags and keywords stay editable, as on the web.
 fn live_note_edit(
+    context: &NoteFileContext,
     parser: &dyn Parseable,
     id: NoteId,
     old_blob: &[u8],
@@ -1124,7 +1332,7 @@ fn live_note_edit(
 ) -> Option<String> {
     let old = std::str::from_utf8(old_blob)
         .ok()
-        .and_then(|old| file_note_fields(parser, old, id))?;
+        .and_then(|old| file_note_fields(context, parser, old, id))?;
     let mut new = new.fields(parser);
     let live_sync_name = [&old, &new]
         .into_iter()
@@ -1132,7 +1340,7 @@ fn live_note_edit(
         .to_string();
     new.tags.clone_from(&old.tags);
     new.keywords.clone_from(&old.keywords);
-    if same_note(parser, id, &old, &new) {
+    if same_note(context, parser, id, &old, &new) {
         return None;
     }
     Some(format!(

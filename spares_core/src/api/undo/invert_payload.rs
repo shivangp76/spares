@@ -136,12 +136,14 @@ async fn restore_review_log(db: &SqlitePool, review_log: &ReviewLog) -> Result<i
 }
 
 /// Deletes the [`ReviewLogKind::Reschedule`] rows an `AdvanceCards` or `PostponeCards` event wrote
-/// for `moves`, returning them so a redo can restore them. They are the rows of the moved cards at
-/// the event's time that moved them to where `moves` did. A move from before moves were logged has
+/// for `moves`, returning them so a redo can restore them. Each is the latest row of a moved card
+/// that moved it from where `moves` did to where it did. A move from before moves were logged has
 /// none.
+///
+/// The row is found by what it moved, not by the event's time: a redo restores the rows with the
+/// time they were first written, but is an event of its own, at the time of the redo.
 async fn take_reschedule_logs(
     db: &SqlitePool,
-    event: &Event,
     moves: &[UpdateCardPayload],
 ) -> Result<Vec<ReviewLog>, Error> {
     let mut taken = Vec::new();
@@ -150,21 +152,20 @@ async fn take_reschedule_logs(
             continue;
         };
         let review_logs: Vec<ReviewLog> = sqlx::query_as(
-            r"SELECT * FROM review_log WHERE card_id = ? AND kind = ? AND reviewed_at = ?",
+            r"SELECT * FROM review_log WHERE card_id = ? AND kind = ?
+              ORDER BY reviewed_at DESC, id DESC",
         )
         .bind(change.card_id)
         .bind(ReviewLogKind::Reschedule)
-        .bind(event.created_at.timestamp())
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-        for review_log in review_logs {
-            if review_log
+        if let Some(review_log) = review_logs.into_iter().find(|review_log| {
+            review_log
                 .reschedule_data()
-                .is_some_and(|data| data.due == due.after)
-            {
-                taken.push(take_review_log(db, review_log.id).await?);
-            }
+                .is_some_and(|data| data.previous_due == due.before && data.due == due.after)
+        }) {
+            taken.push(take_review_log(db, review_log.id).await?);
         }
     }
     Ok(taken)
@@ -396,7 +397,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         EventType::AdvanceCards | EventType::PostponeCards => {
             let payloads: Vec<UpdateCardPayload> =
                 serde_json::from_value(event.payload.clone()).unwrap();
-            let review_logs = take_reschedule_logs(db, event, &payloads).await?;
+            let review_logs = take_reschedule_logs(db, &payloads).await?;
             let undo_payload = UnmoveCardsPayload {
                 cards: payloads.into_iter().map(UpdateCardPayload::swap).collect(),
                 review_logs,

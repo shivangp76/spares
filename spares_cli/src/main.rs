@@ -9,8 +9,9 @@ mod history;
 mod import;
 mod keyword;
 mod link;
+mod local;
+mod login;
 mod migrate;
-mod migrate_ids;
 mod note;
 mod notes_vcs;
 mod parser;
@@ -18,6 +19,7 @@ mod review;
 mod saved_search;
 mod search;
 mod statistics;
+mod steps;
 mod sync;
 mod tag;
 mod tree;
@@ -25,6 +27,7 @@ mod utils;
 mod view;
 
 use std::str::FromStr;
+use std::sync::Arc;
 
 use args::Cli;
 use args::Commands;
@@ -38,8 +41,8 @@ use reqwest::header::AUTHORIZATION;
 use reqwest::header::HeaderMap;
 use reqwest::header::HeaderValue;
 use spares_core::adapters::get_adapter_from_string;
-use spares_core::config::get_env_config;
-use spares_core::config::local_api_key;
+use spares_core::config::host_client;
+use spares_core::config::set_host_client;
 use spares_core::parsers::find_parser;
 use spares_core::parsers::get_all_parsers;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -48,6 +51,8 @@ use sync::sync_notes;
 
 #[tokio::main]
 async fn main() {
+    // A Typst worker serves renders and exits (see `spares_core::render::init_typst_workers`).
+    spares_core::render::init_typst_workers();
     // Answers shell completion requests (COMPLETE=zsh) and exits.
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     env_logger::init();
@@ -60,12 +65,12 @@ async fn main() {
     }
 }
 
-/// The client for the local server, sending its API key (see [`local_api_key`]).
+/// The client for the host, sending its device token (see [`host_client`]).
 fn local_client() -> Result<Client, Error> {
-    client_with_key(local_api_key().as_deref())
+    client_with_key(host_client().token.as_deref())
 }
 
-/// A client sending this API key, if any.
+/// A client sending this device token, if any.
 fn client_with_key(key: Option<&str>) -> Result<Client, Error> {
     let mut headers = HeaderMap::new();
     if let Some(key) = key {
@@ -79,13 +84,52 @@ fn client_with_key(key: Option<&str>) -> Result<Client, Error> {
         .into_diagnostic()
 }
 
+#[allow(clippy::too_many_lines, reason = "one arm per command")]
 async fn process_args(args: Cli) -> Result<(), Error> {
-    let env_config = get_env_config(args.environment);
-    let base_url = format!("http://{}", env_config.socket_address);
+    let Cli { host, command } = args;
+    let command = match command {
+        Commands::Host(host_args) => {
+            return spares_server::host::admin::run(host_args)
+                .await
+                .map_err(|e| miette!("{e}"));
+        }
+        command => command,
+    };
+    let root = spares_server::host::default_root();
+    let credentials = login::Credentials::read();
+    let explicit_host = host.is_some();
+    set_host_client(local::host_client(host, &root, &credentials).map_err(|e| miette!("{e}"))?);
+    let command = match command {
+        Commands::Login(args) => {
+            let local = if args.host.is_some() || explicit_host {
+                host_client().base_url
+            } else {
+                local::local_host(&root).map_err(|e| miette!("{e}"))?
+            };
+            return login::login(args, &local).await;
+        }
+        Commands::Logout(args) => return login::logout(args, &host_client().base_url).await,
+        command => command,
+    };
+    // The collection on this machine, for the commands that work on its files
+    let collection = local::collection(&root, &credentials).await;
+    match &collection {
+        Ok(collection) => spares_core::collection::set_default(Some(Arc::clone(collection))),
+        Err(reason) => local::explain_missing_collection(reason.clone()),
+    }
+    let local_collection = || collection.clone().map_err(|e| miette!("{e}"));
+    let base_url = host_client().base_url;
     let client = local_client()?;
+    let local_env = || local_collection().map(|collection| local::LocalEnv::new(&collection));
 
-    match args.command {
-        Commands::Parser(parser_args) => parser::handle(parser_args, &base_url, &client).await,
+    match command {
+        Commands::Parser(parser_args) => {
+            // Templates are files of the collection on this machine
+            if matches!(parser_args.command, args::ParserCommands::Template { .. }) {
+                local_collection()?;
+            }
+            parser::handle(parser_args, &base_url, &client).await
+        }
         Commands::Tag(tag_args) => tag::handle(tag_args, &base_url, &client).await,
         Commands::Note(note_args) => note::handle(note_args, &base_url, &client).await,
         Commands::Card(card_args) => card::handle(card_args, &base_url, &client).await,
@@ -93,8 +137,11 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::Keyword(keyword_args) => keyword::handle(keyword_args, &base_url, &client).await,
         Commands::Event(event_args) => event::handle(event_args, &base_url, &client).await,
         Commands::SavedSearch(args) => saved_search::handle(args, &base_url, &client).await,
-        Commands::Deploy(deploy_args) => deploy::handle(deploy_args, &env_config).await,
+        Commands::Deploy(deploy_args) => deploy::handle(deploy_args, &local_env()?).await,
         Commands::Vcs(vcs_args) => notes_vcs::handle(vcs_args, &base_url, &client).await,
+        Commands::Host(_) | Commands::Login(_) | Commands::Logout(_) => {
+            unreachable!("handled above")
+        }
         Commands::Sync(sync_args) => {
             sync_notes(&base_url, &client, sync_args)
                 .await
@@ -102,25 +149,13 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             Ok(())
         }
         Commands::Migrate(migrate::MigrateArgs {
-            command: Some(migrate::MigrateCommands::Ids { dry_run }),
-            ..
-        }) => {
-            migrate_ids::migrate_ids(
-                &env_config.database_url,
-                &env_config.socket_address,
-                dry_run,
-            )
-            .await
-        }
-        Commands::Migrate(migrate::MigrateArgs {
-            command: None,
             adapter: adapter_string,
             initial_migration,
             dry_run,
         }) => {
-            let adapter_string = adapter_string.ok_or_else(|| miette!("--adapter is required"))?;
             let mut adapter =
                 get_adapter_from_string(adapter_string.as_str()).map_err(|e| miette!("{:?}", e))?;
+            let env_config = local_env()?;
             let connect_options = SqliteConnectOptions::from_str(env_config.database_url.as_str())
                 .map_err(|e| miette!("{:?}", e))?
                 .with_regexp();
@@ -161,18 +196,33 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 .transpose()
                 .map_err(|e| miette!("{:?}", e))?;
 
-            import::import_from_files(
-                adapter.as_mut(),
-                parser.as_deref(),
-                to_parser_opt.as_deref(),
-                files.as_slice(),
-                dry_run,
-                false,
-                strip_liveness,
-            )
-            .await
-            .into_diagnostic()
-            .map_err(|e| miette!("{:?}", e))?;
+            // Into spares, the images, audio and image occlusions of shared files go to the host
+            let media_uploader = (adapter_string == "spares").then_some(import::MediaUploader {
+                base_url: &base_url,
+                client: &client,
+            });
+            let unpack_dir = std::env::temp_dir().join(format!(
+                "spares-import-{}-{}",
+                std::process::id(),
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            ));
+            let imported = async {
+                let files = import::unpack_bundles(&files, &unpack_dir)?;
+                import::import_files(
+                    adapter.as_mut(),
+                    parser.as_deref(),
+                    to_parser_opt.as_deref(),
+                    files.as_slice(),
+                    dry_run,
+                    false,
+                    strip_liveness,
+                    media_uploader.as_ref(),
+                )
+                .await
+            }
+            .await;
+            let _ = std::fs::remove_dir_all(&unpack_dir);
+            imported.into_diagnostic().map_err(|e| miette!("{:?}", e))?;
             Ok(())
         }
     }

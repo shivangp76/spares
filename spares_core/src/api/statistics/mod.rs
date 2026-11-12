@@ -1,5 +1,6 @@
 mod graphs;
 pub(crate) mod local_time;
+mod steps;
 #[cfg(test)]
 mod tests;
 
@@ -7,6 +8,7 @@ use std::collections::HashMap;
 
 use chrono::Days;
 use chrono::Duration;
+use chrono::Utc;
 use graphs::CardFilter;
 use graphs::due_by_day;
 pub use graphs::get_statistics_graphs;
@@ -15,12 +17,16 @@ use local_time::date_of_day_number;
 use local_time::day_number;
 use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
+pub use steps::get_steps_stats;
 
 use crate::Error;
 use crate::api::preset::cap_counts;
 use crate::api::preset::limited_preset_sql;
 use crate::api::queue::QueueCaps;
 use crate::api::review::daily_limits_left_with;
+use crate::api::study_pace::capped_answer_seconds;
+use crate::api::study_pace::capped_rate_seconds;
+use crate::api::study_pace::capped_recall_seconds;
 use crate::config::read_external_config;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
@@ -44,7 +50,8 @@ pub async fn get_statistics(
         tz,
     } = request;
     let scheduler = get_scheduler_from_string(scheduler_name.as_str())?;
-    let zone = Zone::parse(tz.as_deref())?;
+    let config = read_external_config()?;
+    let zone = Zone::for_client(tz.as_deref(), &config)?;
     let today = zone.date(requested_date);
     let today_start = zone.start_of(today).timestamp();
     let tomorrow_start = zone.start_of(today + Days::new(1)).timestamp();
@@ -53,12 +60,14 @@ pub async fn get_statistics(
     // rows, whose card has been deleted.
     let studied = async {
         sqlx::query_as::<_, (u32, i64, i64)>(AssertSqlSafe(format!(
-            r"SELECT COUNT(DISTINCT card_id), COALESCE(SUM(recall_duration), 0),
-                     COALESCE(SUM(rate_duration), 0)
+            r"SELECT COUNT(DISTINCT card_id), COALESCE(SUM({recall}), 0),
+                     COALESCE(SUM({rate}), 0)
               FROM review_log
               WHERE reviewed_at >= {today_start} AND reviewed_at < {tomorrow_start}
                 AND kind = {review} AND card_id IS NOT NULL",
             review = ReviewLogKind::Review as u8,
+            recall = capped_recall_seconds("", config.maximum_answer_seconds()),
+            rate = capped_rate_seconds("", config.maximum_answer_seconds()),
         )))
         .fetch_one(db)
         .await
@@ -67,10 +76,11 @@ pub async fn get_statistics(
     // Crams are counted apart from reviews, one per rating, and so are the minutes spent on them.
     let crams = async {
         sqlx::query_as::<_, (u32, i64)>(AssertSqlSafe(format!(
-            r"SELECT COUNT(*), COALESCE(SUM(recall_duration + rate_duration), 0) FROM review_log
+            r"SELECT COUNT(*), COALESCE(SUM({seconds}), 0) FROM review_log
               WHERE reviewed_at >= {today_start} AND reviewed_at < {tomorrow_start}
                 AND kind = {cram} AND card_id IS NOT NULL",
             cram = ReviewLogKind::Cram as u8,
+            seconds = capped_answer_seconds("", config.maximum_answer_seconds()),
         )))
         .fetch_one(db)
         .await
@@ -88,7 +98,6 @@ pub async fn get_statistics(
     // Cap new and review cards by what is left of today's limits, and of their presets', as
     // review does, so the counts are what is left to study today. See
     // `get_cards_left_by_state_and_time_estimate`.
-    let config = read_external_config()?;
     let due_today = async {
         let limits_left = daily_limits_left_with(db, &config, requested_date).await?;
         // New cards are due from when they are created, and cards due before today are still
@@ -173,7 +182,7 @@ pub async fn get_review_history(
     db: &SqlitePool,
     request: ReviewHistoryRequest,
 ) -> Result<ReviewHistoryResponse, Error> {
-    let zone = Zone::parse(request.tz.as_deref())?;
+    let zone = Zone::for_client(request.tz.as_deref(), &read_external_config()?)?;
     let cards = CardFilter::new(db, request.query.as_deref()).await?;
     // Reviews of since-deleted cards still count without a query, as they were studied all the
     // same
@@ -198,6 +207,7 @@ pub async fn get_review_history(
     let mut response = ReviewHistoryResponse {
         review_count_by_date: HashMap::new(),
         cram_count_by_date: HashMap::new(),
+        today: Some(zone.date(Utc::now())),
     };
     for (day, kind, count) in rows {
         let counts = match kind {

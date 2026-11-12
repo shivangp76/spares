@@ -1,6 +1,12 @@
 export interface Credentials {
   serverUrl: string;
-  apiKey: string;
+  /**
+   * The session's CSRF token, which every request sends in `X-CSRF-Token`. The session itself is
+   * a cookie the page can't read (see `spares_server::host::auth`).
+   */
+  csrfToken: string;
+  /** The account's name */
+  user: string;
   schedulerName: string;
 }
 
@@ -18,21 +24,36 @@ export interface GetReviewCardResponse {
   card_front_raw_path: string;
   card_back_raw_path: { CardBack: string } | { Note: string };
   note_raw_path: string;
-  // When the note was last changed. Missing from cards downloaded for offline review before it was added.
-  note_updated_at?: string;
+  // When the note was last changed
+  note_updated_at: string;
   parser_name: string;
+  // The note's keywords and tags, shown beside the card as its rendered files leave them out
   keywords: string[];
+  // In name order
+  tags: string[];
   // Present iff the card is reviewed by running an external command (CLI only)
   cli?: CliReviewInfo;
   // Present iff the parser's sources are compiled in the browser (Typst)
   browser_sources?: BrowserRenderSources;
+  // Present iff the card is a Markdown card on a device that keeps a copy, which shows them while the server hasn't rendered its note's latest change
+  device_sources?: BrowserRenderSources;
   // Present iff the card asks for its answers to be typed (the cloze key `t`)
   typed_answer?: TypedAnswerInfo;
   // Present iff the card has audio clips or text to read aloud
   audio?: CardAudio;
+  // Present iff the card's back still masks some of its image occlusions: those, which the review page shows without masks
+  image_occlusions?: UnmaskedImageOcclusion[];
   cards_left_by_state: Record<string, number>;
   time_estimate: number; // seconds (DurationSeconds<i64>)
   linked_notes: ReviewLinkedNote[];
+}
+
+/** An image occlusion of a review card whose back masks some of it. */
+export interface UnmaskedImageOcclusion {
+  /** As the card's figure is captioned */
+  caption: string;
+  /** Its place among the card's image occlusions, from 1 */
+  order: number;
 }
 
 export interface CliReviewInfo {
@@ -42,8 +63,8 @@ export interface CliReviewInfo {
 
 // Internally-tagged serde enum
 export type TypeAnswer =
-  | { kind: 'diff'; ignore_case: boolean; ignore_combining: boolean }
-  | { kind: 'manual' };
+  | { kind: "diff"; ignore_case: boolean; ignore_combining: boolean }
+  | { kind: "manual" };
 
 export interface TypedBlank {
   expected: string;
@@ -100,7 +121,7 @@ export interface RatingSubmission {
   card_id: number;
   rating: number;
   recall_duration: number; // seconds
-  rate_duration: number;   // seconds
+  rate_duration: number; // seconds
   tag_id: number | null;
 }
 
@@ -121,29 +142,9 @@ export interface SubmitStudyActionResponse {
 }
 
 // Externally-tagged serde enum
-export type ReviewFilter = { Query: string } | { FilteredTag: { tag_id: number } };
+export type ReviewFilter =
+  { Query: string } | { FilteredTag: { tag_id: number } };
 
-export interface ReviewQueueRequest {
-  filter: ReviewFilter | null;
-  limit: number;
-  // Also include cards due on the next `days_ahead` days
-  days_ahead: number;
-}
-
-export interface ReviewQueueCard extends GetReviewCardResponse {
-  due: string; // ISO 8601
-  // The earliest the card may be shown, for a learning card held back by the learn ahead limit
-  // (ISO 8601). Missing from queues downloaded before it was added.
-  shown_from?: string | null;
-}
-
-export interface ReviewQueueResponse {
-  // In the order a review would show them
-  cards: ReviewQueueCard[];
-  new_cards_left_today: number;
-}
-
-// Where the cards matching `match_query` are in the queue of the review with `filter`
 export interface QueuePositionRequest {
   // `null` for the default review
   filter: ReviewFilter | null;
@@ -175,10 +176,10 @@ export interface HeldBackCard extends QueueCard {
 
 // Externally-tagged serde enum
 export type NotShownReason =
-  | 'Suspended'
-  | 'Buried'
-  | 'NotDue'
-  | 'WaitingOnLinkedNote'
+  | "Suspended"
+  | "Buried"
+  | "NotDue"
+  | "WaitingOnLinkedNote"
   | { NewLimit: { preset: string | null } }
   | { ReviewLimit: { preset: string | null } };
 
@@ -200,31 +201,6 @@ export interface QueuePositionResponse {
   not_in_review: number;
 }
 
-// The study actions that can be performed offline
-export type OfflineStudyActionKind = { Rate: RatingSubmission } | { Bury: { card_id: number } };
-
-export interface OfflineStudyAction {
-  // Unique per action, so a resent action is not applied twice
-  client_id: string;
-  performed_at: string; // ISO 8601
-  action: OfflineStudyActionKind;
-}
-
-export interface SyncOfflineActionsRequest {
-  scheduler_name: string;
-  actions: OfflineStudyAction[];
-}
-
-export type OfflineActionOutcome =
-  | { Applied: { event_id: number | null } }
-  | 'Duplicate'
-  | { Rejected: { message: string } };
-
-export interface SyncOfflineActionsResponse {
-  // One per action, in the order they were submitted
-  results: { client_id: string; outcome: OfflineActionOutcome }[];
-}
-
 export interface ReviewSnapshotResponse {
   tag_id: number;
   tag_name: string;
@@ -236,6 +212,19 @@ export interface ReviewSnapshotResponse {
 export interface ReviewConfig {
   flagged_tag_name: string;
   set_card_due_date_duration: number; // seconds
+  // How long a timebox lasts, in seconds (`queue.timebox`). Missing from older servers.
+  timebox?: number | null;
+  // `queue.auto_advance`. Missing from older servers.
+  auto_advance?: AutoAdvance | null;
+}
+
+/** `[queue.auto_advance]`: when review shows the answer and acts on its own. */
+export interface AutoAdvance {
+  // Seconds, 0 to wait for the answer to be shown by hand
+  show_answer_after: number;
+  // Seconds, 0 to wait for a rating by hand
+  rate_after: number;
+  action: "again" | "hard" | "good" | "bury";
 }
 
 export interface TagResponse {
@@ -276,8 +265,10 @@ export interface ParserResponse {
   name: string;
 }
 
-export type SpecialState = 'Suspended' | 'UserBuried' | 'SchedulerBuried' | 'BuriedUntilLaterToday';
-export type SpecialStateUpdate = 'Suspended' | 'Buried' | 'BuriedUntilLaterToday';
+export type SpecialState =
+  "Suspended" | "UserBuried" | "SchedulerBuried" | "BuriedUntilLaterToday";
+export type SpecialStateUpdate =
+  "Suspended" | "Buried" | "BuriedUntilLaterToday";
 
 export interface CardResponse {
   id: number;
@@ -318,7 +309,7 @@ export interface ForgetCardResponse {
 export interface CardReviewEntry {
   id: number;
   /** `Cram` is a rating in a filtered tag that does not reschedule, which left the card's schedule alone. `Reschedule` is a postponement or advance, which moved the due date without a review. */
-  kind: 'Review' | 'Forget' | 'Cram' | 'Reschedule';
+  kind: "Review" | "Forget" | "Cram" | "Reschedule";
   reviewed_at: string;
   /** Relative to `scheduler_name`. */
   rating: number | null;
@@ -326,7 +317,7 @@ export interface CardReviewEntry {
   previous_state: number;
   scheduled_time: number | null; // seconds
   recall_duration: number | null; // seconds
-  rate_duration: number | null;   // seconds
+  rate_duration: number | null; // seconds
   tag_id: number | null;
   /** Replayed with the scheduler's current parameters. `null` after a forget. A cram keeps the one before it. */
   stability: number | null;
@@ -344,6 +335,23 @@ export interface EventSummary {
   description: string;
 }
 
+/** `spares_core::schema::undo::EventEntry`: an event of the history, or a group of them, which undo and redo revert together. */
+export interface EventEntry {
+  /** The event's, or the group's first event's: the one to undo or redo it by */
+  id: number;
+  /** `spares_core::model::EventType`, e.g. `CreateNotes` */
+  kind: string;
+  action: "Do" | "Undo" | "Redo";
+  created_at: string;
+  /** For a group, by its note events, with how many other changes it made */
+  description: string;
+  group_size: number;
+  /** All of it was undone (or redone, for an undo) */
+  reverted: boolean;
+  /** Made by spares itself, like the daily unbury; a plain undo skips it */
+  automatic: boolean;
+}
+
 export interface UndoEventResponse {
   undone_events: EventSummary[];
   /** The undo events that were appended, oldest first. Pass one to `redoEvent`. */
@@ -357,7 +365,7 @@ export interface RedoEventResponse {
 }
 
 /** What spares treats a card state as, whatever its scheduler calls it. */
-export type StateRole = 'New' | 'Learning' | 'Review' | 'Relearning';
+export type StateRole = "New" | "Learning" | "Review" | "Relearning";
 
 /** A state a scheduler can put a card in, from `getSchedulerStates`. */
 export interface CardState {
@@ -408,7 +416,11 @@ export interface TodayStats {
   cram_seconds: number;
 }
 
-export interface ForecastDay { date: string; learning: number; review: number }
+export interface ForecastDay {
+  date: string;
+  learning: number;
+  review: number;
+}
 
 export interface ReviewDay {
   date: string;
@@ -429,7 +441,10 @@ export interface ReviewsSummary {
   daily_average: number;
 }
 
-export interface PassFail { passed: number; failed: number }
+export interface PassFail {
+  passed: number;
+  failed: number;
+}
 
 export interface RetentionRow {
   label: string;
@@ -453,7 +468,12 @@ export interface AnswerButtons {
   mature: AnswerGroup;
 }
 
-export interface HourStats { reviews: number; passed: number; crams: number; crams_passed: number }
+export interface HourStats {
+  reviews: number;
+  passed: number;
+  crams: number;
+  crams_passed: number;
+}
 
 export interface CardCounts {
   /** Cards neither suspended nor buried, by state id. */
@@ -466,7 +486,11 @@ export interface CardCounts {
 }
 
 /** Bucket `i` holds the values from `edges[i]` to `edges[i + 1]`; the last bucket can be wider, holding the tail. */
-export interface Histogram { edges: number[]; counts: number[]; mean: number | null }
+export interface Histogram {
+  edges: number[];
+  counts: number[];
+  mean: number | null;
+}
 
 export interface Distributions {
   interval: Histogram;
@@ -475,6 +499,75 @@ export interface Distributions {
   /** `null` if the scheduler has no forgetting curve. */
   retrievability: Histogram | null;
   total_knowledge: number | null;
+  /** Reviews a day the cards in review cost once the collection settles: the sum of 1 / max(1, interval in days). */
+  daily_load: number;
+  /** Over the cards in review, neither new, learning nor suspended. `null` without a forgetting curve or such cards. */
+  average_retrievability: number | null;
+  average_stability: number | null;
+}
+
+export interface StepsStatsRequest {
+  /** `null` for the cards that use no preset. */
+  preset: string | null;
+  period_days: number | null;
+}
+
+export type StepsGroupKind =
+  "again" | "hard" | "good" | "again_then_good" | "relearning";
+
+export interface StepsGroup {
+  kind: StepsGroupKind;
+  reviews: number;
+  recalled: number;
+  /** Days. `null` when the reviews do not pin it down. */
+  stability: number | null;
+  /** Seconds until recall falls to the desired retention. */
+  interval: number | null;
+}
+
+/** Seconds; `null` without enough reviews. */
+export interface RecommendedSteps {
+  first_learning_step: number | null;
+  second_learning_step: number | null;
+  relearning_step: number | null;
+}
+
+export interface StepsStatsResponse {
+  presets: string[];
+  desired_retention: number;
+  min_reviews: number;
+  groups: StepsGroup[];
+  /** Seconds. */
+  learning_steps: number[];
+  relearning_steps: number[];
+  recommended: RecommendedSteps;
+}
+
+/** `spares_core::schema::review::ParametersEvaluation`: lower is better for both. */
+export interface ParametersEvaluation {
+  log_loss: number;
+  /** The RMSE between predicted and actual recall rates, as a fraction. */
+  rmse_bins: number;
+}
+
+/** `spares_core::schema::review::OptimizeResponse` */
+export interface OptimizeResponse {
+  card_count: number;
+  review_count: number;
+  current_parameters: number[];
+  current: ParametersEvaluation;
+  optimized_parameters: number[];
+  optimized: ParametersEvaluation;
+  /** Whether the optimized parameters were saved and every card rescheduled. */
+  applied: boolean;
+  /** The reschedule's event, if `applied` changed any card. */
+  event_id: number | null;
+}
+
+/** `spares_core::schema::review::RescheduleResponse` */
+export interface RescheduleResponse {
+  /** The event logging the cards it changed; undone by id only. */
+  event_id: number | null;
 }
 
 export interface StatisticsGraphsResponse {
@@ -502,6 +595,9 @@ export interface ReviewHistoryResponse {
   review_count_by_date: Record<string, number>;
   // Likewise for crams, which the heatmap adds to the reviews
   cram_count_by_date: Record<string, number>;
+  // The day under way as the counts tell days apart, `YYYY-MM-DD`: before the hour days start at
+  // (`day_starts_at`, 4 AM by default), the date before the calendar's. Missing from older servers.
+  today?: string | null;
 }
 
 export interface NoteResponse {
@@ -576,7 +672,8 @@ export interface GraphNode {
 }
 
 /** Why a note is in a graph: the query found it, a note found builds on it, or it builds on one. */
-export type GraphRelation = 'found' | 'prerequisite' | 'dependent' | 'unmatched';
+export type GraphRelation =
+  "found" | "prerequisite" | "dependent" | "unmatched";
 
 export interface UnmatchedLink {
   /** The note with the link. */
@@ -607,7 +704,7 @@ export interface LinkedNote {
 }
 
 // Externally-tagged serde enum
-export type NotesSelector = { Ids: number[] } | { Query: string } | 'All';
+export type NotesSelector = { Ids: number[] } | { Query: string } | "All";
 
 export interface CreateNoteRequest {
   data: string;
@@ -732,4 +829,69 @@ export interface SearchPage<T> {
 export interface SavedSearch {
   name: string;
   query: string;
+}
+
+/** `POST /api/notes/share/summary`: `spares_core::schema::note::ExportNotesResponse` of an export to share, with its media's names but not their contents. */
+export interface ShareSummary {
+  /** Each file of notes, by its parser's file extension */
+  files: Record<string, string>;
+  private_notes_left_out: number;
+  media: { kind: "image" | "audio" | "image-occlusion"; name: string }[];
+  /** Paths the notes name with no file there, which stay as they are */
+  missing_media: string[];
+}
+
+/** `spares_core::api::note::import::ImportRequestOptions`: `spares import`'s options. */
+export interface ImportRequestOptions {
+  /** Without one, each file's parser is the one that finds notes in it */
+  parser: string | null;
+  to_parser: string | null;
+  dry_run: boolean;
+  strip_liveness: boolean;
+}
+
+/** `spares_core::api::note::import::ImportNoteSummary` */
+export interface ImportNoteSummary {
+  file: string;
+  parser: string;
+  action: "add" | "update" | "delete";
+  note_id: number | null;
+  card_count: number;
+  tags: string[];
+  keywords: string[];
+  is_suspended: boolean;
+  live: boolean;
+  warnings: string[];
+  data: string;
+}
+
+/** `spares_core::api::note::import::RewrittenFile` */
+export interface RewrittenFile {
+  file: number;
+  name: string;
+  contents: string;
+}
+
+/** `spares_core::api::note::import::ImportResponse` */
+export interface ImportResponse {
+  dry_run: boolean;
+  notes: ImportNoteSummary[];
+  skipped_note_count: number;
+  deleted_live_note_ids: number[];
+  rewritten_files: RewrittenFile[];
+  /** The import's first event: undoing it with its group reverts the import */
+  event_id: number | null;
+  media_count: number;
+  missing_media: string[];
+  skipped_files: string[];
+}
+
+/** `spares_core::api::note::share_bundle::ImportSharedResponse` */
+export interface ImportSharedResponse {
+  note_count: number;
+  event_ids: number[];
+  parsers_added: string[];
+  media_count: number;
+  missing_media: string[];
+  skipped_files: string[];
 }

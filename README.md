@@ -26,6 +26,7 @@ Spares was built to address the numerous drawbacks of Anki. See [this](spares_fr
   - Drawn in the web app's note editor
   - Support for interweaving image occlusion with text clozes
   - Hint display over image clozes
+  - On a card's back, its images without masks (`m`), with their markup
 - **Cross-note Referencing**:
   - Keyword-based linking system
   - Support for partial references
@@ -48,13 +49,13 @@ Spares was built to address the numerous drawbacks of Anki. See [this](spares_fr
   - Cards held back until the notes they link to are learned
 
 ### Sync
-- **Self-hosted Sync Server**: Two-way sync that merges notes changed on both sides, tagging conflicts with `sync-conflict`
+- **Self-hosted Sync Server**: Two-way sync that merges notes changed on both sides, tagging conflicts with `sync-conflict`, between your machine, the server and phones that keep a copy
 - **Deployment**: `spares deploy` sets up a VPS reached over Tailscale (see [Deploying a Sync Server](spares_frontend/frontend/src/manual/deploying.md))
 
 ### Interface and Tools
 - **CLI**: Full-featured command-line interface, including reviewing
 - **Web App**:
-  - Installable on a phone, with offline reviewing
+  - Installable on a phone, which can keep a copy of the collection and work offline
   - Note editor with Vim mode, image occlusion, image and audio uploads
   - Statistics graphs and a built-in manual
 - **Neovim Plugin**: Tag and keyword completion (see [nvim](nvim/README.md))

@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::SystemTime;
 
@@ -11,13 +10,13 @@ use serde::Deserialize;
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-use super::commit::NEEDS_RECONCILE;
 use super::commit::commit_message;
 use super::commit::git_index_lock;
 use super::commit::try_commit;
 use super::git::git;
 use super::git::git_output;
 use super::git::nul_split;
+use super::note_file::NoteFileContext;
 use super::note_file::construct_db_note_file;
 use super::note_file::db_note_fields;
 use super::note_file::file_note_fields;
@@ -122,7 +121,7 @@ pub async fn reconcile_after(db: &SqlitePool, note_ids: Vec<NoteId>, what: &str)
     }
     let message = commit_message(what, &note_ids);
     if let Err(e) = reconcile(db, ReconcileScope::Notes(note_ids), Some(&message)).await {
-        NEEDS_RECONCILE.store(true, Ordering::SeqCst);
+        super::set_needs_reconcile(true);
         log::error!("Failed to update note files after `{what}`: {e}");
     }
 }
@@ -134,6 +133,7 @@ async fn reconcile_inner(
     message: Option<&str>,
     dry_run: bool,
 ) -> Result<ReconcileReport, Error> {
+    let context = NoteFileContext::default();
     let mut report = ReconcileReport::default();
     if !enabled() {
         return Ok(report);
@@ -226,7 +226,7 @@ async fn reconcile_inner(
             let Some((rel, parser, row)) = expected else {
                 continue;
             };
-            let contents = construct_db_note_file(parser.as_ref(), row, &links)?;
+            let contents = construct_db_note_file(&context, parser.as_ref(), row, &links)?;
             let absolute = repo.join(&rel);
             let current = std::fs::read(&absolute).ok();
             commit_paths.push(rel.clone());
@@ -236,8 +236,9 @@ async fn reconcile_inner(
             if semantic
                 && let Some(current) = current.as_deref()
                 && let Ok(current) = std::str::from_utf8(current)
-                && file_note_fields(parser.as_ref(), current, id)
-                    .is_some_and(|f| same_note(parser.as_ref(), id, &f, &db_note_fields(row)))
+                && file_note_fields(&context, parser.as_ref(), current, id).is_some_and(|f| {
+                    same_note(&context, parser.as_ref(), id, &f, &db_note_fields(row))
+                })
             {
                 continue;
             }
@@ -292,7 +293,7 @@ async fn reconcile_inner(
     let default_message = commit_message("reconcile", &ids);
     report.committed = try_commit(&commit_paths, message.unwrap_or(&default_message))?;
     if matches!(scope, ReconcileScope::Dirty | ReconcileScope::All) {
-        NEEDS_RECONCILE.store(false, Ordering::SeqCst);
+        super::set_needs_reconcile(false);
     }
     if !report.is_empty() {
         log::info!("Reconciled the notes repository: {report:?}");
@@ -305,6 +306,7 @@ pub(crate) async fn write_db_note_files(
     db: &SqlitePool,
     ids: &[NoteId],
 ) -> Result<Vec<PathBuf>, Error> {
+    let context = NoteFileContext::default();
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -316,7 +318,7 @@ pub(crate) async fn write_db_note_files(
     for row in &rows {
         let parser = find_parser(&row.parser_name, &parsers)?;
         let rel = note_rel_path(parser.as_ref(), row.note_id);
-        let contents = construct_db_note_file(parser.as_ref(), row, &links)?;
+        let contents = construct_db_note_file(&context, parser.as_ref(), row, &links)?;
         write_file(&repo.join(&rel), contents.as_bytes())?;
         written.push(rel);
     }
@@ -416,11 +418,15 @@ fn remove_stale_index_lock(repo: &Path) {
     }
 }
 
+/// Writes `contents` to `path`, unless it already holds them, so that a note file whose note did
+/// not change keeps its modification time.
 fn write_file(path: &Path, contents: &[u8]) -> Result<(), Error> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
     }
-    std::fs::write(path, contents).map_err(|e| io_error(path, e))
+    crate::helpers::write_if_changed(path, contents)
+        .map(|_| ())
+        .map_err(|e| io_error(path, e))
 }
 
 fn io_error(path: &Path, source: std::io::Error) -> Error {

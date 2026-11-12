@@ -1,12 +1,18 @@
+use std::path::PathBuf;
+
 use miette::Error;
 use miette::miette;
 use reqwest::Client;
+use spares_core::parsers::TemplateType;
+use spares_core::parsers::find_parser;
+use spares_core::parsers::get_all_parsers;
 use spares_core::schema::parser::CreateParserRequest;
 use spares_core::schema::parser::ParserResponse;
 use spares_core::schema::parser::UpdateParserRequest;
 
 use crate::args::ParserArgs;
 use crate::args::ParserCommands;
+use crate::args::TemplateKind;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
 
@@ -83,6 +89,33 @@ pub(crate) async fn handle(
                 serde_json::to_string_pretty(&parser_responses).unwrap()
             );
         }
+        ParserCommands::Template { name, kind } => {
+            let path = write_default_template(&name, kind)?;
+            println!("{}", path.display());
+        }
     }
     Ok(())
+}
+
+/// Writes the default template of `kind` for the parser `name`, unless it has a file already, and
+/// returns the file's path.
+fn write_default_template(name: &str, kind: TemplateKind) -> Result<PathBuf, Error> {
+    let parser = find_parser(name, &get_all_parsers()).map_err(|e| miette!("{e}"))?;
+    let template_type = match kind {
+        TemplateKind::Note => TemplateType::Note,
+        TemplateKind::Card => TemplateType::Card,
+        TemplateKind::Export => TemplateType::Export,
+    };
+    let path = parser.template_filepath(template_type);
+    if path.exists() {
+        eprintln!("The template already has a file, which is left as it is.");
+        return Ok(path);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| miette!("Failed to create {}: {e}", dir.display()))?;
+    }
+    std::fs::write(&path, parser.default_template())
+        .map_err(|e| miette!("Failed to write {}: {e}", path.display()))?;
+    Ok(path)
 }

@@ -8,9 +8,14 @@
 //!   card in review is rated or rescheduled. See [`crate::schedulers::placement`].
 //! - Flatten: Unsupported. See <https://github.com/open-spaced-repetition/fsrs4anki-helper/issues/439#issuecomment-2268740000> for reasoning. Load balancing is close enough to this feature.
 //! - Remedy hard misuse: Unsupported.
+//! - FSRS stats: Supported. Daily load and the average retrievability and stability of the cards
+//!   in review are among the statistics' distributions
+//!   ([`Distributions`](crate::schema::statistics::Distributions)).
+//! - Steps stats: Supported, see the `steps_stats` module and `spares card steps`.
 mod optimize;
 mod reposition;
 mod steps;
+pub(crate) mod steps_stats;
 pub(crate) mod utils;
 
 use async_trait::async_trait;
@@ -363,8 +368,8 @@ impl SrsScheduler for Fsrs {
         db: &SqlitePool,
         requested_date: DateTime<Utc>,
     ) -> Result<u32, Error> {
-        let (_, card_due_limit) = get_start_end_local_date(&requested_date);
         let config = read_external_config()?;
+        let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.zone());
         count_safe_cards(
             db,
             &format!(
@@ -384,8 +389,8 @@ impl SrsScheduler for Fsrs {
         db: &SqlitePool,
         requested_date: DateTime<Utc>,
     ) -> Result<u32, Error> {
-        let (_, card_due_limit) = get_start_end_local_date(&requested_date);
         let config = read_external_config()?;
+        let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.zone());
         count_safe_cards(
             db,
             &format!(
@@ -408,7 +413,7 @@ impl SrsScheduler for Fsrs {
         query: Option<String>,
         requested_date: DateTime<Utc>,
     ) -> Result<MoveCardsResult, Error> {
-        let (_, card_due_limit) = get_start_end_local_date(&requested_date);
+        let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.zone());
         let card_id_query_str = if let Some(query_str) = query {
             let evaluator = Evaluator::new(&query_str);
             let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
@@ -453,7 +458,7 @@ impl SrsScheduler for Fsrs {
         query: Option<String>,
         requested_date: DateTime<Utc>,
     ) -> Result<MoveCardsResult, Error> {
-        let (_, card_due_limit) = get_start_end_local_date(&requested_date);
+        let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.zone());
         let card_id_query_str = if let Some(query_str) = query {
             let evaluator = Evaluator::new(&query_str);
             let card_ids_str = evaluator.get_card_ids(db).await?.into_iter().join(", ");
@@ -503,7 +508,11 @@ impl SrsScheduler for Fsrs {
         .fetch_all(db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
-        let training_set = optimize::training_set(&review_logs);
+        let training_set = optimize::training_set(
+            &review_logs,
+            config.zone(),
+            config.fsrs_optimizer_ignore_reviews_before,
+        );
         let current_parameters = config.fsrs_parameters.clone();
         let num_relearning_steps = config.relearning_steps.len();
         // Training is CPU-bound, so it runs on the rayon pool rather than blocking the executor.
@@ -562,7 +571,7 @@ impl SrsScheduler for Fsrs {
         // Whole days only, so the card keeps the time of day it was reviewed at.
         let min_days = min_ivl.num_fractional_days().ceil() as i64;
         let max_days = (max_ivl.num_fractional_days().floor() as i64).max(min_days);
-        let today_start = get_start_end_local_date(&at).0;
+        let today_start = get_start_end_local_date(&at, config.zone()).0;
         let candidates = (min_days..=max_days)
             .map(|days| last_review.reviewed_at + Duration::days(days))
             .collect::<Vec<_>>();
@@ -706,7 +715,7 @@ mod tests {
             let last_review = review_logs.last().unwrap().reviewed_at;
             // Partway through the card's interval, so part of its range may have passed.
             let at = last_review + (card.due - last_review) / 2;
-            let today_start = get_start_end_local_date(&at).0;
+            let today_start = get_start_end_local_date(&at, config.zone()).0;
             let candidates = scheduler.due_candidates(&config, &card, &review_logs, at);
             if candidates.iter().any(|candidate| *candidate < today_start) {
                 assert_eq!(

@@ -4,8 +4,6 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Datelike;
-use chrono::Duration;
-use chrono::Local;
 use chrono::Utc;
 use indoc::formatdoc;
 use itertools::Itertools;
@@ -22,6 +20,7 @@ use crate::api::review::REVIEW_CARD_COLUMNS;
 use crate::api::review::ReviewCard;
 use crate::api::review::ReviewFilterQuery;
 use crate::api::review::get_cards_left_by_state_and_time_estimate;
+use crate::api::statistics::local_time::Zone;
 use crate::config::InterleaveBy;
 use crate::config::NewCardOrder;
 use crate::config::NewReviewMix;
@@ -29,6 +28,7 @@ use crate::config::QueueConfig;
 use crate::config::QueuePreset;
 use crate::config::ReviewOrder;
 use crate::config::SparesExternalConfig;
+use crate::helpers::study_date;
 use crate::model::CardId;
 use crate::model::SpecialState;
 use crate::model::StateId;
@@ -106,14 +106,32 @@ fn desc(expr: impl Into<String>) -> Key {
 }
 
 /// A pseudorandom number in `0..1_000_003` for `id_expr`, the same all day and different the next.
-/// The multiplier changes with the day, rather than an offset, so each day is a different
-/// permutation rather than a rotation of the same one. Products stay below 2^40, so they cannot
-/// overflow.
-fn daily_hash(id_expr: &str, now: DateTime<Utc>) -> String {
-    const PRIME: i64 = 1_000_003;
-    let day = i64::from(now.with_timezone(&Local).date_naive().num_days_from_ce());
-    let multiplier = (day * 7919 + 48271) % (PRIME - 1) + 1;
-    format!("((({id_expr}) % {PRIME}) * {multiplier}) % {PRIME}")
+///
+/// `x = (id * multiplier + offset) mod p` alone orders ids by the fractional part of
+/// `id * multiplier / p`, which takes few orders for a few dozen ids, so a small collection would
+/// often get the same order on two days, or its ids in order. Raising `x` to the 5th power mod `p`
+/// mixes them, and is still one-to-one, as 5 does not divide `p - 1`. The multiplier and offset
+/// come from a hash of the day, so the next day's have nothing in common with today's. Products
+/// stay below 2^40, so they cannot overflow.
+fn daily_hash(id_expr: &str, now: DateTime<Utc>, zone: Zone) -> String {
+    const PRIME: u64 = 1_000_003;
+    let day = study_date(now, zone).num_days_from_ce();
+    let seed = splitmix64(u64::from(day.unsigned_abs()));
+    let multiplier = seed % (PRIME - 1) + 1;
+    let offset = (seed >> 32) % PRIME;
+    let x = format!("((({id_expr}) % {PRIME}) * {multiplier} + {offset}) % {PRIME}");
+    let x2 = format!("({x} * {x}) % {PRIME}");
+    format!("((({x2} * {x2}) % {PRIME}) * {x}) % {PRIME}")
+}
+
+/// The output function of `SplitMix64`: spreads nearby inputs, like consecutive days, over all of
+/// `u64`. Written out rather than taken from a crate, so the days' orders don't change with an
+/// upgrade.
+fn splitmix64(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// When the card was last reviewed. `review_log(card_id, reviewed_at)` is indexed, so this is a
@@ -141,20 +159,20 @@ fn review_keys(config: &SparesExternalConfig, order: ReviewOrder, now: DateTime<
         ))],
         ReviewOrder::DifficultyDescending => vec![desc("c.difficulty")],
         ReviewOrder::DifficultyAscending => vec![asc("c.difficulty")],
-        ReviewOrder::Random => vec![asc(daily_hash("c.id", now))],
+        ReviewOrder::Random => vec![asc(daily_hash("c.id", now, config.zone()))],
         ReviewOrder::NoteCreated => vec![asc("n.created_at"), asc("n.id"), asc("c.due")],
     }
 }
 
-fn new_keys(order: NewCardOrder, now: DateTime<Utc>) -> Vec<Key> {
+fn new_keys(order: NewCardOrder, now: DateTime<Utc>, zone: Zone) -> Vec<Key> {
     match order {
         NewCardOrder::Created => vec![asc("n.created_at"), asc("n.id"), asc("c.\"order\"")],
         NewCardOrder::NewestFirst => {
             vec![desc("n.created_at"), desc("n.id"), asc("c.\"order\"")]
         }
-        NewCardOrder::Random => vec![asc(daily_hash("c.id", now))],
+        NewCardOrder::Random => vec![asc(daily_hash("c.id", now, zone))],
         NewCardOrder::RandomNote => vec![
-            asc(daily_hash("n.id", now)),
+            asc(daily_hash("n.id", now, zone)),
             asc("n.id"),
             asc("c.\"order\""),
         ],
@@ -280,7 +298,7 @@ pub(crate) fn queue_order_by(
             &config.presets,
             config.new_order,
             |preset| preset.new_order,
-            |order| new_keys(order, now),
+            |order| new_keys(order, now, external_config.zone()),
         ),
     );
     within_kind.extend(only(
@@ -475,13 +493,10 @@ pub(crate) struct OrderedQueue {
     pub(crate) rows: Vec<QueueRow>,
     /// The cards left out because a limit was used up by the cards before them, in order.
     pub(crate) skipped: Vec<(CardId, UsedUpLimit)>,
-    /// What [`get_cards_left_by_state_and_time_estimate`] counts for the review.
-    pub(crate) cards_left_by_state: HashMap<StateId, u32>,
-    pub(crate) time_estimate: Duration,
 }
 
 /// The cards matching `filter` and due by `due_limit`, in the order review shows them as of
-/// `requested_date`, at most `limit` of them.
+/// `requested_date`.
 ///
 /// New and review cards are kept while what is left of today's limits, and of their
 /// [preset](QueuePreset)'s, lets them through, in turn: with 5 new cards left today, the first 5
@@ -495,10 +510,8 @@ pub(crate) async fn ordered_queue(
     config: &SparesExternalConfig,
     requested_date: DateTime<Utc>,
     due_limit: DateTime<Utc>,
-    limit: Option<usize>,
 ) -> Result<OrderedQueue, Error> {
-    let (cards_left_by_state, time_estimate) =
-        get_cards_left_by_state_and_time_estimate(db, filter).await?;
+    let (cards_left_by_state, _) = get_cards_left_by_state_and_time_estimate(db, filter).await?;
     // Ordered like `get_review_card`. There is no `LIMIT` since cards beyond today's limits are
     // skipped below.
     let order_by = queue_order_by(
@@ -533,9 +546,6 @@ pub(crate) async fn ordered_queue(
     let mut rows = Vec::new();
     let mut skipped = Vec::new();
     for row in all_rows {
-        if limit.is_some_and(|limit| rows.len() >= limit) {
-            break;
-        }
         // Filtered tags have no limits, and learning cards are never held back
         let state = row.card.card_state;
         let preset = preset_index(row.preset);
@@ -569,17 +579,13 @@ pub(crate) async fn ordered_queue(
         }
         rows.push(row);
     }
-    Ok(OrderedQueue {
-        rows,
-        skipped,
-        cards_left_by_state,
-        time_estimate,
-    })
+    Ok(OrderedQueue { rows, skipped })
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use chrono::Duration;
+    use chrono::Local;
     use sqlx::SqlitePool;
 
     use super::*;
@@ -595,6 +601,24 @@ pub(crate) mod tests {
     pub(crate) const LEARNING: i64 = 1;
     pub(crate) const REVIEW: i64 = 2;
     pub(crate) const RELEARNING: i64 = 3;
+
+    /// The zone days are counted in by tests: the default config's, the server's with days
+    /// starting at the default [`SparesExternalConfig::day_starts_at`].
+    pub(crate) fn zone() -> Zone {
+        SparesExternalConfig::default().zone()
+    }
+
+    /// Noon today, local time, for tests that need hours of today on either side of now, which
+    /// `Utc::now()` doesn't have late in the evening or just after midnight.
+    pub(crate) fn local_midday() -> DateTime<Utc> {
+        Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .to_utc()
+    }
 
     /// Creates `n` notes of one card each, the `i`th note created `i` hours after the first, and
     /// returns their cards in the order of their notes.
@@ -950,16 +974,15 @@ pub(crate) mod tests {
             NewCardOrder::Random,
             NewReviewMix::Interleaved,
         );
-        let today = ordered(&pool, &random, now, QueueCaps::default()).await;
-        let tomorrow = ordered(
-            &pool,
-            &random,
-            now + Duration::days(1),
-            QueueCaps::default(),
-        )
-        .await;
-        assert_ne!(today, tomorrow);
-        assert_ne!(today, ids);
+        // A month of days, so that a weak shuffle can't pass on the day the test runs
+        let mut previous = ordered(&pool, &random, now, QueueCaps::default()).await;
+        for days in 1..=30 {
+            let day = now + Duration::days(days);
+            let order = ordered(&pool, &random, day, QueueCaps::default()).await;
+            assert_ne!(order, previous, "{day}: the same as the day before");
+            assert_ne!(order, ids, "{day}: in the order of the cards");
+            previous = order;
+        }
     }
 
     #[sqlx::test]
@@ -1149,6 +1172,82 @@ mod daily_limit_tests {
         );
     }
 
+    /// A review after midnight counts for the day before, until the hour days start at.
+    #[sqlx::test]
+    async fn a_review_before_the_day_starts_counts_for_the_day_before(pool: SqlitePool) {
+        use chrono::Local;
+        use chrono::TimeZone;
+
+        let today = Local::now().date_naive();
+        let at = |date: chrono::NaiveDate, hour: u32| {
+            Local
+                .from_local_datetime(&date.and_hms_opt(hour, 0, 0).unwrap())
+                .earliest()
+                .unwrap()
+                .to_utc()
+        };
+        let yesterday = today.pred_opt().unwrap();
+        let ids = create_cards(&pool, 1, at(today, 12) - Duration::days(30)).await;
+        set_card(
+            &pool,
+            ids[0],
+            REVIEW,
+            at(today, 12) + Duration::days(5),
+            5.0,
+            5.0,
+        )
+        .await;
+        add_review(&pool, ids[0], at(today, 1), REVIEW).await;
+        let reviews_left = async |day_starts_at: u8, now: DateTime<Utc>| {
+            let config = SparesExternalConfig {
+                day_starts_at,
+                ..limits(10, 5, true)
+            };
+            daily_limits_left_with(&pool, &config, now)
+                .await
+                .unwrap()
+                .reviews
+        };
+        // Days starting at 4 AM: the review at 1 AM is one of yesterday's
+        assert_eq!(reviews_left(4, at(yesterday, 23)).await, 4);
+        assert_eq!(reviews_left(4, at(today, 3)).await, 4);
+        assert_eq!(reviews_left(4, at(today, 5)).await, 5);
+        // Days starting at midnight: it is one of today's
+        assert_eq!(reviews_left(0, at(yesterday, 23)).await, 5);
+        assert_eq!(reviews_left(0, at(today, 5)).await, 4);
+    }
+
+    /// With a time zone set, the day starts at 4 AM in that zone, whatever the server's zone is.
+    #[sqlx::test]
+    async fn days_start_in_the_configured_zone(pool: SqlitePool) {
+        use chrono::TimeZone;
+
+        let utc = |day, hour, minute| {
+            Utc.with_ymd_and_hms(2026, 11, day, hour, minute, 0)
+                .unwrap()
+        };
+        let ids = create_cards(&pool, 1, utc(1, 12, 0)).await;
+        set_card(&pool, ids[0], REVIEW, utc(20, 12, 0), 5.0, 5.0).await;
+        // 03:30 on the 10th in New York (UTC-5), so a review of the 9th.
+        add_review(&pool, ids[0], utc(10, 8, 30), REVIEW).await;
+        let config = SparesExternalConfig {
+            time_zone: Some("America/New_York".to_string()),
+            ..limits(10, 5, true)
+        };
+        let reviews_left = async |now| {
+            daily_limits_left_with(&pool, &config, now)
+                .await
+                .unwrap()
+                .reviews
+        };
+        // 03:59 in New York: still the 9th
+        assert_eq!(reviews_left(utc(10, 8, 59)).await, 4);
+        // 04:01: the 10th
+        assert_eq!(reviews_left(utc(10, 9, 1)).await, 5);
+        // 20:00 on the 9th
+        assert_eq!(reviews_left(utc(10, 1, 0)).await, 4);
+    }
+
     /// The counts of what is left show no more than today's limits leave room for, and the time
     /// estimate shrinks with them.
     #[sqlx::test]
@@ -1176,6 +1275,8 @@ mod daily_limit_tests {
                 where_clause: "c.due <= ?".to_string(),
                 is_filtered_tag: false,
                 card_due_limit: now,
+                zone: super::tests::zone(),
+                maximum_answer_seconds: SparesExternalConfig::default().maximum_answer_seconds(),
                 caps,
                 preset_sql: "NULL".to_string(),
                 held_back_clause: None,
@@ -1262,15 +1363,14 @@ mod learn_ahead_tests {
     use super::tests::LEARNING;
     use super::tests::REVIEW;
     use super::tests::create_cards;
+    use super::tests::local_midday;
     use super::tests::set_card;
     use super::*;
-    use crate::api::offline_review::get_review_queue;
     use crate::api::review::get_review_card;
     use crate::api::review::next_review_card_available_at;
     use crate::parsers::get_all_parsers;
     use crate::schema::review::GetReviewCardFilterRequest;
     use crate::schema::review::GetReviewCardRequest;
-    use crate::schema::review::ReviewQueueRequest;
 
     /// The default learn ahead limit
     const LIMIT: Duration = Duration::minutes(20);
@@ -1320,13 +1420,7 @@ mod learn_ahead_tests {
     #[sqlx::test]
     async fn learning_cards_wait_for_the_learn_ahead_limit(pool: SqlitePool) {
         // Midday, so that an hour later is still today
-        let now = Local::now()
-            .date_naive()
-            .and_hms_opt(12, 0, 0)
-            .unwrap()
-            .and_local_timezone(Local)
-            .unwrap()
-            .to_utc();
+        let now = local_midday();
         let ids = create_cards(&pool, 1, now - Duration::days(1)).await;
         let card = ids[0];
 
@@ -1340,38 +1434,6 @@ mod learn_ahead_tests {
         assert_eq!(next_card(&pool, now).await, None);
         assert_eq!(available_at(&pool, now).await, Some(due - LIMIT));
         assert_eq!(next_card(&pool, due - LIMIT).await, Some(card));
-
-        // The offline queue has it anyway, with when the limit lets its client show it
-        let queue = get_review_queue(
-            &pool,
-            ReviewQueueRequest {
-                filter: None,
-                limit: 10,
-                days_ahead: 0,
-            },
-            now,
-            &get_all_parsers(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(queue.cards.len(), 1);
-        assert_eq!(queue.cards[0].shown_from, Some(due - LIMIT));
-
-        // A review card is never held back
-        set_card(&pool, card, REVIEW, now - Duration::days(1), 1.0, 5.0).await;
-        let queue = get_review_queue(
-            &pool,
-            ReviewQueueRequest {
-                filter: None,
-                limit: 10,
-                days_ahead: 0,
-            },
-            now,
-            &get_all_parsers(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(queue.cards[0].shown_from, None);
 
         // Due tomorrow: done for today
         set_card(&pool, card, LEARNING, now + Duration::days(1), 1.0, 5.0).await;
@@ -1468,6 +1530,48 @@ mod sibling_tests {
         )
         .await
         .unwrap();
+    }
+
+    /// An answer is logged with its time capped by
+    /// [`SparesExternalConfig::maximum_answer_time`], and as it was when that is unset.
+    #[sqlx::test]
+    async fn rating_logs_the_capped_answer_time(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = super::tests::create_cards(&pool, 2, now - Duration::days(1)).await;
+        let capped = SparesExternalConfig {
+            maximum_answer_time: Some(Duration::seconds(30)),
+            ..SparesExternalConfig::default()
+        };
+        let scheduler = get_scheduler_from_string("fsrs").unwrap();
+        for (card_id, config, expected) in [
+            (ids[0], &capped, (25, 5)),
+            (ids[1], &SparesExternalConfig::default(), (25, 3600)),
+        ] {
+            rate_card_with_config(
+                &pool,
+                scheduler.as_ref(),
+                config,
+                RatingSubmission {
+                    card_id,
+                    rating: 3,
+                    recall_duration: Duration::seconds(25),
+                    rate_duration: Duration::seconds(3600),
+                    tag_id: None,
+                },
+                now,
+                true,
+            )
+            .await
+            .unwrap();
+            let logged: (i64, i64) = sqlx::query_as(
+                "SELECT recall_duration, rate_duration FROM review_log WHERE card_id = ?",
+            )
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(logged, expected);
+        }
     }
 
     fn burying(new: bool, review: bool) -> SparesExternalConfig {
@@ -1608,7 +1712,7 @@ mod linked_note_tests {
         now: DateTime<Utc>,
         query_card_ids: Option<&str>,
     ) -> String {
-        let (_, card_due_limit) = get_start_end_local_date(&now);
+        let (_, card_due_limit) = get_start_end_local_date(&now, super::tests::zone());
         format!(
             "c.special_state IS NULL AND c.due <= ?{}",
             linked_notes_clause(config, card_due_limit, query_card_ids)
@@ -1622,7 +1726,7 @@ mod linked_note_tests {
         now: DateTime<Utc>,
         query_card_ids: Option<&str>,
     ) -> Vec<CardId> {
-        let (_, card_due_limit) = get_start_end_local_date(&now);
+        let (_, card_due_limit) = get_start_end_local_date(&now, super::tests::zone());
         sqlx::query_scalar(AssertSqlSafe(format!(
             "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
             where_clause(config, now, query_card_ids)
@@ -1799,12 +1903,14 @@ mod linked_note_tests {
         let shown = shown(&pool, &config, now).await;
         assert_eq!(shown, [a, b, d]);
 
-        let (_, card_due_limit) = get_start_end_local_date(&now);
+        let (_, card_due_limit) = get_start_end_local_date(&now, super::tests::zone());
         let filter = ReviewFilterQuery {
             cards: cards_with_preset(&IndexMap::new()),
             where_clause: where_clause(&config, now, None),
             is_filtered_tag: false,
             card_due_limit,
+            zone: super::tests::zone(),
+            maximum_answer_seconds: SparesExternalConfig::default().maximum_answer_seconds(),
             caps: QueueCaps::default(),
             preset_sql: "NULL".to_string(),
             held_back_clause: None,
@@ -1836,7 +1942,7 @@ mod linked_note_tests {
         let matching = async |config: &QueueConfig, value: &str| -> Vec<CardId> {
             sqlx::query_scalar(AssertSqlSafe(format!(
                 "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
-                waiting_on_links_condition(config, value)
+                waiting_on_links_condition(config, super::tests::zone(), value)
             )))
             .fetch_all(&pool)
             .await
@@ -2218,7 +2324,7 @@ mod reschedule_tests {
         let history = get_review_history(&pool, ReviewHistoryRequest::default())
             .await
             .unwrap();
-        let today = now.with_timezone(&Local).date_naive();
+        let today = study_date(now, super::tests::zone());
         assert_eq!(history.cram_count_by_date.get(&today), Some(&2));
         assert_eq!(history.review_count_by_date.values().sum::<u32>(), 2);
 

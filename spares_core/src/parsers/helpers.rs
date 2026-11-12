@@ -6,15 +6,12 @@ use std::process::Child;
 use std::process::Command;
 use std::process::Output;
 use std::process::Stdio;
-use std::sync::LazyLock;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
 use std::thread;
 use std::time::Duration;
-use std::time::Instant;
 
 use serde::Deserialize;
 use serde::Serialize;
+use web_time::Instant;
 
 use crate::Error;
 use crate::config::get_data_dir;
@@ -27,27 +24,25 @@ pub fn get_output_raw_dir(
     output_type: RenderOutputType,
     overridden_base_dir: Option<&Path>,
 ) -> PathBuf {
-    let mut output_raw_dir = match overridden_base_dir {
-        Some(base_dir) => base_dir.to_path_buf(),
-        _ => get_data_dir(),
-    };
     // Note/card is split before parser since everything in the `cards` subdirectory will never have to be edited. Only its rendered file will be viewed. This is not true for notes. Notes will have both their raw file and rendered file viewed. Thus, this will make it easier to just search through notes, instead of notes and cards.
-    let sub_dir = match output_type {
-        RenderOutputType::Note => "notes",
-        RenderOutputType::Card(..) => "cards",
+    // Card files are written from their notes on every render, so they are in the cache.
+    let mut output_raw_dir = match (overridden_base_dir, output_type) {
+        (Some(base_dir), RenderOutputType::Note) => base_dir.join("notes"),
+        (Some(base_dir), RenderOutputType::Card(..)) => base_dir.join("cards"),
+        (None, RenderOutputType::Note) => get_data_dir().join("notes"),
+        (None, RenderOutputType::Card(..)) => crate::collection::paths().cards(),
     };
-    output_raw_dir.push(sub_dir);
     // SAFETY: The parser is validated so that its name is a valid directory name.
     output_raw_dir.push(parser_name);
     output_raw_dir
 }
 
 /// What compiling a rendered file read, besides the raw file itself and files the renderer ships
-/// with (e.g. a TeX distribution). Written next to each rendered file (see
-/// [`render_dependencies_filepath`]). For parsers that
+/// with (e.g. a TeX distribution). Kept in the database with the file's render key (see
+/// [`crate::parsers::generate_files::RenderState`]). For parsers that
 /// [render in the browser](crate::parsers::Parseable::renders_in_browser), the files are shipped to
 /// web clients. For the others, `spares sync cloud` copies them to the server so it can render too.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct RenderDependencies {
     /// Absolute paths of local files.
     pub files: Vec<PathBuf>,
@@ -56,44 +51,37 @@ pub struct RenderDependencies {
 }
 
 impl RenderDependencies {
-    /// Sorts and deduplicates the dependencies, then writes them to `dependencies_filepath`.
-    pub fn write(mut self, dependencies_filepath: &Path) -> Result<(), String> {
+    /// Sorts and deduplicates the dependencies.
+    pub fn normalize(&mut self) {
         self.files.sort();
         self.files.dedup();
         self.packages.sort();
         self.packages.dedup();
-        let contents = serde_json::to_string(&self).map_err(|e| e.to_string())?;
-        std::fs::write(dependencies_filepath, contents).map_err(|e| e.to_string())
     }
 }
 
-pub fn render_dependencies_filepath(output_rendered_filepath: &Path) -> PathBuf {
-    output_rendered_filepath.with_extension("deps.json")
-}
-
-impl RenderDependencies {
-    /// Adds `files` to the dependencies already written to `dependencies_filepath`, if any.
-    pub fn extend_file(dependencies_filepath: &Path, files: Vec<PathBuf>) -> Result<(), String> {
-        let mut dependencies = match std::fs::read_to_string(dependencies_filepath) {
-            Ok(contents) => serde_json::from_str(&contents).map_err(|e| e.to_string())?,
-            Err(_) => Self::default(),
-        };
-        dependencies.files.extend(files);
-        dependencies.write(dependencies_filepath)
-    }
+/// What [`crate::parsers::Parseable::render_file`] made: the renderer's output, and what it read.
+/// A parser that fails to find out what it read logs why and returns none, since the rendered file
+/// is there all the same.
+#[derive(Debug)]
+pub struct RenderedFile {
+    pub output: Output,
+    pub dependencies: RenderDependencies,
 }
 
 /// The HTML written for web clients next to a rendered file by parsers with a
-/// [web render](crate::parsers::Parseable::has_web_render). An empty file means web clients show
-/// the rendered file instead. It replaces a stale HTML file on the server when synced, since sync
-/// does not delete files.
+/// [web render](crate::parsers::Parseable::has_web_render). Without it, web clients show the
+/// rendered file. Rendering removes it when they should, and `spares sync cloud` removes it on a
+/// server that gets the rendered files instead of rendering them. An empty file, which marked the
+/// same before, is treated as none.
 pub fn web_render_filepath(output_rendered_filepath: &Path) -> PathBuf {
     output_rendered_filepath.with_extension("html")
 }
 
-/// Whether `output_rendered_filepath` has HTML for web clients.
+/// Whether `output_rendered_filepath` has HTML for web clients. In a browser, whether the web app
+/// has downloaded it (see [`crate::platform`]).
 pub fn has_web_render_file(output_rendered_filepath: &Path) -> bool {
-    std::fs::metadata(web_render_filepath(output_rendered_filepath)).is_ok_and(|m| m.len() > 0)
+    crate::platform::has_web_render(&web_render_filepath(output_rendered_filepath))
 }
 
 /// Whether a note's web clients are shown HTML, read from the `render` key of its custom data.
@@ -132,8 +120,15 @@ pub struct NoteFilepathData {
 
 /// Text to pass to the first answerable cloze when viewing the card front so that the pdf viewer
 /// can scroll to it.
-pub fn cloze_tag_str(note_id: NoteId, card_order: impl std::fmt::Display) -> String {
-    format!("card-{}-{card_order}", note_id.letters())
+///
+/// It names the card by its order only. A card's file holds one note's card, so that is enough
+/// to find it, and leaving the note out keeps the file's text, and so its
+/// [render key](crate::parsers::generate_files::RenderState::key), the same when the card's text
+/// moves to another note. Live notes are matched by position, so inserting one moves the text of
+/// every note after it to the next note, whose files can then be copied from the ones already
+/// rendered instead of being rendered again.
+pub fn cloze_tag_str(card_order: impl std::fmt::Display) -> String {
+    format!("card-{card_order}")
 }
 
 pub fn get_note_info_from_filepath(note_filepath: &Path) -> Result<NoteFilepathData, String> {
@@ -158,11 +153,9 @@ pub fn get_note_info_from_filepath(note_filepath: &Path) -> Result<NoteFilepathD
     })
 }
 
-/// How long a command rendering a note or card may run before it is stopped.
-pub const RENDER_TIMEOUT: Duration = Duration::from_secs(60);
-
+/// The render commands a collection is running (see [`crate::collection::CollectionState`]).
 #[derive(Default)]
-struct RunningRenders {
+pub(crate) struct RunningRenders {
     /// Process groups of render commands that have been spawned but not yet reaped. An id is
     /// removed while holding the lock before or as its process is reaped, so a group in here
     /// cannot have had its id reused.
@@ -171,26 +164,32 @@ struct RunningRenders {
     stopped: bool,
 }
 
-static RUNNING_RENDERS: LazyLock<Mutex<RunningRenders>> = LazyLock::new(Default::default);
-
-fn running_renders() -> MutexGuard<'static, RunningRenders> {
-    RUNNING_RENDERS.lock().unwrap_or_else(|e| e.into_inner())
+/// Stops every render command the current collection is running, along with any processes it
+/// started, and makes its later render commands fail without being started. Killing does nothing
+/// on platforms other than Unix.
+pub fn kill_running_renders() {
+    kill_renders_of(&crate::collection::state());
 }
 
-/// Stops every running render command, along with any processes it started, and makes any later
-/// render command fail without being started. Killing does nothing on platforms other than Unix.
-pub fn kill_running_renders() {
-    let mut running_renders = running_renders();
+/// [`kill_running_renders`] for `state`'s collection, e.g. for each open collection when a host
+/// shuts down.
+pub fn kill_renders_of(state: &crate::collection::CollectionState) {
+    let mut running_renders = crate::collection::lock(&state.renders);
     running_renders.stopped = true;
     for &process_group in &running_renders.process_groups {
         kill_process_group(process_group);
     }
 }
 
-/// Like [`Command::output`], but stops the command, and any processes it started (e.g. `pdflatex`
-/// under `latexmk`), if it runs longer than [`RENDER_TIMEOUT`].
+/// Like [`Command::output`], but runs the command in the host's sandbox, with its limits (see
+/// [`crate::render`]), once the collection has a free turn at rendering, and stops it, and any
+/// processes it started (e.g. `pdflatex` under `latexmk`), if it runs too long.
 pub fn render_command_output(command: &mut Command, name: &str) -> Result<Output, Error> {
-    command_output_with_timeout(command, name, RENDER_TIMEOUT)
+    let renderer = crate::render::Renderer::current()?;
+    let mut sandboxed = renderer.prepare(command)?;
+    let state = crate::collection::state();
+    let _turn = state.render_slots.take(renderer.renders_at_once());
+    command_output_with_timeout(&mut sandboxed, name, renderer.timeout())
 }
 
 fn command_output_with_timeout(
@@ -203,6 +202,8 @@ fn command_output_with_timeout(
     std::os::unix::process::CommandExt::process_group(command, 0);
     // The lock is held while spawning, so a command cannot start after `kill_running_renders`
     // without being refused or killed.
+    let state = crate::collection::state();
+    let running_renders = || crate::collection::lock(&state.renders);
     let mut child = {
         let mut running_renders = running_renders();
         if running_renders.stopped {
@@ -282,6 +283,57 @@ fn kill_process_tree(child: &mut Child) {
 
 /// Sends `SIGKILL` to a process group whose leader has not been reaped yet. Returns whether the
 /// signal could be sent.
+/// Spawns a render process that keeps running between renders, such as a Typst worker, in a
+/// process group of its own that [`kill_running_renders`] stops with the collection's other
+/// renders. Refused once renders were stopped. Stop it with [`kill_render_process`].
+#[cfg_attr(
+    not(all(feature = "typst-render", not(target_family = "wasm"))),
+    allow(dead_code)
+)]
+pub(crate) fn spawn_render_process(
+    state: &crate::collection::CollectionState,
+    command: &mut Command,
+    name: &str,
+) -> Result<Child, Error> {
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(command, 0);
+    let mut running_renders = crate::collection::lock(&state.renders);
+    if running_renders.stopped {
+        return Err(Error::Io {
+            description: format!("{name} was not started since renders were stopped"),
+            source: std::io::ErrorKind::Interrupted.into(),
+        });
+    }
+    let child = command.spawn().map_err(|e| Error::Io {
+        description: format!("Failed to start {name}"),
+        source: e,
+    })?;
+    running_renders.process_groups.insert(child.id());
+    Ok(child)
+}
+
+/// Stops a process from [`spawn_render_process`] for `state`'s collection, and any it started,
+/// and reaps it. With `state` gone (the collection closing), it is stopped all the same.
+#[cfg_attr(
+    not(all(feature = "typst-render", not(target_family = "wasm"))),
+    allow(dead_code)
+)]
+pub(crate) fn kill_render_process(
+    state: Option<&crate::collection::CollectionState>,
+    child: &mut Child,
+) {
+    match state {
+        Some(state) => {
+            let mut running_renders = crate::collection::lock(&state.renders);
+            running_renders.process_groups.remove(&child.id());
+            // Not reaped yet, so its group's id cannot have been reused
+            kill_process_tree(child);
+        }
+        None => kill_process_tree(child),
+    }
+    let _ = child.wait();
+}
+
 fn kill_process_group(process_group: u32) -> bool {
     #[cfg(unix)]
     if let Ok(process_group) = libc::pid_t::try_from(process_group) {

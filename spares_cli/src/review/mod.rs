@@ -8,6 +8,7 @@ use chrono::DateTime;
 use chrono::Local;
 use chrono::Utc;
 use clap::Args;
+use colored::Colorize;
 use inquire::MultiSelect;
 use inquire::Select;
 use reqwest::Client;
@@ -49,6 +50,7 @@ use utils::bury_card;
 use utils::bury_note;
 use utils::bury_until_later_today;
 use utils::close_rendered_file;
+use utils::continue_after_timebox;
 use utils::format_duration;
 use utils::get_rating_from_score;
 use utils::get_scheduler_ratings;
@@ -255,12 +257,23 @@ async fn fetch_review_card(
                 Some(open_rendered_file(
                     review_card.card_front_rendered_path.as_ref(),
                     open_command,
-                    Some(&cloze_tag_str(review_card.note_id, review_card.card_order)),
+                    Some(&cloze_tag_str(review_card.card_order)),
                     first,
                 )?)
             };
             println!("Note Id: {}", review_card.note_id.letters());
             println!("Card Id: {}", review_card.card_id);
+            // Shown here, as the rendered card leaves them out. Coloured to stand out from the
+            // lines around them, in colours typed answers don't use for right and wrong.
+            if !review_card.keywords.is_empty() {
+                println!(
+                    "Keywords: {}",
+                    review_card.keywords.join(", ").cyan().bold()
+                );
+            }
+            if !review_card.tags.is_empty() {
+                println!("Tags: {}", review_card.tags.join(", ").magenta().bold());
+            }
             if !is_cli {
                 let file_name = review_card
                     .card_front_rendered_path
@@ -680,6 +693,10 @@ pub(crate) async fn review_cards(
     let mut stats_rx = spawn_stats_fetch(scheduler_name, base_url, client);
 
     let session_start = Instant::now();
+    // The timebox under way, if there are timeboxes: when it started and the cards rated in it
+    let timebox = config.queue.timebox.and_then(|t| t.to_std().ok());
+    let mut timebox_start = Instant::now();
+    let mut timebox_cards = 0;
     let mut session_recall_duration = Duration::default();
     let mut session_rate_duration = Duration::default();
     let mut reviewed_cards_count = 0;
@@ -899,6 +916,25 @@ pub(crate) async fn review_cards(
                 last_action_was_rating = true;
                 previous_card_id = Some(review_card_response.card_id);
 
+                timebox_cards += 1;
+                if let Some(timebox) = timebox
+                    && timebox_start.elapsed() >= timebox
+                {
+                    if !continue_after_timebox(timebox_cards, timebox_start.elapsed()) {
+                        let day_stats = stats_rx.try_recv().ok();
+                        print_summary(
+                            session_start,
+                            session_recall_duration,
+                            session_rate_duration,
+                            reviewed_cards_count,
+                            day_stats,
+                        );
+                        return Ok(());
+                    }
+                    timebox_start = Instant::now();
+                    timebox_cards = 0;
+                }
+
                 // let old_card_rendered_path = review_card_response.card_rendered_path;
                 // Advance to next review card
                 advance_review_card = true;
@@ -940,10 +976,7 @@ pub(crate) async fn review_cards(
                 card_back_rendered_child = Some(open_rendered_file(
                     card_back_rendered_path,
                     open_command_card_used,
-                    Some(&cloze_tag_str(
-                        review_card_response.note_id,
-                        review_card_response.card_order,
-                    )),
+                    Some(&cloze_tag_str(review_card_response.card_order)),
                     false,
                 )?);
                 rate_start = Instant::now();
@@ -1219,10 +1252,7 @@ pub(crate) async fn review_cards(
                                 card_back_rendered_child = Some(open_rendered_file(
                                     &back_path,
                                     open_command_card_used,
-                                    Some(&cloze_tag_str(
-                                        new_response.note_id,
-                                        new_response.card_order,
-                                    )),
+                                    Some(&cloze_tag_str(new_response.card_order)),
                                     false,
                                 )?);
                             }
@@ -1234,10 +1264,7 @@ pub(crate) async fn review_cards(
                                 card_front_rendered_child = Some(open_rendered_file(
                                     &new_response.card_front_rendered_path,
                                     open_command_card_used,
-                                    Some(&cloze_tag_str(
-                                        new_response.note_id,
-                                        new_response.card_order,
-                                    )),
+                                    Some(&cloze_tag_str(new_response.card_order)),
                                     false,
                                 )?);
                             }
@@ -1328,10 +1355,7 @@ pub(crate) async fn review_cards(
                     card_front_rendered_child = Some(open_rendered_file(
                         &review_card_response.card_front_rendered_path,
                         open_command_card_used,
-                        Some(&cloze_tag_str(
-                            review_card_response.note_id,
-                            review_card_response.card_order,
-                        )),
+                        Some(&cloze_tag_str(review_card_response.card_order)),
                         false,
                     )?);
 

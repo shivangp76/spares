@@ -1,5 +1,4 @@
 use std::ops::Range;
-use std::path::Path;
 use std::sync::Arc;
 
 use super::generate_files::CardSide;
@@ -277,7 +276,7 @@ fn complete_note(
 
     // Audio clips are found by their absolute path, both by PDF viewers and by the server
     for audio_ref in output_parser.audio_refs(&new_data) {
-        if !Path::new(&audio_ref.path).is_absolute() {
+        if !audio_ref.is_absolute() {
             local_settings.errors_and_warnings.push(LibraryError::Note(
                 NoteErrorKind::SettingsWarning {
                     description: format!(
@@ -637,7 +636,7 @@ mod tests {
                 % back_reveal = "only_answered"
                 % back_emphasis = false
                 \begin{figure}
-                  \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]/tmp/spares/data/image_occlusions/test-convert-parser-1.svg
+                  \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]{/tmp/spares/data/image_occlusions/test-convert-parser-1.svg}
                 \end{figure}
                 % spares: image occlusion end
                 b
@@ -648,7 +647,7 @@ mod tests {
                 % back_reveal = "only_answered"
                 % back_emphasis = false
                 \begin{figure}
-                  \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]/tmp/spares/data/image_occlusions/test-convert-parser-2.svg
+                  \includesvg[width=0.5\textwidth,height=0.8\textheight,keepaspectratio]{/tmp/spares/data/image_occlusions/test-convert-parser-2.svg}
                 \end{figure}
                 % spares: image occlusion end
                 c"#};

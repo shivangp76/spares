@@ -4,9 +4,10 @@
 //! - To undo an event, you append a new event to the event log that reverses the previous event. For example, to undo `AddNote`, you append a `DeleteNote` event.
 //!
 //! ## Problems and Solutions
-//! - Future: Syncing data between devices
-//!   - Last write wins. This is why there is a `timestamp` field. Events are merged and then replayed in chronological order. If there is a conflict, pick random one for now. This can be worked out later. (Pretty unlikely there is a conflict at the exact same timestamp.)
-//!   - Future: Add `device_id` field to `Event`
+//! - Syncing between replicas
+//!   - Events stay on the replica that recorded them. An undo is a change like any other, which
+//!     the next sync sends, so an event can be undone after a sync too, unless the sync changed
+//!     the same notes, cards, tags or parsers since ([`received`]).
 //! - Branching undo logs
 //!   - Events can be undone by their id, so the user can submit the exact action they want to undo.
 //!   - If the user does `create parser -> add note to parser -> UNDO: create parser`, then throw error saying cannot delete parser since notes depend on it.
@@ -48,8 +49,10 @@ use crate::model::EventAction;
 use crate::model::EventType;
 use crate::model::NoteId;
 use crate::notes_vcs;
+use crate::schema::undo::EventEntry;
 use crate::schema::undo::EventSummary;
 use crate::schema::undo::GroupEventsRequest;
+use crate::schema::undo::ListEventsRequest;
 use crate::schema::undo::RedoEventRequest;
 use crate::schema::undo::RedoEventResponse;
 use crate::schema::undo::UndoEventRequest;
@@ -58,6 +61,7 @@ use crate::schema::undo::UndoEventResponse;
 mod describe;
 mod event_actions;
 mod invert_payload;
+mod received;
 pub use event_actions::create_event_group;
 pub use event_actions::insert_events;
 pub(crate) use event_actions::join_event_group;
@@ -137,24 +141,6 @@ async fn expand_group(
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })
-}
-
-/// Errors if any of `events` happened before the last sync: what it did has reached the other
-/// replica, which may have changed the same rows since.
-async fn check_not_synced(db: &SqlitePool, events: &[Event]) -> Result<(), Error> {
-    let guard: Option<String> = sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
-        .bind(crate::sync::LAST_SYNC_EVENT_ID_KEY)
-        .fetch_optional(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    let guard: i64 = guard.and_then(|g| g.parse().ok()).unwrap_or(0);
-    if let Some(event) = events.iter().find(|event| event.id <= guard) {
-        return Err(Error::Library(LibraryError::InvalidConfig(format!(
-            "Event {} happened before the last sync, so it can no longer be reverted",
-            event.id
-        ))));
-    }
-    Ok(())
 }
 
 /// Errors unless `event` can be reverted by an undo (`redo == false`), which takes an action or a
@@ -256,11 +242,140 @@ pub async fn group_events(db: &SqlitePool, body: GroupEventsRequest) -> Result<(
         }
         events.push(event);
     }
-    check_not_synced(db, &events).await?;
     for &other in others {
         join_event_group(db, leader, other).await?;
     }
     Ok(())
+}
+
+/// The kinds of events that add, edit or delete notes, which describe a group best: an import's
+/// group also creates the tags its notes name, and moves live notes' cards. An undo of them is one
+/// of these kinds too.
+const NOTE_KINDS: [EventType; 3] = [
+    EventType::CreateNotes,
+    EventType::UpdateNotes,
+    EventType::DeleteNotes,
+];
+
+/// How the history describes `event`, an `action`, with the rest of its group if `group_size` is
+/// more than 1: by the group's note events if it has any, such as an import's, else by `event`,
+/// followed by how many other changes the group made.
+async fn describe_entry(
+    db: &SqlitePool,
+    event: &Event,
+    action: EventAction,
+    group_size: i64,
+) -> Result<String, Error> {
+    if group_size <= 1 {
+        return Ok(describe::summarize_as(db, event, action).await?.description);
+    }
+    let members: Vec<Event> = sqlx::query_as(r"SELECT * FROM event WHERE group_id = ? ORDER BY id")
+        .bind(event.id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let mut described = members
+        .iter()
+        .filter(|member| NOTE_KINDS.contains(&member.kind))
+        .collect::<Vec<_>>();
+    if described.is_empty() {
+        described.push(event);
+    }
+    let mut parts = Vec::with_capacity(described.len());
+    // A group's events are all actions, or all undos or redos of them
+    for member in &described {
+        parts.push(
+            describe::summarize_as(db, member, action)
+                .await?
+                .description,
+        );
+    }
+    let description = parts.join("; ");
+    let others = group_size - i64::try_from(described.len()).unwrap_or(i64::MAX);
+    if others <= 0 {
+        return Ok(description);
+    }
+    let plural = if others == 1 { "" } else { "s" };
+    Ok(format!("{description} (and {others} more change{plural})"))
+}
+
+/// A page of the history of changes, newest first: each event, or each group as one entry, by its
+/// first event, as undo and redo revert it. Ratings are left out unless `ratings`.
+pub async fn list_events(
+    db: &SqlitePool,
+    request: ListEventsRequest,
+) -> Result<Vec<EventEntry>, Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        #[sqlx(flatten)]
+        event: Event,
+        group_size: i64,
+        reverted: bool,
+    }
+    let limit = request.limit.unwrap_or(30).clamp(1, 200);
+    let ratings = [EventType::RateCard, EventType::UnrateCard]
+        .iter()
+        .map(|kind| (*kind as u8).to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    // A group's id is its first event's (see `create_event_group`). It is reverted once all of its
+    // events are.
+    let rows: Vec<Row> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT e.*,
+             CASE WHEN e.group_id IS NULL THEN 1
+                  ELSE (SELECT COUNT(*) FROM event g WHERE g.group_id = e.id) END AS group_size,
+             NOT EXISTS (
+                 SELECT 1 FROM event m
+                 WHERE (m.id = e.id OR m.group_id = e.id)
+                   AND NOT EXISTS (SELECT 1 FROM event r WHERE r.reverts_event_id = m.id)
+             ) AS reverted
+         FROM event e
+         WHERE (e.group_id IS NULL OR e.group_id = e.id)
+           AND (? IS NULL OR e.id < ?)
+           AND (? OR e.kind NOT IN ({ratings}))
+         ORDER BY e.id DESC LIMIT ?"
+    )))
+    .bind(request.before)
+    .bind(request.before)
+    .bind(request.ratings)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let mut entries = Vec::with_capacity(rows.len());
+    for Row {
+        event,
+        group_size,
+        reverted,
+    } in rows
+    {
+        // An undo reverts an action or a redo, and a redo an undo, so the action alternates along
+        // the chain of reverted events. Walked here rather than looked up in the `event_action`
+        // view, which goes through every event.
+        let mut depth = 0;
+        let mut reverts = event.reverts_event_id;
+        while let Some(id) = reverts {
+            depth += 1;
+            reverts = fetch_event(db, id).await?.and_then(|e| e.reverts_event_id);
+        }
+        let action = match depth {
+            0 => EventAction::Do,
+            d if d % 2 == 1 => EventAction::Undo,
+            _ => EventAction::Redo,
+        };
+        let description = describe_entry(db, &event, action, group_size).await?;
+        entries.push(EventEntry {
+            id: event.id,
+            kind: event.kind,
+            action,
+            created_at: event.created_at,
+            description,
+            group_size,
+            reverted,
+            automatic: event.kind.is_automatic(),
+        });
+    }
+    Ok(entries)
 }
 
 /// Undoes `body.event_id`, or if `None`, the latest action or redo that has not been undone, other
@@ -293,7 +408,7 @@ pub async fn undo_event(
     };
 
     let events = expand_group(db, event, body.undo_group).await?;
-    check_not_synced(db, &events).await?;
+    received::check_not_received(db, &events, received::Reverting::Undo).await?;
     let undone_events = summarize_all(db, &events).await?;
     let note_ids = affected_note_ids(db, &events).await?;
     let reverted = revert_events(db, &events).await;
@@ -345,7 +460,7 @@ pub async fn redo_event(
     };
 
     let events = expand_group(db, event, body.redo_group).await?;
-    check_not_synced(db, &events).await?;
+    received::check_not_received(db, &events, received::Reverting::Redo).await?;
     let redone_events = summarize_all(db, &events).await?;
     let note_ids = affected_note_ids(db, &events).await?;
     let reverted = revert_events(db, &events).await;

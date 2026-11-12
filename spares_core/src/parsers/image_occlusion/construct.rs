@@ -1,9 +1,12 @@
-use std::fs::read_to_string;
-use std::fs::{self};
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ops::Range;
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use image::ImageFormat;
+use image::RgbaImage;
 use image::imageops;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
@@ -20,16 +23,26 @@ use super::ImageOcclusionConfig;
 use super::ImageOcclusionData;
 use super::ParsedImageOcclusionCloze;
 use super::SvgClozeType;
+use super::hint::HintLimits;
+use super::hint::cloze_bounds;
+use super::hint::hint_element;
+use super::hint::layout_hint;
+use super::hint::text_areas;
 use super::utils::append_to_stem;
-use super::utils::get_center_of_shape;
 use super::utils::get_image_occlusion_card_filepath;
 use super::utils::get_image_occlusion_directory;
 use super::utils::get_image_occlusion_rendered_directory;
 use crate::Error;
 use crate::LibraryError;
 use crate::NoteErrorKind;
+use crate::api::image_occlusion::has_hash_suffix;
+use crate::api::image_occlusion::image_extension;
+use crate::api::image_occlusion::sanitized_stem;
+use crate::api::image_occlusion::strip_hash_suffix;
+use crate::api::image_occlusion::unused_names;
 use crate::config::read_external_config;
 use crate::helpers::to_title_case;
+use crate::model::NoteId;
 use crate::parsers::BackReveal;
 use crate::parsers::CardData;
 use crate::parsers::ClozeData;
@@ -44,6 +57,9 @@ use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::image_occlusion::utils::render_svg_to_rgba;
 use crate::parsers::parse_card_settings;
+use crate::platform::is_file;
+use crate::platform::read_to_string;
+use crate::platform::rename;
 
 const CLOZE_NOT_TO_ANSWER_TEXT: &str = "(no answer)";
 
@@ -51,13 +67,9 @@ pub fn construct_image_occlusion_from_image(
     parser: &impl Parseable,
     construct_image_fn: fn(file_path: &Path, caption: &str) -> String,
     image_occlusion_data: &ImageOcclusionData,
-    output_type: ConstructImageOcclusionType,
+    output_type: ConstructImageOcclusionType<'_>,
 ) -> String {
-    let caption = image_occlusion_data
-        .original_image_filepath
-        .file_stem()
-        .and_then(|x| x.to_str())
-        .map_or("Image Occlusion".to_string(), to_title_case);
+    let caption = image_occlusion_caption(image_occlusion_data);
     match output_type {
         ConstructImageOcclusionType::Note => {
             // Embed image in parser's preferred format so the user can preview it
@@ -86,22 +98,64 @@ pub fn construct_image_occlusion_from_image(
             note_id,
             card_order,
             image_occlusion_order,
-        } => {
-            let mut output_rendered_filepath = get_image_occlusion_rendered_directory();
-            output_rendered_filepath.push(
-                parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id),
-            );
-            construct_image_fn(
-                get_image_occlusion_card_filepath(
-                    &output_rendered_filepath,
-                    side,
-                    image_occlusion_order,
-                )
-                .as_path(),
-                &caption,
-            )
-        }
+            cloze_indices,
+        } => construct_image_fn(
+            &image_occlusion_card_image_filepath(
+                parser,
+                image_occlusion_data,
+                side,
+                note_id,
+                card_order,
+                image_occlusion_order,
+                cloze_indices,
+            ),
+            &caption,
+        ),
     }
+}
+
+/// The caption of an image occlusion: its original image's name, without the suffix it was stored
+/// with.
+pub fn image_occlusion_caption(image_occlusion_data: &ImageOcclusionData) -> String {
+    image_occlusion_data
+        .original_image_filepath
+        .file_stem()
+        .and_then(|x| x.to_str())
+        .map(strip_hash_suffix)
+        .map_or("Image Occlusion".to_string(), to_title_case)
+}
+
+/// The image that `side` of card `card_order` of note `note_id` shows for its
+/// `image_occlusion_order`th image occlusion, `image_occlusion_data` with the clozes at
+/// `cloze_indices` (see [`get_image_occlusion_card_filepath`]).
+pub fn image_occlusion_card_image_filepath(
+    parser: &(impl Parseable + ?Sized),
+    image_occlusion_data: &ImageOcclusionData,
+    side: CardSide,
+    note_id: NoteId,
+    card_order: usize,
+    image_occlusion_order: usize,
+    cloze_indices: &[(usize, ClozeHiddenReplacement)],
+) -> PathBuf {
+    // A device renders no cards, so it names the image it makes itself. Cards with overlays have
+    // them in their source instead.
+    #[cfg(target_family = "wasm")]
+    if !parser.image_occlusion_overlays()
+        && let Some(path) = super::device::card_filepath(cloze_indices, image_occlusion_data, side)
+    {
+        return path;
+    }
+    #[cfg(not(target_family = "wasm"))]
+    let _ = (image_occlusion_data, cloze_indices);
+    let mut output_rendered_filepath = get_image_occlusion_rendered_directory();
+    output_rendered_filepath
+        .push(parser.get_output_filename(RenderOutputType::Card(card_order, side), note_id));
+    get_image_occlusion_card_filepath(
+        &output_rendered_filepath,
+        side,
+        image_occlusion_order,
+        parser.image_occlusion_overlays(),
+    )
 }
 
 pub fn update_cloze_settings(
@@ -170,7 +224,7 @@ pub fn update_cloze_settings(
     if buffer == clozes_file_contents.as_bytes() {
         return Ok(());
     }
-    std::fs::write(clozes_filepath, buffer).map_err(|_| {
+    crate::platform::write(clozes_filepath, buffer).map_err(|_| {
         LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: format!("Failed to write file {}.", clozes_filepath.display()),
             advice: None,
@@ -182,10 +236,232 @@ pub fn update_cloze_settings(
     Ok(())
 }
 
+/// What the cards of a note draw their image occlusions from, read once for all of them (see
+/// [`ImageOcclusionSources::read`]): the config, each clozes SVG, parsed, and each original image,
+/// decoded for PNGs or only measured for overlays. Otherwise each side of each card would read
+/// and parse its clozes SVG again, and decode its original image again for a PNG, though a note's
+/// cards all draw the same ones.
+pub struct ImageOcclusionSources {
+    /// Whether the cards show overlays instead of PNGs (see [`create_image_occlusion_cards`])
+    overlay: bool,
+    /// Read when a card first needs it, so that notes without image occlusions never read it
+    config: OnceLock<Result<ImageOcclusionConfig, LibraryError>>,
+    clozes: HashMap<PathBuf, Result<ClozesSvg, LibraryError>>,
+    originals: HashMap<PathBuf, Result<OriginalImage, LibraryError>>,
+}
+
+/// A clozes SVG as it was read, before a card colors, hides or labels its clozes
+pub(super) struct ClozesSvg {
+    pub(super) element: Element,
+    /// The file's contents, for errors that point into it
+    contents: String,
+}
+
+/// What a card needs of an original image
+enum OriginalImage {
+    /// Its width and height, for an overlay (see [`overlay_svg_of_size`])
+    Size(u32, u32),
+    /// Decoded, for a PNG to draw clozes over (see [`compose_image_occlusion_card`])
+    Decoded(RgbaImage),
+}
+
+impl ImageOcclusionSources {
+    /// Reads what the image occlusions of `cards` are drawn from, each file once and in parallel.
+    /// `overlay` as in [`create_image_occlusion_cards`]. A file that can't be read fails only the
+    /// cards that draw it, when they are drawn.
+    pub fn read(cards: &[CardData], overlay: bool) -> Self {
+        let image_occlusions = cards
+            .iter()
+            .flat_map(|card| &card.data)
+            .filter_map(|note_part| match note_part {
+                NotePart::ImageOcclusion { data, .. } => Some(data.as_ref()),
+                _ => None,
+            });
+        Self::read_from(image_occlusions, overlay, OnceLock::new())
+    }
+
+    /// Reads what `image_occlusions` are drawn from, with `config` as the config if it is set.
+    fn read_from<'a>(
+        image_occlusions: impl IntoIterator<Item = &'a ImageOcclusionData>,
+        overlay: bool,
+        config: OnceLock<Result<ImageOcclusionConfig, LibraryError>>,
+    ) -> Self {
+        let mut clozes_filepaths = HashSet::new();
+        let mut original_image_filepaths = HashSet::new();
+        for data in image_occlusions {
+            clozes_filepaths.insert(data.clozes_filepath.as_path());
+            original_image_filepaths.insert(data.original_image_filepath.as_path());
+        }
+        // Rayon's threads read the files for the collection of this one
+        let context = crate::collection::capture();
+        let (clozes, originals) = rayon::join(
+            || {
+                clozes_filepaths
+                    .into_par_iter()
+                    .map(|path| {
+                        let _collection = context.enter();
+                        (path.to_path_buf(), read_clozes_svg(path))
+                    })
+                    .collect()
+            },
+            || {
+                original_image_filepaths
+                    .into_par_iter()
+                    .map(|path| {
+                        let _collection = context.enter();
+                        (path.to_path_buf(), read_original_image(path, overlay))
+                    })
+                    .collect()
+            },
+        );
+        Self {
+            overlay,
+            config,
+            clozes,
+            originals,
+        }
+    }
+
+    fn config(&self) -> Result<&ImageOcclusionConfig, LibraryError> {
+        self.config
+            .get_or_init(|| {
+                read_external_config()
+                    .map(|config| config.image_occlusion)
+                    .map_err(|e| match e {
+                        Error::Library(le) => le,
+                        _ => LibraryError::InvalidConfig(format!("Failed to read config: {}", e)),
+                    })
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    /// The image `side` of a card shows for `image_occlusion_data`, with `cloze_indices` of its
+    /// clozes: a PNG of its clozes drawn over the original image, or, if the sources are for
+    /// overlays, an SVG of the clozes to show over the original image.
+    fn card_image(
+        &self,
+        cloze_indices: &[(usize, ClozeHiddenReplacement)],
+        image_occlusion_data: &ImageOcclusionData,
+        side: CardSide,
+    ) -> Result<Vec<u8>, Error> {
+        let not_read = |path: &Path| {
+            LibraryError::Note(NoteErrorKind::Other {
+                description: format!("{} was not read for the note's cards.", path.display()),
+            })
+        };
+        let ImageOcclusionData {
+            original_image_filepath,
+            clozes_filepath,
+            ..
+        } = image_occlusion_data;
+        let clozes = self
+            .clozes
+            .get(clozes_filepath)
+            .ok_or_else(|| not_read(clozes_filepath))?
+            .as_ref()
+            .map_err(Clone::clone)?;
+        let original = self
+            .originals
+            .get(original_image_filepath)
+            .ok_or_else(|| not_read(original_image_filepath))?
+            .as_ref()
+            .map_err(Clone::clone)?;
+        let clozes_svg = card_clozes_svg_of(
+            clozes,
+            cloze_indices,
+            image_occlusion_data,
+            side,
+            self.config()?,
+        )?;
+        // Read as `self.overlay` needs it (see `read_original_image`)
+        match original {
+            OriginalImage::Size(width, height) => {
+                Ok(overlay_svg_of_size(&clozes_svg, (*width, *height)))
+            }
+            OriginalImage::Decoded(image) => compose_over(image.clone(), &clozes_svg)
+                .map_err(|e| Error::Library(original_image_error(original_image_filepath, &e))),
+        }
+    }
+}
+
+/// The clozes SVG at `clozes_filepath`, parsed.
+pub(super) fn read_clozes_svg(clozes_filepath: &Path) -> Result<ClozesSvg, LibraryError> {
+    let contents = read_to_string(clozes_filepath).map_err(|_| {
+        LibraryError::Note(NoteErrorKind::Other {
+            description: format!("Failed to read {}.", clozes_filepath.display()),
+        })
+    })?;
+    let element = Element::parse(contents.as_bytes()).map_err(|e| {
+        LibraryError::Note(NoteErrorKind::Other {
+            description: format!("Failed to parse clozes file data as svg: {}", e),
+        })
+    })?;
+    Ok(ClozesSvg { element, contents })
+}
+
+/// What a card needs of the original image at `original_image_filepath`, as [`OriginalImage`].
+fn read_original_image(
+    original_image_filepath: &Path,
+    overlay: bool,
+) -> Result<OriginalImage, LibraryError> {
+    if overlay {
+        // Reads only the header
+        let (width, height) = crate::platform::image_size(original_image_filepath)
+            .unwrap_or_else(|| Err("the device doesn't have it".to_string()))
+            .map_err(|e| original_image_error(original_image_filepath, &e))?;
+        Ok(OriginalImage::Size(width, height))
+    } else {
+        decode_original_image(original_image_filepath).map(OriginalImage::Decoded)
+    }
+}
+
+/// The original image at `original_image_filepath`, decoded, in any format `image` reads.
+fn decode_original_image(original_image_filepath: &Path) -> Result<RgbaImage, LibraryError> {
+    image::open(original_image_filepath)
+        .map(|image| image.to_rgba8())
+        .map_err(|e| original_image_error(original_image_filepath, &e))
+}
+
+fn original_image_error(original_image_filepath: &Path, e: &dyn std::fmt::Display) -> LibraryError {
+    LibraryError::Note(NoteErrorKind::Other {
+        description: format!(
+            "Failed to open input image {}: {}",
+            original_image_filepath.display(),
+            e
+        ),
+    })
+}
+
+/// The SVG that `side` of a card shows over the original image of `image_occlusion_data`, with
+/// `cloze_indices` of its clozes, for parsers that put it in the card's source (see
+/// [`Parseable::image_occlusion_overlays`]): its clozes SVG, read and colored for the card, in an
+/// SVG the size of the original image (see [`overlay_svg_of_size`]). Of the original image
+/// only the header is read, for its size.
+///
+/// A device knows the size of every image it has without reading it (see
+/// [`crate::platform::image_size`]).
+pub fn image_occlusion_overlay(
+    cloze_indices: &[(usize, ClozeHiddenReplacement)],
+    image_occlusion_data: &ImageOcclusionData,
+    side: CardSide,
+) -> Result<Vec<u8>, Error> {
+    ImageOcclusionSources::read_from([image_occlusion_data], true, OnceLock::new()).card_image(
+        cloze_indices,
+        image_occlusion_data,
+        side,
+    )
+}
+
+/// Writes the image `side` of the card shows for each of its image occlusions, drawn from
+/// `sources`, which [`ImageOcclusionSources::read`] read from the note's cards: a PNG, or, if
+/// `sources` are for overlays, an SVG to show over the original image (see
+/// [`get_image_occlusion_card_filepath`]).
 pub fn create_image_occlusion_cards(
     card_data: &CardData,
     side: CardSide,
     image_occlusion_output_rendered_filepath: &Path,
+    sources: &ImageOcclusionSources,
 ) -> Result<(), LibraryError> {
     // Collect image occlusion data first
     let image_occlusions = card_data
@@ -202,43 +478,39 @@ pub fn create_image_occlusion_cards(
         .map(|(i, (cloze_indices, image_occlusion_data))| (i, cloze_indices, image_occlusion_data))
         .collect::<Vec<_>>();
 
-    // Read config once and share across all threads
-    let config = read_external_config().map_err(|e| match e {
-        Error::Library(le) => le,
-        _ => LibraryError::InvalidConfig(format!("Failed to read config: {}", e)),
-    })?;
-
     // Process image occlusions in parallel
+    let context = crate::collection::capture();
     let _image_occlusion_card_filepaths = image_occlusions
         .par_iter()
         .map(|(i, cloze_indices, image_occlusion_data)| {
+            let _collection = context.enter();
             let image_occlusion_order_in_card = i + 1;
             let card_filepath = get_image_occlusion_card_filepath(
                 image_occlusion_output_rendered_filepath,
                 side,
                 image_occlusion_order_in_card,
+                sources.overlay,
             );
-            create_image_occlusion_card(
-                cloze_indices,
-                image_occlusion_data,
-                &card_filepath,
-                side,
-                &config.image_occlusion,
-            )
-            .map_err(|e| match e {
-                Error::Library(le) => le,
-                _ => LibraryError::Note(NoteErrorKind::Other {
-                    description: format!(
-                        "Failed to create card {}: {}",
-                        image_occlusion_order_in_card, e
-                    ),
-                }),
-            })
+            sources
+                .card_image(cloze_indices, image_occlusion_data, side)
+                .and_then(|contents| write_card_image(&card_filepath, &contents))
+                .map_err(|e| match e {
+                    Error::Library(le) => le,
+                    _ => LibraryError::Note(NoteErrorKind::Other {
+                        description: format!(
+                            "Failed to create card {}: {}",
+                            image_occlusion_order_in_card, e
+                        ),
+                    }),
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(())
 }
 
+/// Colors, hides and labels `clozes` for `side` of a card. `image_size` is the width and height
+/// of the image the clozes are drawn on, which limits how large hints are (see [`HintLimits`]).
+#[allow(clippy::too_many_arguments)]
 pub fn modify_clozes_for_card(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     clozes: &mut [&mut Element],
@@ -247,14 +519,15 @@ pub fn modify_clozes_for_card(
     back_emphasis: bool,
     side: CardSide,
     image_occlusion_config: &ImageOcclusionConfig,
+    image_size: Option<(f64, f64)>,
 ) {
     let ImageOcclusionConfig {
         cloze_to_answer_color,
         cloze_not_to_answer_color,
-        cloze_hint_font_size,
         cloze_emphasis_fill_opacity,
         ..
     } = image_occlusion_config;
+    let hint_limits = HintLimits::new(image_occlusion_config, image_size);
     // NOTE: We cannot use the original image in any case since there may be markup present in the clozes file that should be shown.
     for (i, cloze) in &mut clozes.iter_mut().enumerate() {
         // Find relevant cloze
@@ -266,16 +539,12 @@ pub fn modify_clozes_for_card(
                         ClozeHiddenReplacement::ToAnswer { hint } => {
                             set_cloze_color(cloze, cloze_to_answer_color);
                             if let Some(hint) = hint {
-                                add_text_to_cloze(cloze, hint, *cloze_hint_font_size);
+                                add_text_to_cloze(cloze, hint, &hint_limits);
                             }
                         }
                         ClozeHiddenReplacement::NotToAnswer => {
                             set_cloze_color(cloze, cloze_not_to_answer_color);
-                            add_text_to_cloze(
-                                cloze,
-                                CLOZE_NOT_TO_ANSWER_TEXT,
-                                *cloze_hint_font_size,
-                            );
+                            add_text_to_cloze(cloze, CLOZE_NOT_TO_ANSWER_TEXT, &hint_limits);
                         }
                     }
                 } else {
@@ -283,11 +552,7 @@ pub fn modify_clozes_for_card(
                         FrontConceal::OnlyGrouping => hide_cloze_mask(cloze),
                         FrontConceal::AllGroupings => {
                             set_cloze_color(cloze, cloze_not_to_answer_color);
-                            add_text_to_cloze(
-                                cloze,
-                                CLOZE_NOT_TO_ANSWER_TEXT,
-                                *cloze_hint_font_size,
-                            );
+                            add_text_to_cloze(cloze, CLOZE_NOT_TO_ANSWER_TEXT, &hint_limits);
                         }
                     }
                 }
@@ -310,11 +575,10 @@ pub fn modify_clozes_for_card(
     }
 }
 
-fn add_text_to_cloze(cloze: &mut Element, text: &str, text_font_size: u32) {
-    let cloze_type_opt: Option<SvgClozeType> = cloze.name.as_str().parse().ok();
-    let (center_x, center_y) = cloze_type_opt.map_or((0., 0.), |cloze_type| {
-        get_center_of_shape(cloze_type, cloze)
-    });
+/// Wraps `cloze` in a `<g>` with `text` drawn over it, sized to fit it (see [`layout_hint`]).
+fn add_text_to_cloze(cloze: &mut Element, text: &str, limits: &HintLimits) {
+    let layout = cloze_bounds(cloze)
+        .and_then(|bounds| layout_hint(text, &text_areas(cloze, bounds, limits.image), limits));
     let current_cloze = cloze.clone();
     cloze.name = "g".to_string();
     cloze.attributes.clear();
@@ -322,29 +586,12 @@ fn add_text_to_cloze(cloze: &mut Element, text: &str, text_font_size: u32) {
     cloze
         .children
         .push(xmltree::XMLNode::Element(current_cloze));
-    let mut hint_element = cloze.clone();
-    hint_element.name = "text".to_string();
-    hint_element.children.clear();
-    hint_element.attributes.clear();
-    hint_element
-        .attributes
-        .insert("font-size".to_string(), text_font_size.to_string());
-    hint_element
-        .attributes
-        .insert("text-anchor".to_string(), "middle".to_string());
-    hint_element
-        .attributes
-        .insert("dominant-baseline".to_string(), "middle".to_string());
-    hint_element
-        .attributes
-        .insert("x".to_string(), center_x.to_string());
-    hint_element
-        .attributes
-        .insert("y".to_string(), center_y.to_string());
-    hint_element
-        .children
-        .push(xmltree::XMLNode::Text(text.to_string()));
-    cloze.children.push(xmltree::XMLNode::Element(hint_element));
+    // Without bounds there is nowhere sensible to put the text
+    if let Some(layout) = layout {
+        cloze
+            .children
+            .push(xmltree::XMLNode::Element(hint_element(&layout)));
+    }
 }
 
 fn set_cloze_color(cloze: &mut Element, cloze_color: &str) {
@@ -380,30 +627,76 @@ fn set_cloze_fill_opacity(cloze: &mut Element, cloze_emphasis_fill_opacity: f64)
     );
 }
 
+/// Writes the image of `image_occlusion_data` that `side` of a card shows to `card_filepath`: the
+/// card's clozes drawn over the original image as a PNG, or, if `overlay`, as an SVG to show over
+/// the original image (see [`overlay_svg_of_size`]).
+#[cfg(test)]
 pub(crate) fn create_image_occlusion_card(
     cloze_indices: &[(usize, ClozeHiddenReplacement)],
     image_occlusion_data: &ImageOcclusionData,
     card_filepath: &Path,
     side: CardSide,
     config: &ImageOcclusionConfig,
+    overlay: bool,
 ) -> Result<(), Error> {
+    let config = OnceLock::from(Ok(config.clone()));
+    let sources = ImageOcclusionSources::read_from([image_occlusion_data], overlay, config);
+    let contents = sources.card_image(cloze_indices, image_occlusion_data, side)?;
+    write_card_image(card_filepath, &contents)
+}
+
+/// Writes `contents`, a card's image, to `card_filepath`, unless the file already holds them.
+/// Rewriting it would change its modification time, so `sync_render_assets` would hash it again
+/// and tools like rsync would copy it again, though most of a note's card images are unchanged
+/// when it is rendered again.
+fn write_card_image(card_filepath: &Path, contents: &[u8]) -> Result<(), Error> {
+    // Compared by size first, so a changed image is usually not read
+    if std::fs::metadata(card_filepath).is_ok_and(|m| m.len() == contents.len() as u64)
+        && std::fs::read(card_filepath).is_ok_and(|old| old == contents)
+    {
+        return Ok(());
+    }
+    std::fs::write(card_filepath, contents).map_err(|e| {
+        Error::Library(LibraryError::Note(NoteErrorKind::Other {
+            description: format!("Failed to save {}: {}", card_filepath.display(), e),
+        }))
+    })
+}
+
+/// The clozes SVG of `image_occlusion_data` as `side` of a card shows it: its clozes recolored,
+/// hidden or labeled with hints (see [`modify_clozes_for_card`]), and its markup as it is.
+// For a device, which makes the images itself (see `device.rs`)
+#[cfg(any(test, target_family = "wasm"))]
+pub(crate) fn card_clozes_svg(
+    cloze_indices: &[(usize, ClozeHiddenReplacement)],
+    image_occlusion_data: &ImageOcclusionData,
+    side: CardSide,
+    config: &ImageOcclusionConfig,
+) -> Result<Vec<u8>, Error> {
+    let clozes = read_clozes_svg(&image_occlusion_data.clozes_filepath)?;
+    card_clozes_svg_of(&clozes, cloze_indices, image_occlusion_data, side, config)
+}
+
+/// [`card_clozes_svg`], with the clozes SVG of `image_occlusion_data` read as `clozes`.
+fn card_clozes_svg_of(
+    clozes: &ClozesSvg,
+    cloze_indices: &[(usize, ClozeHiddenReplacement)],
+    image_occlusion_data: &ImageOcclusionData,
+    side: CardSide,
+    config: &ImageOcclusionConfig,
+) -> Result<Vec<u8>, Error> {
     let ImageOcclusionData {
-        original_image_filepath,
-        clozes_filepath,
         front_conceal,
         back_reveal,
         back_emphasis,
+        ..
     } = image_occlusion_data;
-    let clozes_file_contents = read_to_string(clozes_filepath).map_err(|_| {
-        LibraryError::Note(NoteErrorKind::Other {
-            description: format!("Failed to read {}.", clozes_filepath.display()),
-        })
-    })?;
-    let mut clozes_svg_element = Element::parse(clozes_file_contents.as_bytes()).map_err(|e| {
-        LibraryError::Note(NoteErrorKind::Other {
-            description: format!("Failed to parse clozes file data as svg: {}", e),
-        })
-    })?;
+    let ClozesSvg {
+        element,
+        contents: clozes_file_contents,
+    } = clozes;
+    let mut clozes_svg_element = element.clone();
+    let image_size = svg_size(&clozes_svg_element);
     let mut clozes = get_clozes_from_svg(&mut clozes_svg_element).map_err(|(e, advice)| {
         LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: e,
@@ -420,6 +713,7 @@ pub(crate) fn create_image_occlusion_card(
         *back_emphasis,
         side,
         config,
+        image_size,
     );
 
     // Get card's clozes as bytes
@@ -428,8 +722,67 @@ pub(crate) fn create_image_occlusion_card(
         &mut clozes_file_contents_buffer,
         EmitterConfig::new().perform_indent(true),
     );
-    // let clozes_file_contents = String::from_utf8(clozes_file_contents_buffer.clone()).unwrap();
+    Ok(clozes_file_contents_buffer)
+}
 
+/// The width and height of `svg` from its attributes, which the image occlusion editor sets to
+/// the size of the original image.
+fn svg_size(svg: &Element) -> Option<(f64, f64)> {
+    let length = |key: &str| {
+        svg.attributes
+            .get(key)?
+            .trim()
+            .trim_end_matches("px")
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && *v > 0.)
+    };
+    Some((length("width")?, length("height")?))
+}
+
+/// `clozes_svg`, from [`card_clozes_svg`], as an image the size of the original image,
+/// `(width, height)`, so that a card shows it over the original image by giving both the same
+/// width.
+///
+/// It is drawn as [`compose_image_occlusion_card`] draws it: at its own size, from the top left
+/// corner of the original image, and clipped to it. So it is nested in an SVG whose size and
+/// coordinates are the original image's pixels.
+pub(super) fn overlay_svg_of_size(clozes_svg: &[u8], (width, height): (u32, u32)) -> Vec<u8> {
+    // An XML declaration may only start a document
+    let clozes_svg = clozes_svg
+        .strip_prefix(b"<?xml")
+        .and_then(|rest| {
+            let end = rest.windows(2).position(|w| w == b"?>")?;
+            Some(rest[end + 2..].trim_ascii_start())
+        })
+        .unwrap_or(clozes_svg);
+    let mut svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">"#
+    )
+    .into_bytes();
+    svg.extend_from_slice(clozes_svg);
+    svg.extend_from_slice(b"</svg>\n");
+    svg
+}
+
+/// A card's image occlusion as a PNG: `clozes_svg`, from [`card_clozes_svg`], drawn over
+/// `original_image`, in any format the `image` crate reads.
+// For a device, which makes the images itself (see `device.rs`)
+#[cfg(any(test, target_family = "wasm"))]
+pub(crate) fn compose_image_occlusion_card(
+    original_image: &[u8],
+    clozes_svg: &[u8],
+) -> Result<Vec<u8>, String> {
+    // Load the base image (any supported format: jpeg, png, etc.)
+    let base_img = image::load_from_memory(original_image)
+        .map_err(|e| format!("Failed to open input image: {}", e))?
+        .to_rgba8();
+    compose_over(base_img, clozes_svg)
+}
+
+/// A card's image occlusion as a PNG: `clozes_svg`, from [`card_clozes_svg`], drawn over
+/// `base_img`, the original image, decoded.
+fn compose_over(mut base_img: RgbaImage, clozes_svg: &[u8]) -> Result<Vec<u8>, String> {
     // - x and y: The top-left position (in pixels) where the rendered SVG is placed on the base image. Measured in the base image’s pixel coordinate space. Defaults: 0, 0.
     // - width and height: The output pixel size to render the SVG before compositing.
     //   - Both provided: SVG is scaled to exactly width×height (may distort aspect ratio).
@@ -444,43 +797,18 @@ pub(crate) fn create_image_occlusion_card(
     let opt_w: Option<u32> = None;
     let opt_h: Option<u32> = None;
 
-    // Load the base image (any supported format: jpeg, png, etc.)
-    let mut base_img = image::open(original_image_filepath)
-        .map_err(|e| {
-            Error::Library(LibraryError::Note(NoteErrorKind::Other {
-                description: format!(
-                    "Failed to open input image {}: {}",
-                    original_image_filepath.display(),
-                    e
-                ),
-            }))
-        })?
-        .to_rgba8();
-
     // Render SVG to RGBA (unpremultiplied) with optional scaling
-    let overlay_img = render_svg_to_rgba(clozes_file_contents_buffer.as_slice(), opt_w, opt_h)
-        .map_err(|e| Error::Library(LibraryError::Note(NoteErrorKind::Other { description: e })))?;
+    let overlay_img = render_svg_to_rgba(clozes_svg, opt_w, opt_h)?;
 
     // Composite overlay onto base at (x, y)
     // imageops::overlay performs alpha blending using unpremultiplied RGBA
     imageops::overlay(&mut base_img, &overlay_img, x.into(), y.into());
 
-    // Save to file as PNG
+    let mut png = Vec::new();
     base_img
-        .save_with_format(card_filepath, ImageFormat::Png)
-        .map_err(|e| {
-            Error::Library(LibraryError::Note(NoteErrorKind::Other {
-                description: format!("Failed to save PNG {}: {}", card_filepath.display(), e),
-            }))
-        })?;
-
-    if !card_filepath.exists() {
-        return Err(Error::Library(LibraryError::Note(NoteErrorKind::Other {
-            description: "Failed to compose clozes and original image to create card file."
-                .to_string(),
-        })));
-    }
-    Ok(())
+        .write_to(&mut std::io::Cursor::new(&mut png), ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode PNG: {}", e))?;
+    Ok(png)
 }
 
 /// Combines consecutive image occlusion clozes since they all need to be rendered as a part of the same image
@@ -589,7 +917,7 @@ pub fn read_image_occlusion_data(
                 at: image_occlusion_capture_range.clone().into(),
             })
         })?;
-    if !image_occlusion_data.original_image_filepath.exists() {
+    if !is_file(&image_occlusion_data.original_image_filepath) {
         return Err(LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: format!(
                 "Failed to find image occlusion image: {}",
@@ -600,7 +928,7 @@ pub fn read_image_occlusion_data(
             at: image_occlusion_capture_range.clone().into(),
         }));
     }
-    if !image_occlusion_data.clozes_filepath.exists() {
+    if !is_file(&image_occlusion_data.clozes_filepath) {
         return Err(LibraryError::Note(NoteErrorKind::InvalidSettings {
             description: format!(
                 "Failed to find image occlusion clozes image: {}",
@@ -611,7 +939,30 @@ pub fn read_image_occlusion_data(
             at: image_occlusion_capture_range.clone().into(),
         }));
     }
-    // Move image files
+    // On a host every user's files belong to the server, so a note naming another collection's
+    // file would have it moved into this one below, or drawn into this one's cards
+    for path in [
+        &image_occlusion_data.original_image_filepath,
+        &image_occlusion_data.clozes_filepath,
+    ] {
+        if !in_collection(path) {
+            return Err(LibraryError::Note(NoteErrorKind::InvalidSettings {
+                description: format!(
+                    "Image occlusion file {} is not in this collection.",
+                    path.display()
+                ),
+                advice: Some(
+                    "Add the image with Insert image occlusion in the note editor, which stores it in the collection."
+                        .to_string(),
+                ),
+                src: data.to_string(),
+                at: image_occlusion_capture_range.clone().into(),
+            }));
+        }
+    }
+    // Move the files into the image occlusion directory, named as stored files are there (see
+    // `store_image_occlusion_files`). A file named otherwise, as a note written by hand may name
+    // one, gets a new name with a suffix, which hosts need to send it to each other.
     // Cases to check: 2 different image occlusions that have:
     // - different original image file and different cloze file: Main case
     // - different original image file and same cloze file
@@ -622,17 +973,48 @@ pub fn read_image_occlusion_data(
     let original_image_filename = image_occlusion_data
         .original_image_filepath
         .file_name()
+        .and_then(|name| name.to_str())
         .ok_or(LibraryError::Note(NoteErrorKind::Other {
             description: format!(
                 "Failed to get file name: {}",
                 image_occlusion_data.original_image_filepath.display()
             ),
         }))?;
-    let new_image_filepath = get_image_occlusion_directory().join(original_image_filename);
+    let directory = get_image_occlusion_directory();
+    let stored_name = Path::new(original_image_filename)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(has_hash_suffix);
+    let new_image_filepath = if stored_name {
+        directory.join(original_image_filename)
+    } else {
+        let extension = image_extension(original_image_filename).map_err(|e| {
+            LibraryError::Note(NoteErrorKind::InvalidSettings {
+                description: e.to_string(),
+                advice: None,
+                src: data.to_string(),
+                at: image_occlusion_capture_range.clone().into(),
+            })
+        })?;
+        let stem = sanitized_stem(original_image_filename, "image_occlusion");
+        let seed = image_occlusion_data
+            .original_image_filepath
+            .as_os_str()
+            .as_encoded_bytes();
+        unused_names(&directory, &stem, &extension, &[seed])
+            .ok_or_else(|| {
+                LibraryError::Note(NoteErrorKind::Other {
+                    description: format!(
+                        "Failed to find an unused image occlusion file name for {original_image_filename}"
+                    ),
+                })
+            })?
+            .0
+    };
     let move_original_image_file =
         image_occlusion_data.original_image_filepath != new_image_filepath;
     if move_original_image_file {
-        if new_image_filepath.exists() {
+        if is_file(&new_image_filepath) {
             return Err(LibraryError::Note(NoteErrorKind::Other {
                 description: format!(
                     "An image occlusion file with the same name already exists. Please rename the file.: {}",
@@ -641,7 +1023,7 @@ pub fn read_image_occlusion_data(
             }));
         }
         if move_files {
-            fs::rename(
+            rename(
                 &image_occlusion_data.original_image_filepath,
                 &new_image_filepath,
             )
@@ -664,7 +1046,7 @@ pub fn read_image_occlusion_data(
     new_cloze_filepath.set_extension("svg");
     let existing_cloze_file = image_occlusion_data.clozes_filepath == new_cloze_filepath;
     if !existing_cloze_file {
-        if new_cloze_filepath.exists() {
+        if is_file(&new_cloze_filepath) {
             return Err(LibraryError::Note(NoteErrorKind::Other {
                 description: format!(
                     "Failed to move image occlusion cloze image since file already exists: {}",
@@ -673,21 +1055,39 @@ pub fn read_image_occlusion_data(
             }));
         }
         if move_files {
-            fs::rename(&image_occlusion_data.clozes_filepath, &new_cloze_filepath).map_err(
-                |_| {
-                    LibraryError::Note(NoteErrorKind::Other {
-                        description: format!(
-                            "Failed to move image occlusion cloze image: {}",
-                            image_occlusion_data.clozes_filepath.display()
-                        ),
-                    })
-                },
-            )?;
+            rename(&image_occlusion_data.clozes_filepath, &new_cloze_filepath).map_err(|_| {
+                LibraryError::Note(NoteErrorKind::Other {
+                    description: format!(
+                        "Failed to move image occlusion cloze image: {}",
+                        image_occlusion_data.clozes_filepath.display()
+                    ),
+                })
+            })?;
             image_occlusion_data.clozes_filepath = new_cloze_filepath;
         }
     }
 
     Ok(image_occlusion_data)
+}
+
+/// Whether `path`, without symbolic links, is in one of the current collection's directories.
+#[cfg(not(target_family = "wasm"))]
+fn in_collection(path: &Path) -> bool {
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
+    crate::collection::paths()
+        .dirs()
+        .iter()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .any(|dir| path.starts_with(dir))
+}
+
+/// Always, on a device: it has only its own collection's files, which its notes name by the
+/// server's paths, not its own directories'.
+#[cfg(target_family = "wasm")]
+fn in_collection(_path: &Path) -> bool {
+    true
 }
 
 pub fn get_clozes_from_svg(
