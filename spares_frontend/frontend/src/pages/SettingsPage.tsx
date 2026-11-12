@@ -9,8 +9,6 @@ import {
   EDITOR_FONT_LABELS,
   EDITOR_FONT_SIZES,
   EDITOR_FONTS,
-  LINE_WRAPPING_LABELS,
-  LINE_WRAPPINGS,
   PAGE_WIDTH_LABELS,
   PAGE_WIDTHS,
   PAGES_PER_ROW,
@@ -21,7 +19,6 @@ import {
   setEditorFontSize,
   setEditorLineNumbers,
   setEditorSpellcheck,
-  setLineWrapping,
   setPageWidth,
   setPagesPerRow,
   setReadAloud,
@@ -33,7 +30,6 @@ import {
   useEditorFontSize,
   useEditorLineNumbers,
   useEditorSpellcheck,
-  useLineWrapping,
   usePageWidth,
   usePagesPerRow,
   useReadAloud,
@@ -90,7 +86,6 @@ export default function SettingsPage() {
   const vimKeybindings = useVimKeybindings();
   const editorFontSize = useEditorFontSize();
   const editorFont = useEditorFont();
-  const lineWrapping = useLineWrapping();
   const editorLineNumbers = useEditorLineNumbers();
   const editorSpellcheck = useEditorSpellcheck();
   const closeBrackets = useCloseBrackets();
@@ -362,32 +357,6 @@ export default function SettingsPage() {
         <p className="field-hint">
           For the note editor&apos;s text, tags and keywords. The typed answer
           box while reviewing is unchanged.
-        </p>
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            flexWrap: "wrap",
-            alignItems: "center",
-            marginTop: 12,
-          }}
-        >
-          <span>Wrap long lines:</span>
-          {LINE_WRAPPINGS.map((wrapping) => (
-            <label key={wrapping} className="checkbox-label">
-              <input
-                type="radio"
-                name="line-wrapping"
-                value={wrapping}
-                checked={lineWrapping === wrapping}
-                onChange={() => setLineWrapping(wrapping)}
-              />
-              {LINE_WRAPPING_LABELS[wrapping]}
-            </label>
-          ))}
-        </div>
-        <p className="field-hint">
-          Lines that aren&apos;t wrapped scroll sideways.
         </p>
         <label
           style={{
