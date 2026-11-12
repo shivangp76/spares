@@ -4,26 +4,24 @@ import { EditorView, type Extension } from '@uiw/react-codemirror';
 import { imageUpload } from '../imageUpload';
 import { clozeHighlighting, loadLanguage, type NoteSyntax, noteSyntax } from '../editorLanguages';
 import {
-  useCloseBrackets, useEditorFont, useEditorFontSize, useEditorLineNumbers, useEditorSpellcheck, useLineWrapping,
-  useVimKeybindings,
+  useCloseBrackets, useEditorFont, useEditorFontSize, useEditorLineNumbers, useEditorSpellcheck, useVimKeybindings,
 } from '../preferences';
 import { useMediaQuery } from './useMediaQuery';
 
 /** What the note editors do beyond typing, for their Syntax popup. */
 export const EDITOR_TIPS = ['Images pasted or dropped into the text are uploaded and inserted at that spot. Insert image inserts them at the cursor, from the photo library or the camera on a phone.'];
 
-/** CodeMirror extensions and basic setups for the note editors, following the editor settings. On
-    phones, line numbers are left out to give the text the width, and lines wrap unless turned
-    off. `dataExtensions` and `dataSetup` are for the note's data, which also has the setting's line
-    numbers and spellcheck, and highlights the syntax of the note's parser and its clozes;
-    `extensions` and `fieldSetup` are for its tags and keywords. The parser's language is loaded on demand, so its highlighting appears
-    once loaded. With `imageParserId`, images pasted or dropped into the data are uploaded and
-    inserted in that parser's syntax. */
+/** CodeMirror extensions and basic setups for the note editors, following the editor settings.
+    Long lines always wrap, so the text never scrolls sideways. On phones, line numbers are left out
+    to give the text the width. `dataExtensions` and `dataSetup` are for the note's data, which also
+    has the setting's line numbers and spellcheck, and highlights the syntax of the note's parser
+    and its clozes; `extensions` and `fieldSetup` are for its tags and keywords. The parser's
+    language is loaded on demand, so its highlighting appears once loaded. With `imageParserId`,
+    images pasted or dropped into the data are uploaded and inserted in that parser's syntax. */
 export function useEditorSetup(parserName?: string | null, imageParserId?: number | null) {
   const vimEnabled = useVimKeybindings();
   const fontSize = useEditorFontSize();
   const font = useEditorFont();
-  const wrapping = useLineWrapping();
   const lineNumbers = useEditorLineNumbers();
   const spellcheck = useEditorSpellcheck();
   const closeBrackets = useCloseBrackets();
@@ -44,13 +42,13 @@ export function useEditorSetup(parserName?: string | null, imageParserId?: numbe
 
   const extensions = useMemo(() => [
     ...(vimEnabled ? [vim()] : []),
-    ...(wrapping === 'always' || (wrapping === 'phones' && isNarrow) ? [EditorView.lineWrapping] : []),
+    EditorView.lineWrapping,
     EditorView.theme({
       '&': { fontSize: `${fontSize}px` },
       // CodeMirror's own theme sets a monospace font here
       ...(font === 'interface' ? { '.cm-scroller': { fontFamily: 'inherit' } } : {}),
     }),
-  ], [vimEnabled, isNarrow, fontSize, font, wrapping]);
+  ], [vimEnabled, fontSize, font]);
   const dataExtensions = useMemo(() => {
     const images = imageParserId == null ? [] : [imageUpload(imageParserId)];
     const spelling = spellcheck ? [EditorView.contentAttributes.of({ spellcheck: 'true' })] : [];
