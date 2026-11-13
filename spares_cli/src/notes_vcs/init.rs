@@ -27,15 +27,19 @@ const LOCAL_EDITS_MESSAGE: &str =
 /// jj 0.30 is the first version that pushes by running `git`, so the server's hooks run.
 const MIN_JJ_VERSION: (u32, u32) = (0, 30);
 
-/// Delimit the aliases in the clone's jj config, so `--repair-hooks` can replace them.
+/// Delimit the aliases and merge tools in the clone's jj config, so `--repair-hooks` can replace
+/// them.
 const JJ_ALIASES_BEGIN: &str =
     "# BEGIN spares aliases (rewritten by `spares vcs init --repair-hooks`)";
 const JJ_ALIASES_END: &str = "# END spares aliases";
 
-/// Aliases added to the clone's jj config, running `spares` as `spares_command`. See the workflow
-/// docs.
-fn jj_aliases(spares_command: &str) -> String {
+/// Aliases and merge tools added to the clone's jj config, running `spares` as `spares`. See the
+/// workflow docs.
+fn jj_aliases(spares: &SparesCommand) -> String {
     let aliases = r#"[aliases]
+# Show changed notes as source diff, old render and new render in the browser. Takes `jj diff`'s
+# arguments: `jj rd`, `jj rd -r 'main..@'`, `jj rd --from X --to Y <paths>`
+rd = ["diff", "--tool", "spares-render-diff"]
 # Fetch spares' changes and rebase your work (the current branch, or the given revision's) onto them
 spares-pull = ["util", "exec", "--", "sh", "-c", '''
   jj git fetch && jj rebase -b "${1:-@}" -d main@origin
@@ -83,10 +87,22 @@ spares-anki-push = ["util", "exec", "--", "sh", "-c", '''
   jj bookmark set anki --allow-backwards -r "$rev"
   jj git push -b anki || { jj bookmark set anki --allow-backwards -r anki@origin >/dev/null 2>&1; exit 1; }
 ''', "spares-anki-push"]
+
+# `jj rd`: jj copies the changed files of each side into `$left` and `$right`
+[merge-tools.spares-render-diff]
+program = @PROGRAM@
+diff-args = @DIFF_ARGS@
 "#;
+    let mut argv = spares.argv();
+    let program = argv.remove(0);
+    argv.extend(["vcs", "render-diff", "$left", "$right"].map(String::from));
+    let diff_args: toml_edit::Array = argv.iter().map(String::as_str).collect();
     format!(
         "{JJ_ALIASES_BEGIN}\n{}{JJ_ALIASES_END}\n",
-        aliases.replace("@SPARES@", spares_command)
+        aliases
+            .replace("@SPARES@", &spares.shell())
+            .replace("@PROGRAM@", &toml_edit::Value::from(program).to_string())
+            .replace("@DIFF_ARGS@", &diff_args.to_string())
     )
 }
 
@@ -123,7 +139,7 @@ fn repair(dirs: &Dirs, base_url: &str) -> Result<(), Error> {
     install_hooks(&dirs.repo, base_url)?;
     println!("Rewrote the hooks in {}", dirs.repo.display());
     if dirs.notes.join(".jj").exists() {
-        setup_jj(&dirs.notes, &spares_command(base_url)?)?;
+        setup_jj(&dirs.notes, &spares_invocation(base_url)?)?;
         println!("Rewrote the jj aliases of {}", dirs.notes.display());
     }
     Ok(())
@@ -222,7 +238,7 @@ pub(crate) async fn init_vcs(
             .args(["git", "clone", "--colocate"])
             .arg(&dirs.repo)
             .arg(&dirs.clone_tmp))?;
-        setup_jj(&dirs.clone_tmp, &spares_command(base_url)?)?;
+        setup_jj(&dirs.clone_tmp, &spares_invocation(base_url)?)?;
     } else {
         run(git_command()
             .args(["clone", "-q"])
@@ -358,29 +374,65 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// A spares binary and the environment it runs with
+struct SparesCommand {
+    env: Vec<(&'static str, String)>,
+    exe: String,
+}
+
+impl SparesCommand {
+    /// As a shell command
+    fn shell(&self) -> String {
+        let mut words: Vec<String> = Vec::new();
+        if !self.env.is_empty() {
+            words.push("env".to_string());
+        }
+        for (key, value) in &self.env {
+            words.push(format!("{key}={}", shell_quote(value)));
+        }
+        words.push(shell_quote(&self.exe));
+        words.join(" ")
+    }
+
+    /// As a program and its arguments, for what runs programs without a shell, such as jj's
+    /// merge tools
+    fn argv(&self) -> Vec<String> {
+        let mut argv: Vec<String> = Vec::new();
+        if !self.env.is_empty() {
+            argv.push("env".to_string());
+        }
+        for (key, value) in &self.env {
+            argv.push(format!("{key}={value}"));
+        }
+        argv.push(self.exe.clone());
+        argv
+    }
+}
+
 /// This spares binary, run against this host and collection: the host's address and root and the
 /// collection's user are fixed, so a shell with other settings cannot reach another host or user.
-fn spares_command(base_url: &str) -> Result<String, Error> {
+fn spares_invocation(base_url: &str) -> Result<SparesCommand, Error> {
     let exe = std::env::current_exe().map_err(|e| miette!("{}", e))?;
     let exe = exe.canonicalize().unwrap_or(exe);
     let root = spares_server::host::default_root();
     let root = root.canonicalize().unwrap_or(root);
     let user = spares_core::collection::current_id()
         .ok_or_else(|| miette!("No collection on this machine to write hooks for"))?;
-    Ok(format!(
-        "env SPARES_HOST={} SPARES_ROOT={} SPARES_USER={} {}",
-        shell_quote(base_url),
-        shell_quote(&root.to_string_lossy()),
-        shell_quote(&user),
-        shell_quote(&exe.to_string_lossy()),
-    ))
+    Ok(SparesCommand {
+        env: vec![
+            ("SPARES_HOST", base_url.to_string()),
+            ("SPARES_ROOT", root.to_string_lossy().into_owned()),
+            ("SPARES_USER", user),
+        ],
+        exe: exe.to_string_lossy().into_owned(),
+    })
 }
 
 /// Writes the hooks and the repository settings that make a push an import. The hooks carry this
 /// instance's address and data directory, so a push from a shell with other settings cannot reach
 /// another spares instance.
 fn install_hooks(repo: &Path, base_url: &str) -> Result<(), Error> {
-    let spares = spares_command(base_url)?;
+    let spares = spares_invocation(base_url)?.shell();
     let hooks_dir = repo.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir).map_err(|e| miette!("{}", e))?;
     for (hook, phase) in [
@@ -434,7 +486,7 @@ fn install_hooks(repo: &Path, base_url: &str) -> Result<(), Error> {
 
 /// Repository settings for a jj clone. jj keeps them outside the repository, keyed by an id stored
 /// in it, so they survive moving the clone into place.
-fn setup_jj(clone: &Path, spares_command: &str) -> Result<(), Error> {
+fn setup_jj(clone: &Path, spares: &SparesCommand) -> Result<(), Error> {
     // Only files spares wrote can be pushed, so new files are not tracked automatically. Otherwise
     // the next jj command would commit an editor's backup file, and the push would be rejected.
     run(Command::new("jj").current_dir(clone).args([
@@ -448,7 +500,7 @@ fn setup_jj(clone: &Path, spares_command: &str) -> Result<(), Error> {
         .current_dir(clone)
         .args(["config", "path", "--repo"]))?);
     let config = std::fs::read_to_string(&config_path).unwrap_or_default();
-    match with_jj_aliases(&config, &jj_aliases(spares_command)) {
+    match with_jj_aliases(&config, &jj_aliases(spares)) {
         Some(new_config) => {
             if new_config != config {
                 std::fs::write(&config_path, new_config).map_err(|e| miette!("{}", e))?;
@@ -663,20 +715,28 @@ fn print_workflow(dirs: &Dirs, backup: Option<&Path>, jj: bool) {
 #[cfg(test)]
 mod tests {
     use super::JJ_ALIASES_BEGIN;
+    use super::SparesCommand;
     use super::jj_aliases;
     use super::with_jj_aliases;
 
+    fn spares(exe: &str) -> SparesCommand {
+        SparesCommand {
+            env: Vec::new(),
+            exe: exe.to_string(),
+        }
+    }
+
     #[test]
     fn test_with_jj_aliases() {
-        let aliases = jj_aliases("spares");
+        let aliases = jj_aliases(&spares("spares"));
         assert!(aliases.contains("spares-anki-push"));
-        assert!(aliases.contains("  spares vcs refresh anki\n"));
+        assert!(aliases.contains("  'spares' vcs refresh anki\n"));
         let user = "[user]\nname = \"x\"\n";
 
         // Added once, then replaced in place.
         let added = with_jj_aliases(user, &aliases).unwrap();
         assert!(added.starts_with(user));
-        let newer = jj_aliases("/new/spares");
+        let newer = jj_aliases(&spares("/new/spares"));
         let replaced = with_jj_aliases(&added, &newer).unwrap();
         assert_eq!(replaced, format!("{user}\n{newer}"));
         assert_eq!(with_jj_aliases(&replaced, &newer).unwrap(), replaced);
@@ -685,5 +745,56 @@ mod tests {
         let edited = format!("{user}[aliases]\nspares-push = [\"x\"]\n");
         assert_eq!(with_jj_aliases(&edited, &aliases), None);
         assert!(!edited.contains(JJ_ALIASES_BEGIN));
+    }
+
+    /// `jj rd` runs `spares vcs render-diff` as a diff tool, with the hooks' environment, as a
+    /// program and arguments, which no shell splits. The block is valid TOML.
+    #[test]
+    fn jj_aliases_add_the_render_diff_tool() {
+        let command = SparesCommand {
+            env: vec![
+                ("SPARES_HOST", "http://127.0.0.1:8080".to_string()),
+                ("SPARES_ROOT", "/Users/me/my \"data\"".to_string()),
+            ],
+            exe: "/usr/local/bin/spares".to_string(),
+        };
+        assert_eq!(
+            command.shell(),
+            "env SPARES_HOST='http://127.0.0.1:8080' SPARES_ROOT='/Users/me/my \"data\"' \
+             '/usr/local/bin/spares'"
+        );
+        let aliases = jj_aliases(&command);
+        let config: toml_edit::DocumentMut = aliases.parse().unwrap();
+        let strings = |item: &toml_edit::Item| -> Vec<String> {
+            item.as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(
+            strings(&config["aliases"]["rd"]),
+            ["diff", "--tool", "spares-render-diff"]
+        );
+        let tool = &config["merge-tools"]["spares-render-diff"];
+        assert_eq!(tool["program"].as_str(), Some("env"));
+        assert_eq!(
+            strings(&tool["diff-args"]),
+            [
+                "SPARES_HOST=http://127.0.0.1:8080",
+                "SPARES_ROOT=/Users/me/my \"data\"",
+                "/usr/local/bin/spares",
+                "vcs",
+                "render-diff",
+                "$left",
+                "$right"
+            ]
+        );
+        // Without an environment, the program is spares itself
+        let plain: toml_edit::DocumentMut = jj_aliases(&spares("spares")).parse().unwrap();
+        assert_eq!(
+            plain["merge-tools"]["spares-render-diff"]["program"].as_str(),
+            Some("spares")
+        );
     }
 }
