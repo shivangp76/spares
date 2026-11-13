@@ -5076,6 +5076,7 @@ dependencies = [
  "typst-kit",
  "typst-layout",
  "typst-pdf",
+ "typst-svg",
  "typst-syntax",
  "unicode-normalization",
  "unscanny",

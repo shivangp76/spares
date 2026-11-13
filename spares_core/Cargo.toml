@@ -58,6 +58,7 @@ typst = { version = "0.15.1", optional = true }
 typst-kit = { version = "0.15.1", optional = true, default-features = false, features = ["datetime", "embedded-fonts", "emit-diagnostics", "scan-fonts", "system-files"] }
 typst-layout = { version = "0.15.1", optional = true }
 typst-pdf = { version = "0.15.1", optional = true }
+typst-svg = { version = "0.15.1", optional = true }
 
 # In a browser (the web app's copy of the collection). sqlx has no runtime feature: the vendored
 # sqlx runs on the browser's event loop instead (vendor/README.md), and tokio's `net` and `fs`
@@ -76,7 +77,7 @@ libc = "0.2.191"
 # packages and parsed files between renders, instead of running the `typst` CLI once per file (see
 # `parsers::impls::typst::worker`). Off here so that the browser's build, and a host that renders
 # no Typst, don't build Typst. The server and CLI turn it on by default.
-typst-render = ["dep:typst", "dep:typst-kit", "dep:typst-layout", "dep:typst-pdf"]
+typst-render = ["dep:typst", "dep:typst-kit", "dep:typst-layout", "dep:typst-pdf", "dep:typst-svg"]
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["async_futures"] }
