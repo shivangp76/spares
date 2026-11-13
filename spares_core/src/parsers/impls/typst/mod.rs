@@ -479,10 +479,6 @@ impl Parseable for TypstParser {
 /// collection's sandbox and with its limits, as a note's render: `<stem>-<n>.svg` next to
 /// `output`, numbered from 1 (see [`svg_page_path`]). Returns what `typst compile` printed, and
 /// whether it succeeded as the output's status. Records no dependencies.
-#[allow(
-    dead_code,
-    reason = "previews of Typst sources use it from the next commit"
-)]
 pub(crate) fn render_svg_pages(input: &Path, output: &Path) -> Result<std::process::Output, Error> {
     #[cfg(all(feature = "typst-render", not(target_family = "wasm")))]
     if let Some(result) = worker::render(input, output, worker::Format::Svg) {

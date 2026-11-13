@@ -498,6 +498,199 @@ impl Renderer {
     }
 }
 
+/// A Typst source to render with [`preview_typst`]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PreviewSource {
+    /// Names the source in its result. A plain file stem (see [`is_preview_name`]), unique among
+    /// the sources rendered together.
+    pub name: String,
+    pub text: String,
+}
+
+/// What [`preview_typst`] made of a [`PreviewSource`]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PreviewResult {
+    pub name: String,
+    /// Whether it compiled
+    pub ok: bool,
+    /// Errors and warnings, as `typst compile` prints them
+    pub diagnostics: String,
+    /// Each page as SVG, in order. Empty if it didn't compile.
+    pub pages: Vec<String>,
+}
+
+/// Whether `name` can name a [`PreviewSource`]: letters, digits, `-` and `_`, so that it is a
+/// file name in the preview's directory and nothing else.
+pub fn is_preview_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Renders Typst sources that aren't the collection's notes to SVG pages, such as the old and new
+/// sides of edited note files for `spares vcs render-diff`.
+///
+/// Each source is written to a new directory under the current collection's render scratch
+/// directory and rendered there as a note is: in the same sandbox and with the same limits, by
+/// the collection's Typst workers if it has them, taking its turns at rendering (at most
+/// `renders_at_once` at once). So a source can import what a note can, by absolute path, and no
+/// more. The directory is removed afterwards. Nothing is cached, and the collection's notes, cards
+/// and rendered files are left alone.
+///
+/// Returns one result per source, in order. A source with an invalid or repeated name, or that
+/// doesn't compile, gets a result that isn't `ok`.
+pub fn preview_typst(sources: &[PreviewSource]) -> Vec<PreviewResult> {
+    static PREVIEWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = crate::collection::paths()
+        .render
+        .join("previews")
+        .join(format!(
+            "{}-{}",
+            std::process::id(),
+            PREVIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+    preview_typst_in(&dir, sources)
+}
+
+/// [`preview_typst`], in `dir`, which is created and then removed
+fn preview_typst_in(dir: &Path, sources: &[PreviewSource]) -> Vec<PreviewResult> {
+    let failed = |name: &str, diagnostics: String| PreviewResult {
+        name: name.to_string(),
+        diagnostics,
+        ..PreviewResult::default()
+    };
+    // Also creates the scratch directory
+    let prepared = Renderer::current().and_then(|renderer| {
+        let dir = std::path::absolute(dir).map_err(|e| Error::Io {
+            description: format!("Failed to make {} absolute", dir.display()),
+            source: e,
+        })?;
+        std::fs::create_dir_all(&dir).map_err(|e| Error::Io {
+            description: format!("Failed to create {}", dir.display()),
+            source: e,
+        })?;
+        Ok((renderer.renders_at_once(), dir))
+    });
+    let (at_once, dir) = match prepared {
+        Ok(prepared) => prepared,
+        Err(e) => {
+            return sources
+                .iter()
+                .map(|source| failed(&source.name, format!("error: {e}\n")))
+                .collect();
+        }
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut results: Vec<Option<PreviewResult>> = sources
+        .iter()
+        .map(|source| {
+            if !is_preview_name(&source.name) {
+                Some(failed(
+                    &source.name,
+                    "error: a preview's name has only letters, digits, `-` and `_`\n".to_string(),
+                ))
+            } else if !seen.insert(source.name.as_str()) {
+                Some(failed(
+                    &source.name,
+                    "error: another source has this name\n".to_string(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let todo: Mutex<Vec<usize>> = Mutex::new(
+        (0..sources.len())
+            .rev()
+            .filter(|&i| results[i].is_none())
+            .collect(),
+    );
+    let done: Mutex<Vec<(usize, PreviewResult)>> = Mutex::new(Vec::new());
+    let context = crate::collection::capture();
+    std::thread::scope(|scope| {
+        let threads = at_once.max(1).min(sources.len());
+        for _ in 0..threads {
+            scope.spawn(|| {
+                context.run(|| {
+                    // Each takes a turn at rendering, so at most `at_once` run at once
+                    while let Some(i) = crate::collection::lock(&todo).pop() {
+                        let result = preview_one(&dir, &sources[i]);
+                        crate::collection::lock(&done).push((i, result));
+                    }
+                });
+            });
+        }
+    });
+    for (i, result) in done
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    {
+        results[i] = Some(result);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    results
+        .into_iter()
+        .zip(sources)
+        .map(|(result, source)| {
+            result.unwrap_or_else(|| failed(&source.name, "error: not rendered\n".to_string()))
+        })
+        .collect()
+}
+
+/// Renders one source of [`preview_typst`] in `dir`
+fn preview_one(dir: &Path, source: &PreviewSource) -> PreviewResult {
+    let mut result = PreviewResult {
+        name: source.name.clone(),
+        ..PreviewResult::default()
+    };
+    let input = dir.join(format!("{}.typ", source.name));
+    let output = dir.join(format!("{}.svg", source.name));
+    if let Err(e) = std::fs::write(&input, &source.text) {
+        result.diagnostics = format!("error: failed to write {}: {e}\n", input.display());
+        return result;
+    }
+    let rendered = crate::parsers::impls::typst::render_svg_pages(&input, &output);
+    match rendered {
+        Ok(rendered) => {
+            let diagnostics = String::from_utf8_lossy(&rendered.stderr);
+            result.diagnostics = without_dir(&diagnostics, dir);
+            result.ok = rendered.status.success();
+        }
+        Err(e) => result.diagnostics = format!("error: {e}\n"),
+    }
+    for page in 1.. {
+        let path = crate::parsers::impls::typst::svg_page_path(&output, page);
+        match std::fs::read_to_string(&path) {
+            Ok(svg) if result.ok => result.pages.push(svg),
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+    let _ = std::fs::remove_file(&input);
+    result
+}
+
+/// `diagnostics` naming files in `dir` by their names alone, not where they were rendered. The
+/// `typst` CLI prints paths relative to its root, `/`, and workers print them from `/`; `/tmp` is
+/// `/private/tmp` on macOS, as Typst names it.
+fn without_dir(diagnostics: &str, dir: &Path) -> String {
+    let mut diagnostics = diagnostics.to_string();
+    // The longer paths first, as the others are in them
+    for dir in [dir.canonicalize().ok(), Some(dir.to_path_buf())]
+        .into_iter()
+        .flatten()
+    {
+        let relative = format!("{}/", dir.to_string_lossy().trim_start_matches('/'));
+        diagnostics = diagnostics
+            .replace(&format!("/{relative}"), "")
+            .replace(&relative, "");
+    }
+    diagnostics
+}
+
 /// Directories of the tools renders run, besides the system's, that they read: the TeX
 /// distribution's (when it is in a home directory), the user's fonts, and Typst's package cache.
 fn tool_dirs() -> Vec<PathBuf> {
@@ -650,6 +843,91 @@ mod tests {
         assert!(joined.contains("--bind /srv/spares/users/a/files /srv/spares/users/a/files"));
         assert!(joined.ends_with("--chdir /srv/spares/users/a/cards"));
         assert!(!joined.contains("--share-net"));
+    }
+
+    fn preview_dir(test: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("spares-preview-{test}-{}", std::process::id()))
+    }
+
+    fn source(name: &str, text: &str) -> PreviewSource {
+        PreviewSource {
+            name: name.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    /// Each source gets its own result, in order, with its pages as SVG, and the directory is
+    /// removed afterwards.
+    #[test]
+    fn previews_render_each_source_to_pages() {
+        let dir = preview_dir("pages");
+        let results = preview_typst_in(
+            &dir,
+            &[
+                source("two-pages", "One\n#pagebreak()\nTwo"),
+                source("broken", "#unknown-function()"),
+                source("one_page", "Only"),
+            ],
+        );
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["two-pages", "broken", "one_page"]);
+        assert!(results[0].ok, "{}", results[0].diagnostics);
+        assert_eq!(results[0].pages.len(), 2);
+        assert!(results[0].pages.iter().all(|page| page.starts_with("<svg")));
+        assert!(!results[1].ok);
+        assert_eq!(results[1].pages.len(), 0);
+        assert!(
+            results[1].diagnostics.contains("unknown variable"),
+            "{}",
+            results[1].diagnostics
+        );
+        assert!(
+            results[1].diagnostics.contains("┌─ broken.typ:1:1"),
+            "{}",
+            results[1].diagnostics
+        );
+        assert!(results[2].ok, "{}", results[2].diagnostics);
+        assert_eq!(results[2].pages.len(), 1);
+        assert!(!dir.exists());
+    }
+
+    /// Diagnostics name the file alone, whether a worker (from `/`) or the CLI (relative to `/`)
+    /// printed them.
+    #[test]
+    fn diagnostics_name_files_without_their_directory() {
+        let dir = Path::new("/no/such/previews/1");
+        for printed in [
+            "/no/such/previews/1/a-new.typ:2:1",
+            "no/such/previews/1/a-new.typ:2:1",
+        ] {
+            assert_eq!(
+                without_dir(&format!("  ┌─ {printed}\n"), dir),
+                "  ┌─ a-new.typ:2:1\n"
+            );
+        }
+    }
+
+    /// A name that isn't a plain file stem, or that another source has, isn't rendered.
+    #[test]
+    fn previews_refuse_bad_names() {
+        let dir = preview_dir("names");
+        let results = preview_typst_in(
+            &dir,
+            &[
+                source("../escape", "x"),
+                source("", "x"),
+                source("a.typ", "x"),
+                source("same", "x"),
+                source("same", "y"),
+            ],
+        );
+        let ok: Vec<bool> = results.iter().map(|r| r.ok).collect();
+        assert_eq!(ok, [false, false, false, true, false]);
+        assert!(results[0].diagnostics.contains("only letters"));
+        assert!(results[4].diagnostics.contains("another source"));
+        assert!(!dir.exists());
+        assert!(is_preview_name("abc-old_2"));
+        assert!(!is_preview_name("a/b"));
     }
 
     #[test]
