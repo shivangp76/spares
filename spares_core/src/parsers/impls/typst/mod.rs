@@ -422,6 +422,7 @@ impl Parseable for TypstParser {
         if let Some(result) = worker::render(
             &output_text_filepath,
             &to_absolute(output_rendered_filepath)?,
+            worker::Format::Pdf,
         ) {
             let (output, dependencies) = result?;
             return Ok(RenderedFile {
@@ -472,6 +473,44 @@ impl Parseable for TypstParser {
     fn renders_in_browser(&self) -> bool {
         true
     }
+}
+
+/// Compiles the Typst file `input` (an absolute path) to one SVG per page, in the current
+/// collection's sandbox and with its limits, as a note's render: `<stem>-<n>.svg` next to
+/// `output`, numbered from 1 (see [`svg_page_path`]). Returns what `typst compile` printed, and
+/// whether it succeeded as the output's status. Records no dependencies.
+#[allow(
+    dead_code,
+    reason = "previews of Typst sources use it from the next commit"
+)]
+pub(crate) fn render_svg_pages(input: &Path, output: &Path) -> Result<std::process::Output, Error> {
+    #[cfg(all(feature = "typst-render", not(target_family = "wasm")))]
+    if let Some(result) = worker::render(input, output, worker::Format::Svg) {
+        return result.map(|(output, _)| output);
+    }
+    let config = crate::render::config();
+    let mut command = Command::new("typst");
+    command.arg("compile").arg("--format").arg("svg");
+    for dir in &config.typst_font_dirs {
+        command.arg("--font-path").arg(dir);
+    }
+    if !config.typst_system_fonts {
+        command.arg("--ignore-system-fonts");
+    }
+    let stem = output.file_stem().unwrap_or_default().to_string_lossy();
+    command
+        .arg("--root")
+        .arg("/")
+        .arg(input)
+        .arg(output.with_file_name(format!("{stem}-{{p}}.svg")))
+        .current_dir("/");
+    render_command_output(&mut command, "typst")
+}
+
+/// Where [`render_svg_pages`] writes page `page` (from 1) of `output`
+pub(crate) fn svg_page_path(output: &Path, page: usize) -> PathBuf {
+    let stem = output.file_stem().unwrap_or_default().to_string_lossy();
+    output.with_file_name(format!("{stem}-{page}.svg"))
 }
 
 /// A hint as the Typst string literal `#cloze` takes. A cloze's settings are Typst markup, so a
@@ -832,5 +871,33 @@ pub mod tests {
         // Markup escapes are removed, and a `\` left is escaped
         assert_eq!(hint_string(r"5\*3"), r#""5*3""#);
         assert_eq!(hint_string(r"a\b"), r#""a\\b""#);
+    }
+
+    /// Without workers (tests don't start any), SVG renders run the `typst` CLI, which names its
+    /// pages as workers do.
+    #[test]
+    fn renders_svg_pages_with_the_typst_cli() {
+        use super::render_svg_pages;
+        use super::svg_page_path;
+        let dir = std::env::temp_dir().join(format!("spares-typst-svg-cli-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let (main, output) = (dir.join("main.typ"), dir.join("main.svg"));
+        std::fs::write(&main, "One\n#pagebreak()\nTwo").unwrap();
+        let result = render_svg_pages(&main, &output).unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(svg_page_path(&output, 1).exists());
+        assert!(svg_page_path(&output, 2).exists());
+        assert!(!svg_page_path(&output, 3).exists());
+
+        std::fs::write(&main, "#unknown-function()").unwrap();
+        let result = render_svg_pages(&main, &output).unwrap();
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("unknown variable"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

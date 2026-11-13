@@ -77,6 +77,7 @@ use typst_kit::fonts::FontStore;
 use typst_kit::packages::SystemPackages;
 use typst_layout::PagedDocument;
 
+use super::svg_page_path;
 use crate::Error;
 use crate::LibraryError;
 
@@ -94,11 +95,24 @@ struct WorkerConfig {
     cpu_seconds: u64,
 }
 
-/// Compile `input`, a Typst file, to the PDF `output`
+/// Compile `input`, a Typst file, to `output` in `format`
 #[derive(Debug, Deserialize, Serialize)]
 struct Request {
     input: PathBuf,
     output: PathBuf,
+    #[serde(default)]
+    format: Format,
+}
+
+/// What a render writes
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Format {
+    /// One PDF, `output`
+    #[default]
+    Pdf,
+    /// One SVG per page, named after `output` by [`svg_page_path`]: `<stem>-<n>.svg`
+    Svg,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -151,10 +165,14 @@ pub(crate) struct TypstWorkers {
     idle: Mutex<Vec<Worker>>,
 }
 
-/// Compiles `input` to `output` in one of the current collection's workers, returning what
-/// `typst compile` would have printed and the files it read. `None` if renders don't use workers
-/// (see the [module docs](self)), for the caller to run the `typst` CLI.
-pub(crate) fn render(input: &Path, output: &Path) -> Option<Result<(Output, Vec<PathBuf>), Error>> {
+/// Compiles `input` to `output` in `format` in one of the current collection's workers, returning
+/// what `typst compile` would have printed and the files it read. `None` if renders don't use
+/// workers (see the [module docs](self)), for the caller to run the `typst` CLI.
+pub(crate) fn render(
+    input: &Path,
+    output: &Path,
+    format: Format,
+) -> Option<Result<(Output, Vec<PathBuf>), Error>> {
     let executable = EXECUTABLE.get()?;
     let renderer = match crate::render::Renderer::current() {
         Ok(renderer) => renderer,
@@ -186,6 +204,7 @@ pub(crate) fn render(input: &Path, output: &Path) -> Option<Result<(Output, Vec<
     let request = Request {
         input: input.to_path_buf(),
         output: output.to_path_buf(),
+        format,
     };
     let result = exchange(&mut worker, &request, renderer.timeout());
     match result {
@@ -436,20 +455,30 @@ impl WorkerWorld {
         let main = FileId::new(RootedPath::new(VirtualRoot::Project, vpath));
         let file = MainFile { world: self, main };
         let Warned { output, warnings } = typst::compile::<PagedDocument>(&file);
-        let options = typst_pdf::PdfOptions {
-            // As `--no-pdf-tags`, to keep files small
-            tagged: false,
-            ..Default::default()
-        };
-        let written = output
-            .and_then(|document| typst_pdf::pdf(&document, &options))
-            .map(|pdf| std::fs::write(&request.output, pdf));
+        let written = output.and_then(|document| match request.format {
+            Format::Pdf => {
+                let options = typst_pdf::PdfOptions {
+                    // As `--no-pdf-tags`, to keep files small
+                    tagged: false,
+                    ..Default::default()
+                };
+                typst_pdf::pdf(&document, &options)
+                    .map(|pdf| std::fs::write(&request.output, pdf).map_err(|e| (e, None)))
+            }
+            Format::Svg => Ok(write_svg_pages(&document, &request.output)),
+        });
         let (ok, mut diagnostics) = match written {
             Ok(Ok(())) => (true, String::new()),
-            Ok(Err(e)) => (
-                false,
-                format!("error: failed to write {}: {e}\n", request.output.display()),
-            ),
+            Ok(Err((e, page))) => {
+                let path = page.map_or_else(
+                    || request.output.clone(),
+                    |page| svg_page_path(&request.output, page),
+                );
+                (
+                    false,
+                    format!("error: failed to write {}: {e}\n", path.display()),
+                )
+            }
             Err(errors) => (false, emit(&file, &errors)),
         };
         diagnostics.push_str(&emit(&file, &warnings));
@@ -469,6 +498,20 @@ impl WorkerWorld {
             retire: false,
         }
     }
+}
+
+/// Writes each page of `document` as an SVG (see [`svg_page_path`]). On failure, the error and the
+/// page it was writing.
+fn write_svg_pages(
+    document: &PagedDocument,
+    output: &Path,
+) -> Result<(), (std::io::Error, Option<usize>)> {
+    let options = typst_svg::SvgOptions::default();
+    for (i, page) in document.pages().iter().enumerate() {
+        let path = svg_page_path(output, i + 1);
+        std::fs::write(&path, typst_svg::svg(page, &options)).map_err(|e| (e, Some(i + 1)))?;
+    }
+    Ok(())
 }
 
 /// `diagnostics` as `typst compile` prints them, without colour
@@ -554,6 +597,7 @@ mod tests {
         let request = Request {
             input: main.clone(),
             output: output.clone(),
+            format: Format::Pdf,
         };
 
         let response = world.compile(&request);
@@ -569,6 +613,39 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// An SVG render writes one file per page, numbered from 1.
+    #[test]
+    fn compiles_each_page_to_an_svg() {
+        let dir =
+            std::env::temp_dir().join(format!("spares-typst-worker-svg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let (main, output) = (dir.join("main.typ"), dir.join("main.svg"));
+        std::fs::write(&main, "One\n#pagebreak()\nTwo").unwrap();
+        let response = world().compile(&Request {
+            input: main,
+            output: output.clone(),
+            format: Format::Svg,
+        });
+        assert!(response.ok, "{}", response.diagnostics);
+        for page in [1, 2] {
+            let svg = std::fs::read_to_string(svg_page_path(&output, page)).unwrap();
+            assert!(svg.starts_with("<svg"), "{svg}");
+        }
+        assert_eq!(svg_page_path(&output, 1), dir.join("main-1.svg"));
+        assert!(!svg_page_path(&output, 3).exists());
+        assert!(!output.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A request without a format is for a PDF, as before there were SVG renders.
+    #[test]
+    fn requests_default_to_pdf() {
+        let request: Request =
+            serde_json::from_str(r#"{"input": "/a.typ", "output": "/a.pdf"}"#).unwrap();
+        assert_eq!(request.format, Format::Pdf);
+    }
+
     /// An error is reported as `typst compile` prints it, and nothing is written.
     #[test]
     fn reports_errors() {
@@ -581,6 +658,7 @@ mod tests {
         let response = world().compile(&Request {
             input: main,
             output: output.clone(),
+            format: Format::Pdf,
         });
         assert!(!response.ok);
         assert!(
