@@ -352,6 +352,27 @@ pub(crate) enum VcsCommands {
     /// `ANKI_DB_PATH`. Only notes of Anki's `Basic` note type with a `SparesId` field are on the
     /// branch. See "Syncing notes with Anki" in the manual's Workflows page.
     Refresh { adapter: VcsAdapter },
+    /// Show changed notes as source diff, old render and new render, in the browser
+    ///
+    /// Run by jj as a diff tool, through the `jj rd` alias that `spares vcs init --jj` adds, so
+    /// it takes `jj diff`'s arguments: `jj rd`, `jj rd -r 'main..@'`, `jj rd --from X --to Y
+    /// <paths>`. jj copies the changed files of each side into the directories LEFT (old) and
+    /// RIGHT (new) and deletes them afterwards, so the page holds everything it shows. With git:
+    /// `git difftool --dir-diff -x 'spares vcs render-diff'`. The server renders the notes, so it
+    /// must be running. Notes that don't compile are shown on the page and don't fail the command.
+    #[command(hide = true)]
+    RenderDiff {
+        /// The old side's files
+        left: PathBuf,
+        /// The new side's files
+        right: PathBuf,
+        /// Where to write the page. Default: a new file in the collection's cache.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Only print the page's path
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Run by the notes repository's git hooks
     #[command(hide = true)]
     Hook {

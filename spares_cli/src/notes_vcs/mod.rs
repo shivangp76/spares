@@ -3,6 +3,7 @@
 
 mod hook;
 mod init;
+mod render_diff;
 
 use hook::run_hook;
 use init::init_vcs;
@@ -27,6 +28,15 @@ pub(crate) async fn handle(args: VcsArgs, base_url: &str, client: &Client) -> Re
         VcsCommands::Refresh {
             adapter: VcsAdapter::Anki,
         } => anki_refresh(base_url, client).await?,
+        VcsCommands::RenderDiff {
+            left,
+            right,
+            out,
+            no_open,
+        } => {
+            render_diff::render_diff_command(base_url, client, &left, &right, out, !no_open)
+                .await?;
+        }
         VcsCommands::Hook { phase, args } => {
             if !run_hook(base_url, client, phase, &args).await {
                 std::process::exit(1);

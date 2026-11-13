@@ -5024,6 +5024,7 @@ dependencies = [
 name = "spares_cli"
 version = "0.0.1-alpha.1"
 dependencies = [
+ "axum",
  "chrono",
  "clap",
  "clap_complete",
