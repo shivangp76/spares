@@ -1,0 +1,11 @@
+---
+source: spares_core/src/render_diff/source_diff.rs
+expression: html
+---
+<div class="diff" style="--digits:1ch">
+<div class="hunk">
+<div class="hunk-head">@@ -1,1 +1,1 @@</div>
+<div class="l del"><span class="n">1</span><span class="n"></span><span class="c">a <span class="em">&lt;</span> b &amp; &quot;c&quot; &#39;d&#39;</span></div>
+<div class="l add"><span class="n"></span><span class="n">1</span><span class="c">a <span class="em">&gt;</span> b &amp;<span class="em">&amp;</span> &quot;c&quot; &#39;d&#39;</span></div>
+</div>
+</div>

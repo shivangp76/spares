@@ -1,0 +1,16 @@
+---
+source: spares_core/src/render_diff/source_diff.rs
+expression: "hunks(&old, &new)"
+---
+<div class="diff" style="--digits:2ch">
+<div class="hunk">
+<div class="hunk-head">@@ -8,6 +8,6 @@</div>
+<div class="l"><span class="n">8</span><span class="n">8</span><span class="c"><span class="typ-comment">// spares: note end</span></span></div>
+<div class="l"><span class="n">9</span><span class="n">9</span><span class="c"></span></div>
+<div class="l"><span class="n">10</span><span class="n">10</span><span class="c">Linked Notes:</span></div>
+<div class="l del"><span class="n">11</span><span class="n"></span><span class="c"><span class="typ-marker">+</span> x <span class="typ-math-delim">$</span><span class="typ-escape">-&gt;</span><span class="typ-math-delim">$</span> (no match found)</span></div>
+<div class="l add"><span class="n"></span><span class="n">11</span><span class="c"><span class="typ-marker">+</span> x <span class="typ-math-delim">$</span><span class="typ-escape">-&gt;</span><span class="typ-math-delim">$</span> <span class="typ-func">#link</span><span class="typ-punct">(</span><span class="typ-str">&quot;/n/typst/xyz.typ&quot;</span><span class="typ-punct">)[</span>x<span class="typ-punct">]</span></span></div>
+<div class="l"><span class="n">12</span><span class="n">12</span><span class="c"></span></div>
+<div class="l"><span class="n">13</span><span class="n">13</span><span class="c"><span class="typ-comment">// spares: end</span></span></div>
+</div>
+</div>

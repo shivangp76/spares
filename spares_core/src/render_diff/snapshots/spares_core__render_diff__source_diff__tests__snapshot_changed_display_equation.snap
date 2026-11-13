@@ -1,0 +1,13 @@
+---
+source: spares_core/src/render_diff/source_diff.rs
+expression: "hunks(old, new)"
+---
+<div class="diff" style="--digits:1ch">
+<div class="hunk">
+<div class="hunk-head">@@ -1,3 +1,3 @@</div>
+<div class="l"><span class="n">1</span><span class="n">1</span><span class="c">Green:</span></div>
+<div class="l del"><span class="n">2</span><span class="n"></span><span class="c"><span class="typ-math-delim">$</span> <span class="typ-pol">integral</span><span class="typ-punct">.</span><span class="typ-pol">cont</span><span class="typ-math-op">_</span>C (L <span class="typ-pol">dif</span> x + M <span class="typ-pol">dif</span> y) = <span class="typ-pol">integral</span><span class="typ-punct">.</span><span class="typ-pol">double</span><span class="typ-math-op">_</span>D (M<span class="em typ-math-op">_</span>x <span class="typ-escape">-</span> L<span class="em typ-math-op">_</span>y) <span class="typ-pol">dif</span> A <span class="typ-math-delim">$</span></span></div>
+<div class="l add"><span class="n"></span><span class="n">2</span><span class="c"><span class="typ-math-delim">$</span> <span class="typ-pol">integral</span><span class="typ-punct">.</span><span class="typ-pol">cont</span><span class="typ-math-op">_</span>C (L <span class="typ-pol">dif</span> x + M <span class="typ-pol">dif</span> y) = <span class="typ-pol">integral</span><span class="typ-punct">.</span><span class="typ-pol">double</span><span class="typ-math-op">_</span>D (<span class="em typ-math-group">(</span><span class="em typ-pol">partial</span><span class="em"> </span>M<span class="em typ-math-group">)</span><span class="em typ-math-op">/</span><span class="em typ-math-group">(</span><span class="em typ-pol">partial</span><span class="em"> </span>x<span class="em typ-math-group">)</span> <span class="typ-escape">-</span> <span class="em typ-math-group">(</span><span class="em typ-pol">partial</span><span class="em"> </span>L<span class="em typ-math-group">)</span><span class="em typ-math-op">/</span><span class="em typ-math-group">(</span><span class="em typ-pol">partial</span><span class="em"> </span>y<span class="typ-math-group">)</span><span class="em">)</span> <span class="typ-pol">dif</span> A <span class="typ-math-delim">$</span></span></div>
+<div class="l"><span class="n">3</span><span class="n">3</span><span class="c">Done.</span></div>
+</div>
+</div>
