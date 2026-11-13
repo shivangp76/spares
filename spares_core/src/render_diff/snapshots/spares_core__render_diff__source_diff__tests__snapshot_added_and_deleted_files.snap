@@ -1,0 +1,19 @@
+---
+source: spares_core/src/render_diff/source_diff.rs
+expression: "format!(\"{added}\\n\\n{deleted}\")"
+---
+<div class="diff" style="--digits:1ch">
+<div class="hunk">
+<div class="hunk-head">@@ -0,0 +1,2 @@</div>
+<div class="l add"><span class="n"></span><span class="n">1</span><span class="c"><span class="typ-heading">= New</span></span></div>
+<div class="l add"><span class="n"></span><span class="n">2</span><span class="c"><span class="typ-func">#cl</span><span class="typ-punct">[</span>x<span class="typ-punct">][</span>o:1<span class="typ-punct">]</span></span></div>
+</div>
+</div>
+
+<div class="diff" style="--digits:1ch">
+<div class="hunk">
+<div class="hunk-head">@@ -1,2 +0,0 @@</div>
+<div class="l del"><span class="n">1</span><span class="n"></span><span class="c"><span class="typ-heading">= Old</span></span></div>
+<div class="l del"><span class="n">2</span><span class="n"></span><span class="c">Gone</span></div>
+</div>
+</div>

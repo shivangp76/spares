@@ -1,0 +1,17 @@
+---
+source: spares_core/src/render_diff/source_diff.rs
+expression: "hunks(NOTE, &new)"
+---
+<div class="diff" style="--digits:2ch">
+<div class="hunk">
+<div class="hunk-head">@@ -2,7 +2,7 @@</div>
+<div class="l"><span class="n">2</span><span class="n">2</span><span class="c"><span class="typ-comment">// spares: note start</span></span></div>
+<div class="l"><span class="n">3</span><span class="n">3</span><span class="c">[<span class="typ-func">#key</span><span class="typ-punct">[</span>Green&#39;s Theorem<span class="typ-punct">]</span>]</span></div>
+<div class="l"><span class="n">4</span><span class="n">4</span><span class="c"></span></div>
+<div class="l del"><span class="n">5</span><span class="n"></span><span class="c"><span class="typ-func">#cl</span><span class="typ-punct">[</span>the <span class="em">quick</span> fox<span class="typ-punct">][</span>o:1<span class="typ-punct">]</span></span></div>
+<div class="l add"><span class="n"></span><span class="n">5</span><span class="c"><span class="typ-func">#cl</span><span class="typ-punct">[</span>the <span class="em">slow</span> fox<span class="typ-punct">][</span>o:1<span class="typ-punct">]</span></span></div>
+<div class="l"><span class="n">6</span><span class="n">6</span><span class="c"></span></div>
+<div class="l"><span class="n">7</span><span class="n">7</span><span class="c">More text.</span></div>
+<div class="l"><span class="n">8</span><span class="n">8</span><span class="c"><span class="typ-comment">// spares: note end</span></span></div>
+</div>
+</div>

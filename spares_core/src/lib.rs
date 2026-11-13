@@ -9,6 +9,7 @@ pub mod notes_vcs;
 pub mod parsers;
 pub mod platform;
 pub mod render;
+pub mod render_diff;
 pub mod schedulers;
 pub mod schema;
 pub mod search;
