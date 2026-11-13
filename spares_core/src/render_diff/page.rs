@@ -142,7 +142,7 @@ pub fn page_html(info: &PageInfo, notes: &[NoteDiff]) -> String {
                 ordered.len() - links_start
             );
         }
-        push_section(&mut html, i, note);
+        push_section(&mut html, i, ordered.len(), note);
     }
     if links_start < ordered.len() {
         html.push_str("</details>\n");
@@ -164,7 +164,7 @@ fn jump_class(note: &NoteDiff) -> &'static str {
     }
 }
 
-fn push_section(html: &mut String, index: usize, note: &NoteDiff) {
+fn push_section(html: &mut String, index: usize, total: usize, note: &NoteDiff) {
     let change = &note.change;
     let mut classes = String::from("note");
     if note.fails_on_either_side() {
@@ -196,8 +196,10 @@ fn push_section(html: &mut String, index: usize, note: &NoteDiff) {
     }
     let _ = write!(
         html,
-        "<span class=\"path\">{}</span><span class=\"actions\">",
-        escape(&change.path)
+        "<span class=\"path\">{}</span><span class=\"position\">{}/{total}</span>\
+         <span class=\"actions\">",
+        escape(&change.path),
+        index + 1
     );
     if change.kind == ChangeKind::Modified {
         html.push_str("<button type=\"button\" data-action=\"full\">Full file</button>");
@@ -392,6 +394,7 @@ section.note > header { position: sticky; top: 0; z-index: 2; background: var(--
 .id { font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); text-decoration: none; }
 .title { font-weight: 600; }
 .path { color: var(--muted); font: 12px ui-monospace, Menlo, monospace; }
+.position { color: var(--muted); font: 12px ui-monospace, Menlo, monospace; }
 .actions { margin-left: auto; display: flex; gap: 6px; }
 button { font: inherit; font-size: 12px; color: var(--fg); background: var(--pane); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
 button[aria-pressed="true"] { background: var(--hunk); }
@@ -795,6 +798,9 @@ mod tests {
         assert!(html.contains("<p class=\"placeholder\">deleted</p>"));
         assert!(html.contains("Markdown notes aren't rendered"));
         assert!(html.contains("<span class=\"title\">Mod</span>"));
+        // Each section shows how far along the page it is
+        assert!(html.contains("<span class=\"position\">1/6</span>"));
+        assert!(html.contains("<span class=\"position\">6/6</span>"));
         assert!(position("<details class=\"links-only\">") < position("id=\"n5\">"));
         assert!(position("id=\"n4\">") < position("<details class=\"links-only\">"));
         // Pages are gzipped SVGs, sized by their viewBox
