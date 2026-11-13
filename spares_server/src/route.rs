@@ -70,6 +70,8 @@ use crate::handlers::note::search_page_handler;
 use crate::handlers::note::update_notes_batch_handler;
 use crate::handlers::note::update_notes_handler;
 #[cfg(not(target_family = "wasm"))]
+use crate::handlers::notes_vcs::RENDER_PREVIEW_BODY_LIMIT;
+#[cfg(not(target_family = "wasm"))]
 use crate::handlers::notes_vcs::notes_vcs_anki_finish_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::notes_vcs::notes_vcs_anki_link_handler;
@@ -87,6 +89,8 @@ use crate::handlers::notes_vcs::notes_vcs_init_handler;
 use crate::handlers::notes_vcs::notes_vcs_receive_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::notes_vcs::notes_vcs_remove_saved_copies_handler;
+#[cfg(not(target_family = "wasm"))]
+use crate::handlers::notes_vcs::notes_vcs_render_preview_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::notes_vcs::notes_vcs_status_handler;
 use crate::handlers::parser::create_parser_handler;
@@ -274,6 +278,12 @@ fn notes_vcs_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route(
             "/api/notes/vcs/saved-copies/remove",
             post(notes_vcs_remove_saved_copies_handler),
+        )
+        // Renders of edited note files (`spares vcs render-diff`)
+        .route(
+            "/api/notes/vcs/render-preview",
+            post(notes_vcs_render_preview_handler)
+                .layer(DefaultBodyLimit::max(RENDER_PREVIEW_BODY_LIMIT)),
         )
 }
 
@@ -1473,6 +1483,57 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        drop(router);
+        host.close_all().await;
+    }
+
+    /// Render previews need a login, render each source in the user's collection, and refuse
+    /// bodies over the limit.
+    #[tokio::test]
+    async fn render_previews_render_sources_for_logged_in_users() {
+        use axum::http::header::AUTHORIZATION;
+
+        let (host, _root) = crate::host::tests::test_host().await;
+        let router = create_router(Arc::new(AppState { host: host.clone() }), None);
+        let post = |uri: &str| Request::builder().method("POST").uri(uri.to_string());
+        let uri = "/api/notes/vcs/render-preview";
+        let sources = serde_json::json!({ "sources": [
+            { "name": "abc-old", "text": "Old" },
+            { "name": "abc-new", "text": "#unknown-function()" },
+            { "name": "../x", "text": "x" },
+        ]});
+        let (status, _, _) = send(&router, post(uri), Some(sources.clone())).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let mut request = serde_json::json!({ "user": "me", "password": "password1" });
+        request["name"] = "a CLI".into();
+        let (_, _, body) = send(&router, post("/api/auth/token"), Some(request)).await;
+        let token = format!("Bearer {}", body["token"].as_str().unwrap());
+        let (status, _, body) = send(
+            &router,
+            post(uri).header(AUTHORIZATION, &token),
+            Some(sources),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let response: spares_core::render::RenderPreviewResponse =
+            serde_json::from_value(body).unwrap();
+        let results = &response.results;
+        assert_eq!(results.len(), 3);
+        assert!(results[0].ok, "{}", results[0].diagnostics);
+        assert_eq!(results[0].pages.len(), 1);
+        assert!(!results[1].ok);
+        assert!(results[1].diagnostics.contains("unknown variable"));
+        assert!(!results[2].ok);
+
+        let big = "x".repeat(crate::handlers::notes_vcs::RENDER_PREVIEW_BODY_LIMIT);
+        let (status, _, _) = send(
+            &router,
+            post(uri).header(AUTHORIZATION, &token),
+            Some(serde_json::json!({ "sources": [{ "name": "big", "text": big }] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         drop(router);
         host.close_all().await;
     }

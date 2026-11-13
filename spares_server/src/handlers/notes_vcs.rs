@@ -14,6 +14,8 @@ use spares_core::notes_vcs::anki::AnkiReceiveRequest;
 use spares_core::notes_vcs::anki::AnkiReceiveResponse;
 use spares_core::notes_vcs::anki::LinkSparesIdsRequest;
 use spares_core::notes_vcs::anki::LinkSparesIdsResponse;
+use spares_core::render::RenderPreviewRequest;
+use spares_core::render::RenderPreviewResponse;
 
 use crate::Coll;
 use crate::handlers::error_to_response;
@@ -130,4 +132,21 @@ pub(crate) async fn notes_vcs_remove_saved_copies_handler(
         .await
         .map_err(error_to_response)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Largest body of a render preview request. `spares vcs render-diff` sends larger diffs in
+/// several requests.
+pub(crate) const RENDER_PREVIEW_BODY_LIMIT: usize = 8 * 1024 * 1024;
+
+/// Renders Typst sources that aren't notes to SVG pages, in the collection's sandbox, for
+/// `spares vcs render-diff` (see `spares_core::render::preview_typst`). Writes nothing in the
+/// collection.
+pub(crate) async fn notes_vcs_render_preview_handler(
+    Json(body): Json<RenderPreviewRequest>,
+) -> Json<RenderPreviewResponse> {
+    let results = spares_core::collection::run_blocking(move || {
+        spares_core::render::preview_typst(&body.sources)
+    })
+    .await;
+    Json(RenderPreviewResponse { results })
 }

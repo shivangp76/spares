@@ -519,6 +519,18 @@ pub struct PreviewResult {
     pub pages: Vec<String>,
 }
 
+/// `POST /api/notes/vcs/render-preview`: sources to render with [`preview_typst`]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RenderPreviewRequest {
+    pub sources: Vec<PreviewSource>,
+}
+
+/// The answer to a [`RenderPreviewRequest`]: one result per source, in order
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RenderPreviewResponse {
+    pub results: Vec<PreviewResult>,
+}
+
 /// Whether `name` can name a [`PreviewSource`]: letters, digits, `-` and `_`, so that it is a
 /// file name in the preview's directory and nothing else.
 pub fn is_preview_name(name: &str) -> bool {
