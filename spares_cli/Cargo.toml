@@ -49,3 +49,6 @@ default = ["typst-render"]
 # See spares_core's `typst-render`. Build with `--no-default-features` to leave Typst out: Typst
 # notes then render with the `typst` CLI.
 typst-render = ["spares_core/typst-render", "spares_server/typst-render"]
+
+[dev-dependencies]
+axum = "0.8.9"
