@@ -162,11 +162,14 @@ jj spares-pull                  # get spares' changes, rebase your work onto the
 jj new main@origin              # start a change, e.g. for an LLM to edit
 # …edit…
 jj diff                         # review
+jj rd                           # review the rendered notes
 jj abandon                      # dislike it
 jj describe -m "…" && jj spares-push   # like it: imports it into spares
 ```
 
 `jj spares-push [REV]` fetches, then refuses if spares has newer notes (run `jj spares-pull` first) or if the revision or its unpushed ancestors have conflicts. Otherwise it moves your local `main` to the revision (default `@`, or `@-` if `@` is empty and not a merge) and pushes it. `jj spares-pull [REV]` rebases the branch of `@` (or of `REV`) onto spares' latest `main`. jj itself refuses to push a stale `main`, conflicted commits, and commits without a description.
+
+`jj rd` shows changes as rendered notes. It takes `jj diff`'s arguments (`jj rd` for `@`, `jj rd -r 'main@origin..@'` for everything not pushed yet, `jj rd --from X --to Y typst/abc.typ`) and opens a page in the browser with a row per changed note: its source diff, its pages before the change and its pages after. Notes that no longer compile come first, with Typst's errors, and notes whose generated `Linked Notes:` list alone changed are folded away at the end. On the page, `j` and `k` move between notes and `e` goes to the next compile error. The server renders the notes, in its sandbox, so it must be running. Markdown notes get the source diff only. A clone set up before `jj rd` existed gets it with `spares vcs init --repair-hooks`.
 
 New files are not tracked automatically in the clone (`snapshot.auto-track = "none()"`), so an editor's backup file never ends up in a push; use `jj file track` for a new note's file or a `README.md`.
 
@@ -182,6 +185,8 @@ git diff origin/main                    # review
 git switch main && git branch -D llm-edit        # dislike it
 git commit -am "…" && git push origin HEAD:main  # like it: imports it into spares
 ```
+
+`git difftool --dir-diff -x 'spares vcs render-diff' origin/main` shows the rendered notes, as `jj rd` does.
 
 ### What a push can change
 
