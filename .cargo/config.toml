@@ -1,3 +1,9 @@
 [alias]
 # Development tasks, e.g. `cargo xtask build-wasm` (see xtask/src/main.rs)
 xtask = "run -q -p xtask --"
+
+[registry]
+# `cargo update` skips versions published less than 3 days ago, so a compromised release is
+# usually yanked before it's picked up. Override one update with
+# `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <version>`.
+global-min-publish-age = "3 days"
