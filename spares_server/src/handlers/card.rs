@@ -10,12 +10,14 @@ use spares_core::api::card::get_card_reviews;
 use spares_core::api::card::get_cards;
 use spares_core::api::card::get_leeches;
 use spares_core::api::card::list_cards;
+use spares_core::api::card::schedule_break;
 use spares_core::api::card::unbury_cards;
 use spares_core::api::card::update_cards;
 use spares_core::api::forget_card;
 use spares_core::model::NoteId;
 use spares_core::schema::FilterOptions;
 use spares_core::schema::card::GetLeechesRequest;
+use spares_core::schema::card::ScheduleBreakRequest;
 use spares_core::schema::card::UnburyRequest;
 use spares_core::schema::card::UpdateCardsRequest;
 
@@ -98,6 +100,16 @@ pub(crate) async fn forget_card_handler(
         .await
         .map_err(error_to_response)?;
     Ok(Json(forget_card_response))
+}
+
+pub(crate) async fn schedule_break_handler(
+    Coll(data): Coll,
+    Json(body): Json<ScheduleBreakRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let response = schedule_break(&data.db, body, Utc::now())
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(response))
 }
 
 pub(crate) async fn unbury_cards_handler(

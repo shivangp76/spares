@@ -3,7 +3,9 @@ use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use chrono::DateTime;
+use chrono::Days;
 use chrono::Duration;
+use chrono::NaiveDate;
 use chrono::Utc;
 use itertools::Itertools;
 use placement::PlacementContext;
@@ -48,6 +50,45 @@ pub(crate) use fsrs::review_state;
 pub struct MoveCardsResult {
     pub card_payloads: Vec<UpdateCardPayload>,
     pub message: String,
+}
+
+/// A break in reviews, for [`SrsScheduler::schedule_break`]: no reviews on the `days` days from
+/// `start`, and the cards due by its end spread over the `spread` days after it.
+#[derive(Clone, Copy, Debug)]
+pub struct BreakPlan {
+    pub start: NaiveDate,
+    pub days: u32,
+    pub spread: u32,
+}
+
+impl BreakPlan {
+    /// The first day after the break.
+    pub fn end(&self) -> NaiveDate {
+        self.start + Days::new(u64::from(self.days))
+    }
+
+    /// The days of the break, in order.
+    pub fn break_days(&self) -> Vec<NaiveDate> {
+        self.start.iter_days().take(self.days as usize).collect()
+    }
+
+    /// The days the cards are spread over, in order.
+    pub fn spread_days(&self) -> Vec<NaiveDate> {
+        self.end().iter_days().take(self.spread as usize).collect()
+    }
+}
+
+/// What [`SrsScheduler::schedule_break`] did, or would do.
+#[derive(Debug)]
+pub struct BreakOutcome {
+    /// The moves, as `UpdateCards` logs them.
+    pub card_payloads: Vec<UpdateCardPayload>,
+    /// The day of the spread with the most cards due, counting the cards that were already due
+    /// on it, and how many.
+    pub busiest_day: Option<(NaiveDate, u32)>,
+    /// The mean predicted recall of the moved cards on their old due dates, and on their new
+    /// ones. `None` if no moved card has a review to predict it from.
+    pub mean_retrievability: Option<(f64, f64)>,
 }
 
 /// See [`SrsScheduler::retrievability`]. Takes a card's stability and the days elapsed since its
@@ -312,6 +353,26 @@ pub trait SrsScheduler: Send + Sync {
         requested_date: DateTime<Utc>,
     ) -> Result<MoveCardsResult, Error>;
 
+    /// Moves every card in review that is due before `plan` ends (and is not suspended or buried)
+    /// onto the days after it, starting with the cards a delay harms most. Cards due before a
+    /// break that starts after today are left alone, as are cards in learning steps. Logs each move
+    /// as a [`ReviewLogKind::Reschedule`] row, unless `dry_run`, which only works out the moves.
+    async fn schedule_break(
+        &self,
+        _db: &SqlitePool,
+        _config: &SparesExternalConfig,
+        _plan: BreakPlan,
+        _at: DateTime<Utc>,
+        _dry_run: bool,
+    ) -> Result<BreakOutcome, Error> {
+        Err(Error::Library(LibraryError::Scheduler(
+            SchedulerErrorKind::InvalidInput(format!(
+                "the `{}` scheduler cannot schedule a break",
+                self.get_scheduler_name()
+            )),
+        )))
+    }
+
     /// Fits the scheduler's parameters to the review history, and scores them against the ones in
     /// `config`. Does not save them.
     async fn optimize(
@@ -333,7 +394,7 @@ pub trait SrsScheduler: Send + Sync {
     /// [preset](crate::config::QueuePreset), and placed with the top-level ones.
     ///
     /// Cards in `pinned` keep their due date: they were moved since their last review (see
-    /// [`pinned_card_ids`](crate::api::review::pinned_card_ids)). Their memory state is still
+    /// `pinned_card_ids` in `api::review`). Their memory state is still
     /// recomputed, and the other cards are placed around them.
     ///
     /// The other cards are placed one at a time, earliest due first, and each placement sees the

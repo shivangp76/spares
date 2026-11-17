@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use inquire::Confirm;
 use miette::Error;
 use miette::miette;
@@ -5,6 +7,8 @@ use reqwest::Client;
 use spares_core::schema::card::CardResponse;
 use spares_core::schema::card::CardsSelector;
 use spares_core::schema::card::GetLeechesRequest;
+use spares_core::schema::card::ScheduleBreakRequest;
+use spares_core::schema::card::ScheduleBreakResponse;
 use spares_core::schema::card::UnburyRequest;
 use spares_core::schema::card::UpdateCardsRequest;
 use spares_core::schema::card::UpdateCardsResponse;
@@ -17,6 +21,7 @@ use spares_core::schema::review::SubmitStudyActionRequest;
 use spares_core::search::QueryReturnItemType;
 
 use crate::args::AdvanceArgs;
+use crate::args::BreakArgs;
 use crate::args::CardArgs;
 use crate::args::CardCommands;
 use crate::args::ForgetCardArgs;
@@ -234,6 +239,9 @@ pub(crate) async fn handle(
             let _ = ensure_ok(response).await?;
             println!("Postponed {} cards.", count);
         }
+        CardCommands::Break(args) => {
+            schedule_break(args, base_url, client).await?;
+        }
         CardCommands::Reschedule(RescheduleArgs {
             scheduler_name,
             yes,
@@ -353,6 +361,100 @@ pub(crate) async fn handle(
         }
     }
     Ok(())
+}
+
+/// `spares card break`: prints what the break would do, asks for confirmation, and does it.
+async fn schedule_break(args: BreakArgs, base_url: &str, client: &Client) -> Result<(), Error> {
+    let BreakArgs {
+        from,
+        days,
+        spread,
+        scheduler_name,
+        dry_run,
+        yes,
+    } = args;
+    let url = format!("{}/api/cards/break", base_url);
+    let send = |dry_run: bool| {
+        let request = ScheduleBreakRequest {
+            scheduler_name: scheduler_name.clone(),
+            start: from,
+            days,
+            spread,
+            dry_run,
+        };
+        let url = url.clone();
+        async move {
+            let response = client
+                .post(&url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| miette!("{}", e))?;
+            ensure_ok(response)
+                .await?
+                .json::<ScheduleBreakResponse>()
+                .await
+                .map_err(|e| miette!("{}", e))
+        }
+    };
+    let preview = send(true).await?;
+    println!("{}", describe_break(&preview, true));
+    if dry_run {
+        return Ok(());
+    }
+    if !yes {
+        let prompt = format!(
+            "Move them, and add {} to {} to `easy_days.specific_dates` in config.toml?",
+            preview.start,
+            preview.end.pred_opt().unwrap_or(preview.end)
+        );
+        if !Confirm::new(&prompt)
+            .with_default(false)
+            .prompt()
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+    }
+    let done = send(false).await?;
+    // Placement draws at random, so the moves can differ a little from the preview.
+    println!("{}", describe_break(&done, false));
+    if let Some(id) = done.event_id {
+        println!("`spares event undo {id}` puts the cards back, but leaves the easy days.");
+    }
+    Ok(())
+}
+
+/// What a break did, or would do (`preview`).
+fn describe_break(response: &ScheduleBreakResponse, preview: bool) -> String {
+    let last_day = response.end.pred_opt().unwrap_or(response.end);
+    let (verb, cards) = match (preview, response.card_count) {
+        (true, 1) => ("would move", "card"),
+        (true, _) => ("would move", "cards"),
+        (false, 1) => ("moved", "card"),
+        (false, _) => ("moved", "cards"),
+    };
+    let mut out = format!(
+        "A break from {} to {} {verb} {} {cards} to the days from {}.",
+        response.start, last_day, response.card_count, response.end
+    );
+    if let Some((day, count)) = response.busiest_day
+        && count > 0
+    {
+        let _ = write!(
+            out,
+            " The busiest day after it is {day}, with {count} cards due."
+        );
+    }
+    if let Some((before, after)) = response.mean_retrievability {
+        let _ = write!(
+            out,
+            " The moved cards' mean predicted recall falls from {:.1}% to {:.1}%.",
+            before * 100.0,
+            after * 100.0
+        );
+    }
+    out
 }
 
 /// What a reschedule does with the cards moved since their last review, as a sentence after a

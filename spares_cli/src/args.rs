@@ -452,6 +452,22 @@ pub(crate) enum CardCommands {
     Advance(AdvanceArgs),
     /// Postpone cards (delay reviews)
     Postpone(PostponeArgs),
+    /// Take a break from reviews: move the cards due before it ends to the days after it
+    ///
+    /// Every card in review that is due before the break ends is moved onto the `--spread` days
+    /// after it, and so is every overdue card if the break starts today. Suspended and buried
+    /// cards, cards in learning steps, and cards due before a break that starts later are left
+    /// alone. The cards that lose the most recall by waiting get the first days. Load balancing,
+    /// easy days and sibling dispersal decide among the days as they do when rating.
+    ///
+    /// The break's days are also added to `easy_days.specific_dates` in config.toml, so cards
+    /// rated before it are kept out of it where their fuzz range allows, and rescheduling keeps
+    /// the moved cards where the break put them (see `reschedule_moved_cards`).
+    ///
+    /// It first prints how many cards it would move, the busiest day after the break, and how
+    /// much the cards' predicted recall falls, and asks for confirmation. `spares event undo` puts
+    /// the cards back, but leaves the easy days.
+    Break(BreakArgs),
     /// Recompute every card's memory state and due date from its review history (run after
     /// changing the scheduler, its parameters, learning steps or easy days)
     ///
@@ -675,6 +691,27 @@ pub(crate) struct PostponeArgs {
     pub(crate) scheduler_name: String,
     #[arg(short, long)]
     pub(crate) query: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct BreakArgs {
+    /// The first day of the break, as `2026-12-20`. Defaults to today.
+    #[arg(long)]
+    pub(crate) from: Option<chrono::NaiveDate>,
+    /// How many days the break lasts
+    #[arg(long)]
+    pub(crate) days: u32,
+    /// How many days after the break to spread the moved cards over
+    #[arg(long)]
+    pub(crate) spread: u32,
+    #[arg(short, long, default_value = get_default_scheduler_name())]
+    pub(crate) scheduler_name: String,
+    /// Only print what the break would do
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// Skip the confirmation prompt
+    #[arg(short, long)]
+    pub(crate) yes: bool,
 }
 
 // There is no `--query`: rescheduling places cards one at a time against the due dates of every

@@ -1351,6 +1351,49 @@ fn set_fsrs_parameters(file_contents: &str, parameters: &[f32]) -> Result<String
     Ok(doc.to_string())
 }
 
+/// Adds `dates` to `easy_days.specific_dates` in the config file, leaving the rest of the file,
+/// comments included, as it is. Dates already there are not repeated.
+pub(crate) fn add_specific_easy_dates(dates: &[NaiveDate]) -> Result<(), Error> {
+    let config_file_path = get_external_config_file();
+    if !is_file(&config_file_path) {
+        write_external_config(&SparesExternalConfig::default())?;
+    }
+    let file_contents = read_to_string(&config_file_path).map_err(|e| Error::Io {
+        description: format!("Failed to read {}.", config_file_path.display()),
+        source: e,
+    })?;
+    let new_contents = with_specific_easy_dates(&file_contents, dates)?;
+    write(&config_file_path, new_contents).map_err(|e| Error::Io {
+        description: "Failed to write config".to_string(),
+        source: e,
+    })?;
+    Ok(())
+}
+
+fn with_specific_easy_dates(file_contents: &str, dates: &[NaiveDate]) -> Result<String, Error> {
+    let invalid = |e: String| Error::Library(LibraryError::InvalidConfig(e));
+    let mut doc = file_contents
+        .parse::<DocumentMut>()
+        .map_err(|e| invalid(e.to_string()))?;
+    let easy_days = doc
+        .entry("easy_days")
+        .or_insert_with(toml_edit::table)
+        .as_table_like_mut()
+        .ok_or_else(|| invalid("`easy_days` is not a table".to_string()))?;
+    let specific_dates = easy_days
+        .entry("specific_dates")
+        .or_insert(toml_edit::value(toml_edit::Array::new()))
+        .as_array_mut()
+        .ok_or_else(|| invalid("`easy_days.specific_dates` is not an array".to_string()))?;
+    for date in dates {
+        let date = date.to_string();
+        if !specific_dates.iter().any(|d| d.as_str() == Some(&date)) {
+            specific_dates.push(date);
+        }
+    }
+    Ok(doc.to_string())
+}
+
 // The `toml_edit` package was used in place of `confy` since `confy` does not support default values when serializing. For example, if a user had an existing config file and then `spares` was changed to add a new config key, deserialization would fail since a key was missing and not defaulted.
 pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
     let config_file_path = get_external_config_file();
@@ -1760,6 +1803,39 @@ mod tests {
         assert_eq!(config.queue.new_review_mix, NewReviewMix::Interleaved);
         assert_eq!(config.queue.interleave_by, InterleaveBy::TopLevelTag);
         assert_eq!(config.queue.learn_ahead_limit, Duration::minutes(20));
+    }
+
+    #[test]
+    fn specific_easy_dates_are_added_keeping_the_rest() {
+        let dates = [
+            NaiveDate::from_ymd_opt(2026, 12, 25).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 12, 26).unwrap(),
+        ];
+        let written = with_specific_easy_dates(
+            indoc::indoc! {r#"
+                # my settings
+                load_balance = true
+
+                [easy_days]
+                # holidays
+                specific_dates = ["2026-12-25"]
+
+                [leech]
+                lapses_threshold = 8
+            "#},
+            &dates,
+        )
+        .unwrap();
+        assert!(written.contains("# my settings"), "{written}");
+        assert!(written.contains("# holidays"), "{written}");
+        let config = parse(&written);
+        assert_eq!(config.easy_days.specific_dates, dates.into());
+        assert_eq!(config.leech.lapses_threshold, 8);
+        assert_eq!(written.matches("2026-12-25").count(), 1, "{written}");
+
+        // Without an [easy_days] table
+        let written = with_specific_easy_dates("load_balance = true\n", &dates).unwrap();
+        assert_eq!(parse(&written).easy_days.specific_dates, dates.into());
     }
 
     /// A typical scheduling setup.

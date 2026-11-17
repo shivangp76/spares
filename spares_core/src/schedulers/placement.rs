@@ -186,6 +186,11 @@ impl PlacementContext {
         }
     }
 
+    /// How many cards are due on `day`, overdue ones counting towards today.
+    pub(crate) fn due_count(&self, day: NaiveDate) -> u32 {
+        self.due_counts.get(&day).copied().unwrap_or(0)
+    }
+
     fn sibling_days(&self, card: &Card) -> Vec<NaiveDate> {
         self.cards
             .iter()

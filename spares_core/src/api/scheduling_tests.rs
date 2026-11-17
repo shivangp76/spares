@@ -9,6 +9,7 @@ use sqlx::SqlitePool;
 
 use crate::api::card::get_cards;
 use crate::api::card::get_leeches;
+use crate::api::card::move_cards_past_break;
 use crate::api::card::update_cards;
 use crate::api::note::create_notes;
 use crate::api::parser::tests::create_parser_helper;
@@ -27,6 +28,7 @@ use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::parsers::get_all_parsers;
+use crate::schedulers::BreakPlan;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schedulers::optimal_interval_days;
 use crate::schema::card::CardsSelector;
@@ -701,4 +703,248 @@ async fn undoing_a_due_date_set_by_hand_deletes_its_row(pool: SqlitePool) {
 
     assert_eq!(fetch_card(&pool, card_id).await.due, before);
     assert_eq!(reschedule_rows(&pool, card_id).await.len(), 0);
+}
+
+async fn set_raw_due(pool: &SqlitePool, card_id: CardId, due: DateTime<Utc>) {
+    sqlx::query(r"UPDATE card SET due = ? WHERE id = ?")
+        .bind(due.timestamp())
+        .bind(card_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+fn break_config() -> SparesExternalConfig {
+    let mut config = read_external_config().unwrap();
+    config.load_balance = true;
+    config.disperse_siblings = true;
+    config.easy_days.specific_dates.clear();
+    config
+}
+
+/// A break of 5 days from today, spread over the 4 days after it.
+fn break_from_today(config: &SparesExternalConfig, now: DateTime<Utc>) -> BreakPlan {
+    BreakPlan {
+        start: config.zone().date(now),
+        days: 5,
+        spread: 4,
+    }
+}
+
+async fn take_break(
+    pool: &SqlitePool,
+    config: &SparesExternalConfig,
+    plan: BreakPlan,
+    now: DateTime<Utc>,
+) -> Option<i64> {
+    let scheduler = get_scheduler_from_string("fsrs").unwrap();
+    move_cards_past_break(pool, scheduler.as_ref(), config, plan, now, false)
+        .await
+        .unwrap()
+        .1
+}
+
+/// `count` cards in review, one per note, each due on a day of the break or overdue, and the
+/// cards of `extra` other new notes, one each.
+async fn cards_due_in_break(
+    pool: &SqlitePool,
+    count: usize,
+    extra: usize,
+    now: DateTime<Utc>,
+) -> (Vec<CardId>, Vec<CardId>) {
+    let notes = (0..count + extra)
+        .map(|i| format!("note {i} {{{{ answer {i} }}}}"))
+        .collect::<Vec<_>>();
+    let notes = notes.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut created = create_cards(pool, &notes)
+        .await
+        .into_iter()
+        .map(|cards| cards[0])
+        .collect::<Vec<_>>();
+    let extras = created.split_off(count);
+    let mut card_ids = Vec::new();
+    for (i, card_id) in (0_i64..).zip(created) {
+        graduate(pool, card_id, now, &[10, 9, 5]).await;
+        // From two days overdue to the break's fourth day
+        set_raw_due(pool, card_id, now + Duration::days(i % 6 - 2)).await;
+        card_ids.push(card_id);
+    }
+    (card_ids, extras)
+}
+
+#[sqlx::test]
+async fn a_break_moves_the_cards_due_in_it_onto_the_days_after_it(pool: SqlitePool) {
+    let now = Utc::now();
+    let config = break_config();
+    let plan = break_from_today(&config, now);
+    let (moved, others) = cards_due_in_break(&pool, 20, 3, now).await;
+    let (after_break, suspended, learning) = (others[0], others[1], others[2]);
+    graduate(&pool, after_break, now, &[10, 9, 5]).await;
+    set_raw_due(&pool, after_break, now + Duration::days(12)).await;
+    graduate(&pool, suspended, now, &[10, 9, 5]).await;
+    set_raw_due(&pool, suspended, now + Duration::days(1)).await;
+    sqlx::query(r"UPDATE card SET special_state = ? WHERE id = ?")
+        .bind(SpecialState::Suspended)
+        .bind(suspended)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rate(&pool, learning, GOOD, now).await;
+    let untouched = [after_break, suspended, learning];
+    let mut before = Vec::new();
+    for card_id in untouched {
+        before.push(fetch_card(&pool, card_id).await.due);
+    }
+
+    take_break(&pool, &config, plan, now).await.unwrap();
+
+    let spread_days = plan.spread_days();
+    let mut days = std::collections::HashMap::new();
+    for card_id in &moved {
+        let day = config.zone().date(fetch_card(&pool, *card_id).await.due);
+        assert!(spread_days.contains(&day), "card {card_id} is due on {day}");
+        *days.entry(day).or_insert(0) += 1;
+        let rows = reschedule_rows(&pool, *card_id).await;
+        assert_eq!(
+            rows.last().unwrap().reschedule_data().unwrap().origin,
+            RescheduleOrigin::Break
+        );
+    }
+    for (card_id, due) in untouched.into_iter().zip(before) {
+        assert_eq!(fetch_card(&pool, card_id).await.due, due, "card {card_id}");
+    }
+    // Load balancing spreads them rather than piling them onto the first day.
+    assert_eq!(days.len(), spread_days.len(), "{days:?}");
+    assert!(days.values().all(|count| *count <= 8), "{days:?}");
+}
+
+#[sqlx::test]
+async fn a_break_that_starts_later_leaves_the_cards_due_before_it(pool: SqlitePool) {
+    let now = Utc::now();
+    let config = break_config();
+    let today = config.zone().date(now);
+    let plan = BreakPlan {
+        start: today + chrono::Days::new(3),
+        days: 4,
+        spread: 3,
+    };
+    let cards = cards_due_in_break(&pool, 6, 0, now).await.0;
+    let mut before = Vec::new();
+    for card_id in &cards {
+        before.push(fetch_card(&pool, *card_id).await);
+    }
+
+    take_break(&pool, &config, plan, now).await;
+
+    for card in before {
+        let due = fetch_card(&pool, card.id).await.due;
+        if config.zone().date(card.due) < plan.start {
+            assert_eq!(due, card.due, "card {} was due before the break", card.id);
+        } else {
+            let day = config.zone().date(due);
+            assert!(
+                plan.spread_days().contains(&day),
+                "card {} on {day}",
+                card.id
+            );
+        }
+    }
+}
+
+#[sqlx::test]
+async fn a_break_keeps_siblings_apart(pool: SqlitePool) {
+    let now = Utc::now();
+    let config = break_config();
+    let siblings = create_cards(&pool, &["a {{ b }} c {{ d }} e {{ f }}"]).await[0].clone();
+    for card_id in &siblings {
+        graduate(&pool, *card_id, now, &[10, 9, 5]).await;
+        set_raw_due(&pool, *card_id, now + Duration::days(2)).await;
+    }
+
+    take_break(&pool, &config, break_from_today(&config, now), now).await;
+
+    let mut cards = Vec::new();
+    for card_id in &siblings {
+        cards.push(fetch_card(&pool, *card_id).await);
+    }
+    assert_eq!(distinct_local_days(&cards), 3, "{cards:#?}");
+}
+
+#[sqlx::test]
+async fn a_dry_run_break_moves_nothing(pool: SqlitePool) {
+    let now = Utc::now();
+    let config = break_config();
+    let cards = cards_due_in_break(&pool, 6, 0, now).await.0;
+    let mut before = Vec::new();
+    for card_id in &cards {
+        before.push(fetch_card(&pool, *card_id).await.due);
+    }
+    let scheduler = get_scheduler_from_string("fsrs").unwrap();
+
+    let (outcome, event_id) = move_cards_past_break(
+        &pool,
+        scheduler.as_ref(),
+        &config,
+        break_from_today(&config, now),
+        now,
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.card_payloads.len(), cards.len());
+    let (recall_before, recall_after) = outcome.mean_retrievability.unwrap();
+    assert!(recall_after < recall_before, "waiting lowers recall");
+    assert_eq!(event_id, None);
+    for (card_id, due) in cards.into_iter().zip(before) {
+        assert_eq!(fetch_card(&pool, card_id).await.due, due);
+        assert_eq!(reschedule_rows(&pool, card_id).await.len(), 0);
+    }
+}
+
+#[sqlx::test]
+async fn undoing_a_break_puts_every_card_back(pool: SqlitePool) {
+    let now = Utc::now();
+    let config = break_config();
+    let cards = cards_due_in_break(&pool, 10, 0, now).await.0;
+    let mut before = Vec::new();
+    for card_id in &cards {
+        before.push(fetch_card(&pool, *card_id).await.due);
+    }
+    let event_id = take_break(&pool, &config, break_from_today(&config, now), now)
+        .await
+        .unwrap();
+
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: Some(event_id),
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    for (card_id, due) in cards.into_iter().zip(before) {
+        assert_eq!(fetch_card(&pool, card_id).await.due, due);
+        assert_eq!(reschedule_rows(&pool, card_id).await.len(), 0);
+    }
+}
+
+#[sqlx::test]
+async fn reschedule_keeps_cards_where_a_break_put_them(pool: SqlitePool) {
+    let now = Utc::now();
+    let config = break_config();
+    let cards = cards_due_in_break(&pool, 6, 0, now).await.0;
+    take_break(&pool, &config, break_from_today(&config, now), now).await;
+    let mut after_break = Vec::new();
+    for card_id in &cards {
+        after_break.push(fetch_card(&pool, *card_id).await.due);
+    }
+
+    reschedule_with(&pool, &config, now).await;
+
+    for (card_id, due) in cards.into_iter().zip(after_break) {
+        assert_eq!(fetch_card(&pool, card_id).await.due, due);
+    }
 }

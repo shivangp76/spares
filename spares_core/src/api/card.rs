@@ -23,6 +23,8 @@ use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
+use crate::config::SparesExternalConfig;
+use crate::config::add_specific_easy_dates;
 use crate::config::read_external_config;
 use crate::ids::IdTable;
 use crate::ids::next_id_in;
@@ -37,6 +39,9 @@ use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::TagId;
+use crate::schedulers::BreakOutcome;
+use crate::schedulers::BreakPlan;
+use crate::schedulers::SrsScheduler;
 use crate::schedulers::get_default_scheduler_name;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schedulers::lapse_sql;
@@ -46,6 +51,8 @@ use crate::schema::card::CardReviewEntry;
 use crate::schema::card::CardsSelector;
 use crate::schema::card::ForgetCardResponse;
 use crate::schema::card::GetLeechesRequest;
+use crate::schema::card::ScheduleBreakRequest;
+use crate::schema::card::ScheduleBreakResponse;
 use crate::schema::card::SpecialStateUpdate;
 use crate::schema::card::UpdateCardsRequest;
 use crate::schema::card::UpdateCardsResponse;
@@ -243,7 +250,7 @@ async fn log_due_set_by_hand(
 ///
 /// A new due date for a card that is not new is logged as a [`ReviewLogKind::Reschedule`] row of
 /// origin [`RescheduleOrigin::Manual`], so that rescheduling keeps it until the card's next review
-/// (see [`cards_kept_by_reschedule`]). With `log`, the change is then a
+/// (see `cards_kept_by_reschedule`). With `log`, the change is then a
 /// [`EventType::SetCardsDue`] event, whose undo deletes those rows.
 #[expect(clippy::too_many_lines)]
 pub async fn update_cards(
@@ -441,6 +448,67 @@ pub async fn update_card_event(
         .await?;
     }
     Ok(())
+}
+
+/// Schedules a break in reviews (see [`SrsScheduler::schedule_break`]), logged as an
+/// [`EventType::ScheduleBreak`] event. The break's days are added to
+/// `easy_days.specific_dates` in `config.toml`, so that cards rated before it are kept out of it
+/// where their fuzz range allows. Undoing the event puts the cards back, but leaves those dates.
+pub async fn schedule_break(
+    db: &SqlitePool,
+    request: ScheduleBreakRequest,
+    at: DateTime<Utc>,
+) -> Result<ScheduleBreakResponse, Error> {
+    let scheduler = get_scheduler_from_string(&request.scheduler_name)?;
+    let config = read_external_config()?;
+    let plan = BreakPlan {
+        start: request.start.unwrap_or_else(|| config.zone().date(at)),
+        days: request.days,
+        spread: request.spread,
+    };
+    let (outcome, event_id) =
+        move_cards_past_break(db, scheduler.as_ref(), &config, plan, at, request.dry_run).await?;
+    if !request.dry_run {
+        add_specific_easy_dates(&plan.break_days())?;
+    }
+    Ok(ScheduleBreakResponse {
+        start: plan.start,
+        end: plan.end(),
+        card_count: outcome.card_payloads.len(),
+        busiest_day: outcome.busiest_day,
+        mean_retrievability: outcome.mean_retrievability,
+        event_id,
+    })
+}
+
+/// The cards' part of [`schedule_break`], without the change to `config.toml`: moves the cards
+/// and logs the event, returning its id (none with `dry_run`, or if no card moved).
+pub(crate) async fn move_cards_past_break(
+    db: &SqlitePool,
+    scheduler: &dyn SrsScheduler,
+    config: &SparesExternalConfig,
+    plan: BreakPlan,
+    at: DateTime<Utc>,
+    dry_run: bool,
+) -> Result<(BreakOutcome, Option<i64>), Error> {
+    let outcome = scheduler
+        .schedule_break(db, config, plan, at, dry_run)
+        .await?;
+    if dry_run || outcome.card_payloads.is_empty() {
+        return Ok((outcome, None));
+    }
+    let event_ids = insert_events(
+        db,
+        &[(
+            EventType::ScheduleBreak,
+            to_value(&outcome.card_payloads).unwrap(),
+        )],
+        at,
+        None,
+    )
+    .await?;
+    let event_id = event_ids.first().copied();
+    Ok((outcome, event_id))
 }
 
 pub async fn get_leeches(

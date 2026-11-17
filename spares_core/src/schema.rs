@@ -666,6 +666,7 @@ pub mod note {
 
 pub mod card {
     use chrono::DateTime;
+    use chrono::NaiveDate;
     use chrono::Utc;
     use serde::Deserialize;
     use serde::Serialize;
@@ -710,6 +711,48 @@ pub mod card {
         Suspended,
         Buried,
         BuriedUntilLaterToday,
+    }
+
+    /// `POST /api/cards/break`: a break in reviews from `start` for `days` days, after which the
+    /// cards due by its end are spread over `spread` days. See
+    /// [`SrsScheduler::schedule_break`](crate::schedulers::SrsScheduler::schedule_break).
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct ScheduleBreakRequest {
+        #[serde(default = "default_scheduler_name")]
+        pub scheduler_name: String,
+        /// The first day of the break. Today if unset, in the zone of
+        /// [`time_zone`](crate::config::SparesExternalConfig::time_zone).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub start: Option<NaiveDate>,
+        pub days: u32,
+        pub spread: u32,
+        /// Only work out what the break would do, without moving any card or changing
+        /// `config.toml`.
+        #[serde(default)]
+        pub dry_run: bool,
+    }
+
+    fn default_scheduler_name() -> String {
+        crate::schedulers::get_default_scheduler_name().to_string()
+    }
+
+    /// What `POST /api/cards/break` did, or would do with `dry_run`.
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct ScheduleBreakResponse {
+        /// The first day of the break.
+        pub start: NaiveDate,
+        /// The first day after the break, the first the cards are spread over.
+        pub end: NaiveDate,
+        /// How many cards were moved past the break.
+        pub card_count: usize,
+        /// The day after the break with the most cards due, and how many.
+        pub busiest_day: Option<(NaiveDate, u32)>,
+        /// The mean predicted recall of the moved cards on their old due dates, and on their new
+        /// ones.
+        pub mean_retrievability: Option<(f64, f64)>,
+        /// The event that logs the moves, whose undo puts the cards back. `None` with `dry_run`,
+        /// or if no card was moved.
+        pub event_id: Option<i64>,
     }
 
     #[derive(Debug, Deserialize, Serialize)]

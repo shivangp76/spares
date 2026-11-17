@@ -28,6 +28,8 @@ use crate::handlers::card::get_card_reviews_handler;
 use crate::handlers::card::get_cards_handler;
 use crate::handlers::card::get_leeches_handler;
 use crate::handlers::card::list_cards_handler;
+#[cfg(not(target_family = "wasm"))]
+use crate::handlers::card::schedule_break_handler;
 use crate::handlers::card::unbury_cards_handler;
 use crate::handlers::card::update_cards_handler;
 use crate::handlers::health_check_handler;
@@ -128,6 +130,7 @@ use crate::handlers::scheduler::list_schedulers_handler;
 use crate::handlers::scheduler::optimize_scheduler_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::scheduler::reschedule_preview_handler;
+#[cfg(not(target_family = "wasm"))]
 use crate::handlers::scheduler::reschedule_scheduler_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::MEDIA_BODY_LIMIT;
@@ -369,8 +372,9 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             "/api/notes/live/relocate-cards",
             post(relocate_live_cards_handler),
         )
-        // Both use the scheduler settings in the collection's `config.toml`, which optimizing
-        // writes, so a browser's copy sends them to the server and syncs the cards they changed.
+        // These use the scheduler settings in the collection's `config.toml`, which optimizing and
+        // scheduling a break write, so a browser's copy sends them to the server and syncs the
+        // cards they changed.
         .route(
             "/api/scheduler/{name}/optimize",
             post(optimize_scheduler_handler),
@@ -379,6 +383,8 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             "/api/scheduler/{name}/reschedule",
             get(reschedule_preview_handler).post(reschedule_scheduler_handler),
         )
+        // Adds the break's days to the easy days in `config.toml`.
+        .route("/api/cards/break", post(schedule_break_handler))
         .merge(media_routes())
         .merge(notes_vcs_routes())
         .merge(sync_routes())
@@ -648,6 +654,7 @@ pub fn create_local_router(collection: Arc<spares_core::collection::Collection>)
             "/api/scheduler/{name}/reschedule",
             get(needs_server).post(needs_server),
         )
+        .route("/api/cards/break", post(needs_server))
         .fallback(not_on_device)
         // Also when a route has the path for another method: `POST /api/notes/live` matches
         // `GET /api/notes/{id}`.

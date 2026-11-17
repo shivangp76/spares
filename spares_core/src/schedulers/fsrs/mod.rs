@@ -1,17 +1,33 @@
 //! The FSRS scheduler, backed by the `fsrs` crate with its default (FSRS-6) parameters.
 //!
 //! ## `fsrs4anki-helper` features
-//! - Reschedule: Supported. Reschedules every card from its full review history. `Reschedule
-//!   recent` is not supported.
+//! - Reschedule: Supported. Reschedules every card from its full review history, keeping the
+//!   due dates set by hand, postponed, advanced or moved by a break since the card's last review,
+//!   like the helper without `reschedule_set_due_date` (see
+//!   [`reschedule_moved_cards`](crate::config::SparesExternalConfig::reschedule_moved_cards)).
+//!   `Reschedule recent` is not supported: placement needs every card's due date to balance
+//!   against, and the helper needed it for reviews synced from apps without FSRS, which cannot
+//!   happen here since the server schedules every review. Auto-reschedule and disperse after sync
+//!   are left out for the same reason.
 //! - Postpone and Advance: Supported, see the `reposition` module.
+//! - Schedule a break: Supported, see `reposition::schedule_break` and `spares card break`. The
+//!   break's days also become easy days, so cards rated before it are kept out of it.
 //! - Load balance, easy days and disperse siblings: Supported, as one step that runs whenever a
 //!   card in review is rated or rescheduled. See [`crate::schedulers::placement`].
-//! - Flatten: Unsupported. See <https://github.com/open-spaced-repetition/fsrs4anki-helper/issues/439#issuecomment-2268740000> for reasoning. Load balancing is close enough to this feature.
-//! - Remedy hard misuse: Unsupported.
+//! - Flatten: Unsupported. See <https://github.com/open-spaced-repetition/fsrs4anki-helper/issues/439#issuecomment-2268740000> for reasoning. Load balancing is close enough to this feature,
+//!   and a break or postpone covers the cases where a cap is wanted.
+//! - Remedy hard misuse: Unsupported. Rewriting Hard to Again in the review log changes history
+//!   that sync, undo and the optimizer treat as fixed. If it is ever wanted, it belongs in the
+//!   optimizer's training set (the `optimize` module), not in the log.
+//! - Reset custom data and manual reschedule entries: Unsupported, as Anki revlog housekeeping with
+//!   no counterpart here.
 //! - FSRS stats: Supported. Daily load and the average retrievability and stability of the cards
 //!   in review are among the statistics' distributions
 //!   ([`Distributions`](crate::schema::statistics::Distributions)).
 //! - Steps stats: Supported, see the `steps_stats` module and `spares card steps`.
+//! - Not yet: D, S and R under the answer buttons (card info has them), a target retrievability
+//!   column (search and sort by retrievability exist), exporting the review log in the research
+//!   dataset format, and the interval visualiser.
 mod optimize;
 mod reposition;
 mod steps;
@@ -62,6 +78,8 @@ use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 #[cfg(test)]
 use crate::model::StateId;
+use crate::schedulers::BreakOutcome;
+use crate::schedulers::BreakPlan;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::RetrievabilityFn;
 use crate::schedulers::RetrievabilityKey;
@@ -493,6 +511,17 @@ impl SrsScheduler for Fsrs {
             config,
         )
         .await
+    }
+
+    async fn schedule_break(
+        &self,
+        db: &SqlitePool,
+        config: &SparesExternalConfig,
+        plan: BreakPlan,
+        at: DateTime<Utc>,
+        dry_run: bool,
+    ) -> Result<BreakOutcome, Error> {
+        reposition::schedule_break(db, config, plan, at, dry_run).await
     }
 
     async fn optimize(
