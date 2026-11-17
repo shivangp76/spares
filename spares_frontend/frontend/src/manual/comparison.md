@@ -15,7 +15,7 @@ These are the issues in Anki that spares was built to address, and how it does.
 
 ### Architecture and Design
 - Every spares card is a cloze card; front/back cards are a special case.
-- Anki's tags belong to notes. Spares can also tag single cards, and tags the cards you keep burying (see [Tags](concepts.md#tags)).
+- Anki's tags belong to notes. Spares can also tag single cards: with `spares card edit --tags-to-add`, on the web app's Cards page, or, for text clozes, in the note file (`tag:`, `rtag:`), where they are kept in git or jj with the rest of the note. Searching `tag=<name>` finds the cards that have the tag and the cards of notes that have it, and cards you keep burying are tagged `buried` (see [Tags](concepts.md#tags)).
 - Spares has no decks. Notes are grouped by tags, and `[queue.presets.<name>]` tables give the cards of tagged notes their own limits and steps, as deck presets do in Anki (see [Scheduling](concepts.md#scheduling)).
 - Each parser's templates are files in `<config dir>/<parser>/templates/` (see `spares parser template --help`), so changing one updates every note, and LaTeX and Typst templates can be shared with your other documents.
 
@@ -40,5 +40,5 @@ These are the issues in Anki that spares was built to address, and how it does.
 ## Current Limitations of spares
 
 - Spares is in alpha, so expect breaking changes.
-- Cards cannot be flagged on their own. Flagging tags the whole note (`flagged_tag_name` on `spares_core::config::SparesExternalConfig`), though a card can be given a tag of its own (see [Tags](concepts.md#tags)).
+- Flagging while reviewing tags the whole note (`flagged_tag_name` on `spares_core::config::SparesExternalConfig`), not the card, and there are no colored flags. To mark one card, give it a tag of its own instead, such as `spares card edit --tags-to-add flagged --ids <id>` (see [Tags](concepts.md#tags)).
 - There are no add-ons, and no site for finding shared decks. Notes can still be shared as files: export them to share from the Notes page of the web app, or with `spares note export --share` (`--zip` for one file), and import them in another collection with **Import** on its Notes page or `spares import`. Their images, audio and image occlusions go with them, and **Import** also adds the parsers the collection doesn't have (see [Sharing notes](workflows.md#sharing-notes)). Anki decks can be imported with `spares migrate`.
