@@ -406,6 +406,9 @@ pub struct QueueConfig {
     /// to begin with; this handles the ones that are anyway, such as after a backlog. Learning
     /// and relearning siblings are never buried, since that would break their steps.
     pub bury_review_siblings: bool,
+    /// Tagging the cards you keep burying instead of rating them. On by default: a card buried on
+    /// 2 days since it was last rated gets the tag `buried`. See [`TagBuriedConfig`].
+    pub tag_buried: TagBuriedConfig,
     /// Whether a new card waits until the older notes its note links to are learned. Defaults to
     /// `false`.
     ///
@@ -542,10 +545,52 @@ impl Default for QueueConfig {
             auto_advance: None,
             bury_new_siblings: false,
             bury_review_siblings: false,
+            tag_buried: TagBuriedConfig::default(),
             new_after_linked_notes: false,
             reviews_after_linked_notes: false,
             linked_note_max_score: 1.5,
             presets: IndexMap::new(),
+        }
+    }
+}
+
+/// The `[queue.tag_buried]` table of `config.toml`: tagging the cards you keep burying.
+///
+/// Burying a card puts it off to the next day. A card you bury on day after day, rather than
+/// rating it, is usually one to rewrite, split or drop, like a leech. Once a card has been buried
+/// on [`Self::days`] days since it was last rated, it gets [`Self::tag`] as a tag of its own,
+/// rather than its note (see [`crate::api::card_tags`]), so `tag=buried` lists them, and its note's
+/// file shows it on the card's cloze (`tag:buried`).
+///
+/// The days need not follow each other, and burying a card again the same day doesn't count. Only
+/// burying a card yourself counts (Bury Card and Bury Note in review, and `spares card edit
+/// --special-state buried`), not the siblings [`QueueConfig::bury_new_siblings`] buries, nor
+/// burying a card until later in the day. Rating the card starts its count again, but leaves the
+/// tag, which stays until you take it, e.g. with `spares card edit --tags-to-remove buried`.
+/// Undoing the bury undoes the tag too.
+///
+/// ```toml
+/// [queue.tag_buried]
+/// days = 3
+/// tag = "putting-off"
+/// ```
+///
+/// See [`crate::api::buried_tag`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TagBuriedConfig {
+    /// The days a card is buried on, since it was last rated, before it is tagged. Defaults to 2.
+    /// `0` turns tagging buried cards off.
+    pub days: u32,
+    /// The tag given to such cards. Defaults to `"buried"`.
+    pub tag: String,
+}
+
+impl Default for TagBuriedConfig {
+    fn default() -> Self {
+        Self {
+            days: 2,
+            tag: "buried".to_string(),
         }
     }
 }

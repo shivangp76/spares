@@ -11,6 +11,8 @@ use sqlx::sqlite::SqlitePool;
 use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::api::MAX_ROWS_IN_QUERY;
+use crate::api::buried_tag::count_bury;
+use crate::api::buried_tag::tag_buried_cards;
 use crate::api::card_tags;
 use crate::api::execute_batched_query;
 use crate::api::fetch_review_logs;
@@ -291,6 +293,8 @@ pub async fn update_cards(
     });
     let mut config = None;
     let mut set_due = false;
+    // Cards buried on enough days to be tagged (see `crate::api::buried_tag`)
+    let mut buried_card_ids: Vec<CardId> = Vec::new();
     for card_id in card_ids {
         let existing_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
             .bind(card_id)
@@ -305,6 +309,22 @@ pub async fn update_cards(
         let new_due = body.due.unwrap_or(existing_card.due);
         if let Some(Some(SpecialState::UserBuried)) = requested_special_state {
             validate_bury_target(existing_card.special_state)?;
+            if config.is_none() {
+                config = Some(read_external_config()?);
+            }
+            let config = config.as_ref().expect("read above");
+            let mut custom_data = existing_card.custom_data.clone();
+            if count_bury(&mut custom_data, at, config) {
+                buried_card_ids.push(card_id);
+            }
+            if custom_data != existing_card.custom_data {
+                sqlx::query(r"UPDATE card SET custom_data = ? WHERE id = ?")
+                    .bind(&custom_data)
+                    .bind(card_id)
+                    .execute(db)
+                    .await
+                    .map_err(|e| Error::Sqlx { source: e })?;
+            }
         }
         let updated_at: i64 =
         sqlx::query_scalar(r"UPDATE card SET desired_retention = ?, special_state = ?, due = ?, updated_at = ? WHERE id = ? RETURNING updated_at")
@@ -403,6 +423,12 @@ pub async fn update_cards(
         event_id
     };
     notes_vcs::reconcile_after(db, tagged_note_ids, "tag cards").await;
+    let event_id = match &config {
+        Some(config) if !buried_card_ids.is_empty() => {
+            tag_buried_cards(db, &buried_card_ids, config, at, log, event_id).await?
+        }
+        _ => event_id,
+    };
     Ok(UpdateCardsResponse {
         cards: card_responses,
         event_id,

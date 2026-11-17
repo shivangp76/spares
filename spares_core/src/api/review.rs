@@ -26,6 +26,9 @@ use crate::TagErrorKind;
 use crate::api::browser_render::add_browser_render_sources;
 use crate::api::browser_render::add_device_sources;
 use crate::api::browser_render::load_review_card;
+use crate::api::buried_tag::count_bury;
+use crate::api::buried_tag::reset_bury_count;
+use crate::api::buried_tag::tag_buried_cards;
 use crate::api::card::build_update_card_payload;
 use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
@@ -1654,6 +1657,9 @@ pub(crate) async fn rate_card_with_config(
         None => None,
     };
 
+    // Rating the card is what its buries since are counted until
+    reset_bury_count(&mut updated_card.custom_data);
+
     // Add entry to review_log
     let lapses_before = scheduler.lapses(db, card_id).await?;
     let review_log_id = insert_review(db, &new_review_log, tag_id).await?;
@@ -1805,6 +1811,8 @@ async fn rate_card_without_rescheduling(
         recall_duration,
         reviewed_at,
     )?;
+    // A cram is a rating too, which its buries since are counted until
+    reset_bury_count(&mut updated_card.custom_data);
     // Clears any burial, as rating a card always does
     sqlx::query(
         r"UPDATE card SET special_state = NULL, updated_at = ?, custom_data = ? WHERE id = ?",
@@ -2074,17 +2082,21 @@ pub async fn bury_card(
 
     validate_bury_target(before_card.special_state)?;
 
-    let buried_card = scheduler.bury(&before_card)?;
+    let mut buried_card = scheduler.bury(&before_card)?;
+    let config = read_external_config().unwrap_or_default();
+    let tag_as_buried = buried_card.special_state == Some(SpecialState::UserBuried)
+        && count_bury(&mut buried_card.custom_data, at, &config);
 
     // Update card with all new properties from buried_card
     let _update_card_result = sqlx::query(
-        r"UPDATE card SET due = ?, stability = ?, difficulty = ?, special_state = ?, state = ?, updated_at = ? WHERE id = ?",
+        r"UPDATE card SET due = ?, stability = ?, difficulty = ?, special_state = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
     )
     .bind(buried_card.due.timestamp())
     .bind(buried_card.stability)
     .bind(buried_card.difficulty)
     .bind(buried_card.special_state)
     .bind(buried_card.state)
+    .bind(&buried_card.custom_data)
     .bind(at.timestamp())
     .bind(card_id)
     .execute(db)
@@ -2120,7 +2132,12 @@ pub async fn bury_card(
                 before: before_card.state,
                 after: buried_card.state,
             }),
-            custom_data: None,
+            custom_data: (buried_card.custom_data != before_card.custom_data).then_some(
+                Transition {
+                    before: before_card.custom_data,
+                    after: buried_card.custom_data,
+                },
+            ),
         }];
         let event_ids = insert_events(
             db,
@@ -2129,7 +2146,23 @@ pub async fn bury_card(
             None,
         )
         .await?;
-        return Ok(Some(*event_ids.first().unwrap()));
+        let event_id = *event_ids.first().unwrap();
+        if tag_as_buried {
+            // Boxed, as tagging makes a large future for every caller to carry
+            return Box::pin(tag_buried_cards(
+                db,
+                &[card_id],
+                &config,
+                at,
+                true,
+                Some(event_id),
+            ))
+            .await;
+        }
+        return Ok(Some(event_id));
+    }
+    if tag_as_buried {
+        Box::pin(tag_buried_cards(db, &[card_id], &config, at, false, None)).await?;
     }
     Ok(None)
 }

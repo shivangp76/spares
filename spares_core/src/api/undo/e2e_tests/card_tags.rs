@@ -234,3 +234,126 @@ async fn a_request_that_only_tags_logs_no_card_update(pool: SqlitePool) {
         ]
     );
 }
+
+async fn bury(pool: &SqlitePool, card_id: CardId, at: chrono::DateTime<Utc>) {
+    crate::api::review::submit_study_action(
+        pool,
+        crate::schema::review::SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: crate::schema::review::StudyAction::Bury { card_id },
+        },
+        at,
+    )
+    .await
+    .unwrap();
+    // As the next day of study does
+    crate::api::card::unbury_cards(pool, None, at, false)
+        .await
+        .unwrap();
+}
+
+async fn bury_note(pool: &SqlitePool, card_id: CardId, at: chrono::DateTime<Utc>) {
+    update_cards(
+        pool,
+        UpdateCardsRequest {
+            selector: CardsSelector::Ids(vec![card_id]),
+            desired_retention: None,
+            special_state: Some(Some(SpecialStateUpdate::Buried)),
+            due: None,
+            tags: UpdateTags::None,
+        },
+        at,
+        true,
+    )
+    .await
+    .unwrap();
+    crate::api::card::unbury_cards(pool, None, at, false)
+        .await
+        .unwrap();
+}
+
+/// Days of study apart, whatever the zone: two days apart at the same time of day are always two
+/// days of study apart
+fn day(n: i64) -> chrono::DateTime<Utc> {
+    Utc::now() - chrono::Duration::days(10 - n)
+}
+
+#[sqlx::test]
+async fn a_card_buried_on_two_days_is_tagged_and_undo_takes_it_back(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+    bury(&pool, card_id, day(1)).await;
+    // Again the same day is not a second day
+    bury(&pool, card_id, day(1) + chrono::Duration::minutes(1)).await;
+    assert_eq!(tags_of(&pool, card_id).await, Vec::<String>::new());
+
+    // Days in between without burying it still count
+    bury(&pool, card_id, day(3)).await;
+    assert_eq!(tags_of(&pool, card_id).await, ["buried"]);
+
+    // The bury and the tag are undone together
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: None,
+            undo_group: true,
+        },
+    )
+    .await
+    .unwrap();
+    // Undo skips the unbury, which is not logged, and reverses the last bury
+    assert_eq!(tags_of(&pool, card_id).await, Vec::<String>::new());
+    assert!(!tag_exists(&pool, "buried").await);
+    let custom_data: serde_json::Value =
+        sqlx::query_scalar(r"SELECT custom_data FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(custom_data["bury_streak"]["days"], 1);
+}
+
+#[sqlx::test]
+async fn rating_a_card_starts_its_count_again(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+    bury(&pool, card_id, day(1)).await;
+    crate::api::review::submit_study_action(
+        &pool,
+        crate::schema::review::SubmitStudyActionRequest {
+            scheduler_name: "fsrs".to_string(),
+            action: crate::schema::review::StudyAction::Rate(
+                crate::schema::review::RatingSubmission {
+                    card_id,
+                    rating: 3,
+                    recall_duration: chrono::Duration::seconds(5),
+                    rate_duration: chrono::Duration::seconds(2),
+                    tag_id: None,
+                },
+            ),
+        },
+        day(2),
+    )
+    .await
+    .unwrap();
+    bury(&pool, card_id, day(3)).await;
+    assert_eq!(tags_of(&pool, card_id).await, Vec::<String>::new());
+    bury(&pool, card_id, day(4)).await;
+    assert_eq!(tags_of(&pool, card_id).await, ["buried"]);
+}
+
+#[sqlx::test]
+async fn burying_a_note_counts_too(pool: SqlitePool) {
+    let card_id = create_card_helper(&pool).await;
+    bury_note(&pool, card_id, day(1)).await;
+    bury_note(&pool, card_id, day(2)).await;
+    assert_eq!(tags_of(&pool, card_id).await, ["buried"]);
+    // One undo takes the bury and the tag
+    undo_group(&pool).await;
+    assert_eq!(tags_of(&pool, card_id).await, Vec::<String>::new());
+    let special_state: Option<SpecialState> =
+        sqlx::query_scalar(r"SELECT special_state FROM card WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(special_state, None);
+}

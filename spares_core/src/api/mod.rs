@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod browser_render;
+pub mod buried_tag;
 pub mod card;
 pub mod card_tags;
 pub mod image;
