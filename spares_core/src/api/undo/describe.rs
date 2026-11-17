@@ -172,9 +172,13 @@ async fn describe(
         EventType::UnforgetCard => "Unforget card".to_string(),
         EventType::UnadvanceCards => "Unadvance cards".to_string(),
         EventType::UnpostponeCards => "Unpostpone cards".to_string(),
+        EventType::UnsetCardsDue => "Unset due date of cards".to_string(),
+        EventType::UnscheduleBreak => "Unschedule break".to_string(),
         EventType::UpdateCards
         | EventType::AdvanceCards
         | EventType::PostponeCards
+        | EventType::SetCardsDue
+        | EventType::ScheduleBreak
         | EventType::BuryCards
         | EventType::UnburyCards
         | EventType::DailyUnbury
@@ -184,6 +188,8 @@ async fn describe(
             let verb = match kind {
                 EventType::AdvanceCards => "Advance",
                 EventType::PostponeCards => "Postpone",
+                EventType::SetCardsDue => "Set due date of",
+                EventType::ScheduleBreak => "Break: move",
                 EventType::BuryCards => "Bury",
                 EventType::UnburyCards => "Unbury",
                 EventType::DailyUnbury => "Daily unbury of",

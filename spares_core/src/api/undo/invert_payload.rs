@@ -57,6 +57,10 @@ pub async fn create_undo_event(
         EventType::UnadvanceCards => EventType::AdvanceCards,
         EventType::PostponeCards => EventType::UnpostponeCards,
         EventType::UnpostponeCards => EventType::PostponeCards,
+        EventType::SetCardsDue => EventType::UnsetCardsDue,
+        EventType::UnsetCardsDue => EventType::SetCardsDue,
+        EventType::ScheduleBreak => EventType::UnscheduleBreak,
+        EventType::UnscheduleBreak => EventType::ScheduleBreak,
         EventType::UpdateCards
         | EventType::BuryCards
         | EventType::UnburyCards
@@ -135,7 +139,8 @@ async fn restore_review_log(db: &SqlitePool, review_log: &ReviewLog) -> Result<i
     .map_err(|e| Error::Sqlx { source: e })
 }
 
-/// Deletes the [`ReviewLogKind::Reschedule`] rows an `AdvanceCards` or `PostponeCards` event wrote
+/// Deletes the [`ReviewLogKind::Reschedule`] rows a move (`AdvanceCards`, `PostponeCards`,
+/// `SetCardsDue` or `ScheduleBreak`) wrote
 /// for `moves`, returning them so a redo can restore them. Each is the latest row of a moved card
 /// that moved it from where `moves` did to where it did. A move from before moves were logged has
 /// none.
@@ -394,7 +399,10 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             };
             Ok(serde_json::to_value(redo_payload).unwrap())
         }
-        EventType::AdvanceCards | EventType::PostponeCards => {
+        EventType::AdvanceCards
+        | EventType::PostponeCards
+        | EventType::SetCardsDue
+        | EventType::ScheduleBreak => {
             let payloads: Vec<UpdateCardPayload> =
                 serde_json::from_value(event.payload.clone()).unwrap();
             let review_logs = take_reschedule_logs(db, &payloads).await?;
@@ -404,7 +412,10 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             };
             Ok(serde_json::to_value(undo_payload).unwrap())
         }
-        EventType::UnadvanceCards | EventType::UnpostponeCards => {
+        EventType::UnadvanceCards
+        | EventType::UnpostponeCards
+        | EventType::UnsetCardsDue
+        | EventType::UnscheduleBreak => {
             let payload: UnmoveCardsPayload =
                 serde_json::from_value(event.payload.clone()).unwrap();
             for review_log in &payload.review_logs {

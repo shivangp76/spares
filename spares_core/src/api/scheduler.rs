@@ -3,6 +3,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 
 use crate::Error;
+use crate::api::review::pinned_card_ids;
 use crate::api::review::reschedule_all_cards;
 use crate::config::read_external_config;
 use crate::config::write_fsrs_parameters;
@@ -11,6 +12,7 @@ use crate::schema::review::CardState;
 use crate::schema::review::OptimizeRequest;
 use crate::schema::review::OptimizeResponse;
 use crate::schema::review::Rating;
+use crate::schema::review::ReschedulePreviewResponse;
 use crate::schema::review::RescheduleResponse;
 
 pub fn get_scheduler_ratings(scheduler_name: &str) -> Result<Vec<Rating>, Error> {
@@ -31,7 +33,9 @@ pub fn resolve_rating_from_score(scheduler_name: &str, score: f64) -> Result<Rat
 }
 
 /// Recomputes every card's memory state and due date from its review history. Run after changing
-/// the scheduler, its parameters, learning steps or easy days.
+/// the scheduler, its parameters, learning steps or easy days. Cards moved since their last
+/// review keep their due date, unless
+/// [`reschedule_moved_cards`](crate::config::SparesExternalConfig::reschedule_moved_cards) is set.
 // There is deliberately no query to reschedule only some cards. Cards are placed one at a time
 // against the due dates already given to the others (load balancing, easy days, sibling
 // dispersal), so rescheduling a subset would leave the load spread across days unbalanced. The
@@ -45,6 +49,21 @@ pub async fn reschedule_scheduler(
     let config = read_external_config()?;
     let event_id = reschedule_all_cards(db, scheduler.as_ref(), &config, at).await?;
     Ok(RescheduleResponse { event_id })
+}
+
+/// What [`reschedule_scheduler`] would do with the cards moved since their last review, for the
+/// confirmation before it.
+pub async fn reschedule_preview(
+    db: &SqlitePool,
+    scheduler_name: &str,
+) -> Result<ReschedulePreviewResponse, Error> {
+    // Checks the name, as the reschedule would.
+    get_scheduler_from_string(scheduler_name)?;
+    let config = read_external_config()?;
+    Ok(ReschedulePreviewResponse {
+        moved_count: pinned_card_ids(db, None).await?.len(),
+        moved_cards_kept: !config.reschedule_moved_cards,
+    })
 }
 
 /// Fits the scheduler's parameters to the review history. With `apply`, saves them if they

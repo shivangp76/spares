@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use async_trait::async_trait;
@@ -331,14 +332,19 @@ pub trait SrsScheduler: Send + Sync {
     /// Each card is replayed with its own settings from `configs`, which hold the steps of its
     /// [preset](crate::config::QueuePreset), and placed with the top-level ones.
     ///
-    /// Cards are placed one at a time, earliest due first, and each placement sees the due
-    /// dates already given to the cards before it. That is what spreads the workload and keeps
-    /// siblings apart, so the result depends on the order.
+    /// Cards in `pinned` keep their due date: they were moved since their last review (see
+    /// [`pinned_card_ids`](crate::api::review::pinned_card_ids)). Their memory state is still
+    /// recomputed, and the other cards are placed around them.
+    ///
+    /// The other cards are placed one at a time, earliest due first, and each placement sees the
+    /// due dates already given to the cards before it. That is what spreads the workload and
+    /// keeps siblings apart, so the result depends on the order.
     async fn reschedule(
         &self,
         db: &SqlitePool,
         configs: &CardConfigs<'_>,
         mut cards_with_review_logs: Vec<(Card, Vec<ReviewLog>)>,
+        pinned: &HashSet<CardId>,
         at: DateTime<Utc>,
     ) -> Result<(), Error> {
         // A card with no log at all has nothing to replay, and `compute_memory_state` asserts a
@@ -348,7 +354,7 @@ pub trait SrsScheduler: Send + Sync {
         // Recompute the memory state. The replay also yields the due date the scheduler itself
         // would assign after the latest review, which is the base that placement adjusts. Using
         // the stored `due` instead would keep whatever the card had before, which is exactly what
-        // a reschedule is meant to replace.
+        // a reschedule is meant to replace, except for a pinned card.
         cards_with_review_logs.iter_mut().try_for_each(
             |(card, review_logs)| -> Result<(), Error> {
                 let new_card = self.compute_memory_state(
@@ -359,20 +365,26 @@ pub trait SrsScheduler: Send + Sync {
                 card.stability = new_card.stability;
                 card.difficulty = new_card.difficulty;
                 card.state = new_card.state;
-                card.due = new_card.due;
+                if !pinned.contains(&card.id) {
+                    card.due = new_card.due;
+                }
                 card.updated_at = at;
                 Ok(())
             },
         )?;
-        cards_with_review_logs.sort_by_key(|(card, _)| (card.due, card.id));
+        // Pinned cards first, so that every placement already counts them on their days.
+        cards_with_review_logs
+            .sort_by_key(|(card, _)| (!pinned.contains(&card.id), card.due, card.id));
 
         let mut context = PlacementContext::load_all(db, at, configs.base().zone()).await?;
         // `ThreadRng` is not `Send`, and this future is held across awaits.
         let mut rng = StdRng::from_rng(&mut rand::rng());
         for (card, review_logs) in &mut cards_with_review_logs {
-            let candidates = self.due_candidates(configs.get(card.id), card, review_logs, at);
-            if !candidates.is_empty() {
-                card.due = context.place(configs.base(), card, &candidates, &mut rng);
+            if !pinned.contains(&card.id) {
+                let candidates = self.due_candidates(configs.get(card.id), card, review_logs, at);
+                if !candidates.is_empty() {
+                    card.due = context.place(configs.base(), card, &candidates, &mut rng);
+                }
             }
             context.update(card);
 

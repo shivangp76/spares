@@ -997,6 +997,16 @@ pub struct SparesExternalConfig {
     /// Avoid scheduling cards of the same note on the same or nearby days, so that reviewing one
     /// does not give away the answer to another.
     pub disperse_siblings: bool,
+    /// Let `spares card reschedule` (and `spares card optimize --apply`, or a change to a card's
+    /// desired retention) move cards whose due date was moved since their last review: set by
+    /// hand, postponed, advanced or moved past a break by `spares card break`. Off by default, so
+    /// those cards keep the due date they were given until they are next reviewed. Their memory
+    /// state is still recomputed, and the other cards are placed around them.
+    ///
+    /// For example, after setting a card due on the day of an exam, rescheduling for new FSRS
+    /// parameters leaves it there. With `reschedule_moved_cards = true`, it is given the due date
+    /// its review history calls for, like every other card.
+    pub reschedule_moved_cards: bool,
     pub easy_days: EasyDaysConfig,
     /// The order review shows cards in. See [`QueueConfig`].
     pub queue: QueueConfig,
@@ -1045,6 +1055,7 @@ impl Default for SparesExternalConfig {
             fsrs_optimizer_ignore_reviews_before: None,
             load_balance: true,
             disperse_siblings: true,
+            reschedule_moved_cards: false,
             easy_days: EasyDaysConfig::default(),
             queue: QueueConfig::default(),
             leech: LeechConfig::default(),

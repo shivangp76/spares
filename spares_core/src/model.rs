@@ -192,17 +192,21 @@ pub enum ReviewLogKind {
     /// today as studied, while `spares card reschedule` gives every card the same due date and
     /// memory state as before.
     Cram = 16,
-    /// The card's due date was moved without a review, by `spares card postpone` or
-    /// `spares card advance`. Not to be confused with `spares card reschedule`, which recomputes
-    /// due dates from the replayed history and logs nothing. The card's memory state was left as
-    /// it was, so replay skips the row; the next review's elapsed time is still measured from the
-    /// last real review.
+    /// The card's due date was moved without a review: set by hand, or by `spares card postpone`,
+    /// `spares card advance` or `spares card break` ([`RescheduleOrigin`]). Not to be confused
+    /// with `spares card reschedule`, which recomputes due dates from the replayed history and
+    /// logs nothing. The card's memory state was left as it was, so replay skips the row; the
+    /// next review's elapsed time is still measured from the last real review.
     ///
     /// The rating, `scheduled_time` and duration columns are `NULL`, `previous_state` is the
-    /// card's state at the time, and `custom_data` holds the due dates before and after, as
-    /// [`RescheduleData`]. Statistics, the daily limits, lapses, the optimizer and `c.rated`
-    /// leave these rows out. `c.postponed` finds the ones that moved a card later, and a card's
-    /// info shows them.
+    /// card's state at the time, and `custom_data` holds the due dates before and after and what
+    /// moved the card, as [`RescheduleData`]. Statistics, the daily limits, lapses, the optimizer
+    /// and `c.rated` leave these rows out. `c.postponed` finds the ones that moved a card later,
+    /// and a card's info shows them.
+    ///
+    /// Until the card's next review, such a row also keeps `spares card reschedule` from moving
+    /// the card (see
+    /// [`reschedule_moved_cards`](crate::config::SparesExternalConfig::reschedule_moved_cards)).
     ///
     /// For example, `spares card postpone 50` on a holiday writes 50 of these rows, so that
     /// `c.postponed[today] tag=exam` finds the exam cards among them. Undoing the postponement
@@ -211,13 +215,57 @@ pub enum ReviewLogKind {
 }
 
 /// What a [`ReviewLogKind::Reschedule`] row keeps in its `custom_data`: the card's due date
-/// before and after it was moved.
+/// before and after it was moved, and what moved it.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(from = "StoredRescheduleData")]
 pub struct RescheduleData {
     #[serde(with = "ts_seconds")]
     pub previous_due: DateTime<Utc>,
     #[serde(with = "ts_seconds")]
     pub due: DateTime<Utc>,
+    pub origin: RescheduleOrigin,
+}
+
+/// What moved a card's due date without a review.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RescheduleOrigin {
+    /// Given a due date by hand, with "Set Card Due Date" in review or `spares card edit --due`.
+    Manual,
+    /// `spares card postpone`.
+    Postpone,
+    /// `spares card advance`.
+    Advance,
+    /// `spares card break`, which moves the cards due during a break to the days after it.
+    Break,
+}
+
+/// [`RescheduleData`] as stored. Rows written before moves recorded their origin have none, and
+/// were all postponements or advances, which the direction of the move tells apart.
+#[derive(Deserialize)]
+struct StoredRescheduleData {
+    #[serde(with = "ts_seconds")]
+    previous_due: DateTime<Utc>,
+    #[serde(with = "ts_seconds")]
+    due: DateTime<Utc>,
+    origin: Option<RescheduleOrigin>,
+}
+
+impl From<StoredRescheduleData> for RescheduleData {
+    fn from(stored: StoredRescheduleData) -> Self {
+        let origin = stored
+            .origin
+            .unwrap_or(if stored.due >= stored.previous_due {
+                RescheduleOrigin::Postpone
+            } else {
+                RescheduleOrigin::Advance
+            });
+        Self {
+            previous_due: stored.previous_due,
+            due: stored.due,
+            origin,
+        }
+    }
 }
 
 impl ReviewLogKind {
@@ -432,6 +480,18 @@ pub enum EventType {
     /// Cards moved between the live notes of a sync group when their clozes moved. Carries
     /// `RelocateCardsPayload`, and is its own undo, like `UpdateNotes`.
     RelocateCards,
+    /// An `UpdateCards` that gave cards a due date by hand, which is logged as
+    /// [`ReviewLogKind::Reschedule`] rows like `PostponeCards`. Shares payload schema with
+    /// `UpdateCards`, and may change the cards' other fields too.
+    SetCardsDue,
+    /// The undo of a `SetCardsDue`. Carries `UnmoveCardsPayload`, like `UnadvanceCards`.
+    UnsetCardsDue,
+    /// The cards `spares card break` moved past a break, logged as [`ReviewLogKind::Reschedule`]
+    /// rows like `PostponeCards`. Shares payload schema with `UpdateCards`. Undoing it restores
+    /// the cards, not the break's easy days in `config.toml`.
+    ScheduleBreak,
+    /// The undo of a `ScheduleBreak`. Carries `UnmoveCardsPayload`, like `UnadvanceCards`.
+    UnscheduleBreak,
 }
 
 impl EventType {
@@ -725,5 +785,33 @@ mod tests {
         assert!(super::ReviewLogKind::Forget.is_replayed());
         assert!(!super::ReviewLogKind::Cram.is_replayed());
         assert!(!super::ReviewLogKind::Reschedule.is_replayed());
+    }
+
+    #[test]
+    fn reschedule_data_without_an_origin_is_told_by_its_direction() {
+        use super::RescheduleData;
+        use super::RescheduleOrigin;
+        let read = |value| {
+            serde_json::from_value::<RescheduleData>(value)
+                .unwrap()
+                .origin
+        };
+        assert_eq!(
+            read(serde_json::json!({"previous_due": 100, "due": 200})),
+            RescheduleOrigin::Postpone
+        );
+        assert_eq!(
+            read(serde_json::json!({"previous_due": 200, "due": 100})),
+            RescheduleOrigin::Advance
+        );
+        let manual = RescheduleData {
+            previous_due: chrono::DateTime::from_timestamp(200, 0).unwrap(),
+            due: chrono::DateTime::from_timestamp(100, 0).unwrap(),
+            origin: RescheduleOrigin::Manual,
+        };
+        assert_eq!(
+            read(serde_json::to_value(manual).unwrap()),
+            RescheduleOrigin::Manual
+        );
     }
 }

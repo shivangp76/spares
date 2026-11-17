@@ -695,6 +695,8 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
         EventType::UpdateCards
         | EventType::AdvanceCards
         | EventType::PostponeCards
+        | EventType::SetCardsDue
+        | EventType::ScheduleBreak
         | EventType::BuryCards
         | EventType::UnburyCards
         | EventType::DailyUnbury
@@ -703,7 +705,10 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
                 serde_json::from_value(event.payload.clone()).unwrap();
             update_card_event(db, payloads, false).await?;
         }
-        EventType::UnadvanceCards | EventType::UnpostponeCards => {
+        EventType::UnadvanceCards
+        | EventType::UnpostponeCards
+        | EventType::UnsetCardsDue
+        | EventType::UnscheduleBreak => {
             let payload: UnmoveCardsPayload =
                 serde_json::from_value(event.payload.clone()).unwrap();
             update_card_event(db, payload.cards, false).await?;

@@ -10,6 +10,7 @@ use spares_core::schema::card::UpdateCardsRequest;
 use spares_core::schema::card::UpdateCardsResponse;
 use spares_core::schema::review::OptimizeRequest;
 use spares_core::schema::review::OptimizeResponse;
+use spares_core::schema::review::ReschedulePreviewResponse;
 use spares_core::schema::review::RescheduleResponse;
 use spares_core::schema::review::StudyAction;
 use spares_core::schema::review::SubmitStudyActionRequest;
@@ -237,14 +238,27 @@ pub(crate) async fn handle(
             scheduler_name,
             yes,
         }) => {
+            let url = format!("{}/api/scheduler/{}/reschedule", base_url, scheduler_name);
             if !yes {
-                let prompt = "This recomputes the memory state and due date of every card, including suspended and buried ones. Are you sure you want to continue?";
-                let ans = Confirm::new(prompt).with_default(false).prompt();
+                let response = client
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let preview: ReschedulePreviewResponse = ensure_ok(response)
+                    .await?
+                    .json()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let prompt = format!(
+                    "This recomputes the memory state and due date of every card, including suspended and buried ones.{} Are you sure you want to continue?",
+                    moved_cards_note(&preview)
+                );
+                let ans = Confirm::new(&prompt).with_default(false).prompt();
                 if !ans.unwrap_or(false) {
                     return Ok(());
                 }
             }
-            let url = format!("{}/api/scheduler/{}/reschedule", base_url, scheduler_name);
             let rescheduled: RescheduleResponse = with_spinner("Rescheduling cards", async {
                 let response = client
                     .post(&url)
@@ -339,6 +353,25 @@ pub(crate) async fn handle(
         }
     }
     Ok(())
+}
+
+/// What a reschedule does with the cards moved since their last review, as a sentence after a
+/// space, or nothing if there are none.
+fn moved_cards_note(preview: &ReschedulePreviewResponse) -> String {
+    let count = preview.moved_count;
+    if count == 0 {
+        return String::new();
+    }
+    let cards = if count == 1 { "card was" } else { "cards were" };
+    if preview.moved_cards_kept {
+        format!(
+            " {count} {cards} moved since their last review (a due date set by hand, a postponement, an advance or a break) and keep their due date; `reschedule_moved_cards = true` in config.toml moves them too."
+        )
+    } else {
+        format!(
+            " {count} {cards} moved since their last review, and are moved again, since `reschedule_moved_cards` is set."
+        )
+    }
 }
 
 /// Says that every card was rescheduled, and how to undo it.

@@ -3745,6 +3745,11 @@ mod tests {
             let data = crate::model::RescheduleData {
                 previous_due: chrono::DateTime::from_timestamp(moved_at, 0).unwrap(),
                 due: chrono::DateTime::from_timestamp(moved_at + days_moved * day, 0).unwrap(),
+                origin: if days_moved > 0 {
+                    crate::model::RescheduleOrigin::Postpone
+                } else {
+                    crate::model::RescheduleOrigin::Advance
+                },
             };
             sqlx::query(
                 "INSERT INTO review_log (card_id, reviewed_at, kind, scheduler_name, previous_state, custom_data) VALUES (?, ?, ?, 'fsrs', 2, ?)",

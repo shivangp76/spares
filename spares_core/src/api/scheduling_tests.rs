@@ -9,22 +9,29 @@ use sqlx::SqlitePool;
 
 use crate::api::card::get_cards;
 use crate::api::card::get_leeches;
+use crate::api::card::update_cards;
 use crate::api::note::create_notes;
 use crate::api::parser::tests::create_parser_helper;
+use crate::api::review::reschedule_all_cards;
 use crate::api::review::submit_study_action;
 use crate::api::scheduler::reschedule_scheduler;
 use crate::api::undo::undo_event;
+use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::helpers::FractionalDays;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::EventType;
+use crate::model::RescheduleOrigin;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::parsers::get_all_parsers;
+use crate::schedulers::get_scheduler_from_string;
 use crate::schedulers::optimal_interval_days;
+use crate::schema::card::CardsSelector;
 use crate::schema::card::GetLeechesRequest;
+use crate::schema::card::UpdateCardsRequest;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
 use crate::schema::review::RatingSubmission;
@@ -464,4 +471,234 @@ async fn rating_walks_the_learning_steps(pool: SqlitePool) {
     at += steps[1];
     rate(&pool, card_id, GOOD, at).await;
     assert_eq!(fetch_card(&pool, card_id).await.state, REVIEW);
+}
+
+/// `at` without its fraction of a second, as the database stores it.
+fn whole_seconds(at: DateTime<Utc>) -> DateTime<Utc> {
+    DateTime::from_timestamp(at.timestamp(), 0).unwrap()
+}
+
+/// Gives `card_id` a due date by hand, as "Set Card Due Date" does, and returns the event.
+async fn set_due(pool: &SqlitePool, card_id: CardId, due: DateTime<Utc>, at: DateTime<Utc>) -> i64 {
+    update_cards(
+        pool,
+        UpdateCardsRequest {
+            selector: CardsSelector::Ids(vec![card_id]),
+            desired_retention: None,
+            special_state: None,
+            due: Some(due),
+        },
+        at,
+        true,
+    )
+    .await
+    .unwrap()
+    .event_id
+    .unwrap()
+}
+
+async fn reschedule_with(pool: &SqlitePool, config: &SparesExternalConfig, at: DateTime<Utc>) {
+    let scheduler = get_scheduler_from_string("fsrs").unwrap();
+    reschedule_all_cards(pool, scheduler.as_ref(), config, at)
+        .await
+        .unwrap();
+}
+
+async fn reschedule_rows(pool: &SqlitePool, card_id: CardId) -> Vec<ReviewLog> {
+    sqlx::query_as(r"SELECT * FROM review_log WHERE card_id = ? AND kind = ? ORDER BY id")
+        .bind(card_id)
+        .bind(ReviewLogKind::Reschedule)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// Sets a bogus stability, so a test can tell that rescheduling recomputed it.
+async fn spoil_stability(pool: &SqlitePool, card_id: CardId) {
+    sqlx::query(r"UPDATE card SET stability = 1000 WHERE id = ?")
+        .bind(card_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test]
+async fn reschedule_keeps_a_due_date_set_by_hand(pool: SqlitePool) {
+    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
+    let now = Utc::now();
+    graduate(&pool, card_id, now, &[10, 9, 5]).await;
+    let stability = fetch_card(&pool, card_id).await.stability;
+    let exam = whole_seconds(now + Duration::days(40));
+    set_due(&pool, card_id, exam, now).await;
+    let rows = reschedule_rows(&pool, card_id).await;
+    assert_eq!(rows.len(), 1, "the move is logged");
+    assert_eq!(
+        rows[0].reschedule_data().unwrap().origin,
+        RescheduleOrigin::Manual
+    );
+    spoil_stability(&pool, card_id).await;
+
+    reschedule_with(&pool, &read_external_config().unwrap(), now).await;
+
+    let card = fetch_card(&pool, card_id).await;
+    assert_eq!(card.due, exam, "the due date set by hand is kept");
+    assert!(
+        (card.stability - stability).abs() < 1e-6,
+        "the memory state is still recomputed: {} != {stability}",
+        card.stability
+    );
+}
+
+#[sqlx::test]
+async fn reschedule_keeps_a_postponed_card(pool: SqlitePool) {
+    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
+    let now = Utc::now();
+    graduate(&pool, card_id, now, &[10, 9, 5]).await;
+    // Postpone moves cards due today.
+    let before = whole_seconds(now);
+    sqlx::query(r"UPDATE card SET due = ? WHERE id = ?")
+        .bind(before.timestamp())
+        .bind(card_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    study(
+        &pool,
+        StudyAction::Postpone {
+            count: 1,
+            query: None,
+        },
+        now,
+    )
+    .await;
+    let postponed = fetch_card(&pool, card_id).await;
+    assert_ne!(postponed.due, before, "precondition: postponed");
+    spoil_stability(&pool, card_id).await;
+
+    reschedule_with(&pool, &read_external_config().unwrap(), now).await;
+
+    let card = fetch_card(&pool, card_id).await;
+    assert_eq!(card.due, postponed.due);
+    assert!(card.stability < 1000.0, "the memory state is recomputed");
+}
+
+#[sqlx::test]
+async fn a_review_after_a_move_lets_reschedule_move_the_card(pool: SqlitePool) {
+    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
+    let now = Utc::now();
+    graduate(&pool, card_id, now, &[10, 9]).await;
+    set_due(
+        &pool,
+        card_id,
+        whole_seconds(now - Duration::days(5)),
+        now - Duration::days(6),
+    )
+    .await;
+    rate(&pool, card_id, GOOD, now - Duration::days(5)).await;
+    sqlx::query(r"UPDATE card SET due = ? WHERE id = ?")
+        .bind((now + Duration::days(3650)).timestamp())
+        .bind(card_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    reschedule_with(&pool, &read_external_config().unwrap(), now).await;
+
+    assert_due_near_optimal(&fetch_card(&pool, card_id).await, now - Duration::days(5));
+}
+
+#[sqlx::test]
+async fn reschedule_moved_cards_moves_them_too(pool: SqlitePool) {
+    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
+    let now = Utc::now();
+    graduate(&pool, card_id, now, &[10, 9, 5]).await;
+    set_due(&pool, card_id, now + Duration::days(150), now).await;
+    let mut config = read_external_config().unwrap();
+    config.reschedule_moved_cards = true;
+
+    reschedule_with(&pool, &config, now).await;
+
+    assert_due_near_optimal(&fetch_card(&pool, card_id).await, now - Duration::days(5));
+}
+
+#[sqlx::test]
+async fn changing_desired_retention_keeps_a_due_date_set_by_hand(pool: SqlitePool) {
+    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
+    let now = Utc::now();
+    graduate(&pool, card_id, now, &[10, 9, 5]).await;
+    let exam = whole_seconds(now + Duration::days(40));
+    set_due(&pool, card_id, exam, now).await;
+
+    update_cards(
+        &pool,
+        UpdateCardsRequest {
+            selector: CardsSelector::Ids(vec![card_id]),
+            desired_retention: Some(0.97),
+            special_state: None,
+            due: None,
+        },
+        now,
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(fetch_card(&pool, card_id).await.due, exam);
+}
+
+#[sqlx::test]
+async fn reschedule_places_other_cards_around_a_kept_card(pool: SqlitePool) {
+    let siblings = create_cards(&pool, &["a {{ b }} c {{ d }} e"]).await[0].clone();
+    let (kept, other) = (siblings[0], siblings[1]);
+    let now = Utc::now();
+    for card_id in &siblings {
+        graduate(&pool, *card_id, now, &[10, 9, 5]).await;
+    }
+    // Onto the day the other sibling was placed on, which is where rescheduling would put it.
+    let other_due = fetch_card(&pool, other).await.due;
+    set_due(&pool, kept, other_due, now).await;
+    let mut config = read_external_config().unwrap();
+    config.disperse_siblings = true;
+
+    reschedule_with(&pool, &config, now).await;
+
+    let cards = [
+        fetch_card(&pool, kept).await,
+        fetch_card(&pool, other).await,
+    ];
+    assert_eq!(cards[0].due, other_due);
+    assert_due_near_optimal(&cards[1], now - Duration::days(5));
+    assert_eq!(
+        distinct_local_days(&cards),
+        2,
+        "the other sibling moves off the kept one's day: {cards:#?}"
+    );
+}
+
+#[sqlx::test]
+async fn undoing_a_due_date_set_by_hand_deletes_its_row(pool: SqlitePool) {
+    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
+    let now = Utc::now();
+    graduate(&pool, card_id, now, &[10, 9, 5]).await;
+    let before = fetch_card(&pool, card_id).await.due;
+    let event_id = set_due(&pool, card_id, now + Duration::days(40), now).await;
+    let kind: EventType = sqlx::query_scalar("SELECT kind FROM event WHERE id = ?")
+        .bind(event_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(kind, EventType::SetCardsDue);
+
+    undo_event(
+        &pool,
+        UndoEventRequest {
+            event_id: Some(event_id),
+            undo_group: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(fetch_card(&pool, card_id).await.due, before);
+    assert_eq!(reschedule_rows(&pool, card_id).await.len(), 0);
 }

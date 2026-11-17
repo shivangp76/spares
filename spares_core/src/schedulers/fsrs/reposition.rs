@@ -23,6 +23,7 @@ use crate::helpers::mean;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::RescheduleData;
+use crate::model::RescheduleOrigin;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::schedulers::MoveCardsResult;
@@ -321,6 +322,10 @@ pub async fn move_cards(
         let data = RescheduleData {
             previous_due: card_internal.card.due,
             due: new_due,
+            origin: match action {
+                MoveCardAction::Advance => RescheduleOrigin::Advance,
+                MoveCardAction::Postpone => RescheduleOrigin::Postpone,
+            },
         };
         insert_review(
             db,

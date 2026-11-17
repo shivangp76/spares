@@ -127,6 +127,7 @@ use crate::handlers::scheduler::list_schedulers_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::scheduler::optimize_scheduler_handler;
 #[cfg(not(target_family = "wasm"))]
+use crate::handlers::scheduler::reschedule_preview_handler;
 use crate::handlers::scheduler::reschedule_scheduler_handler;
 #[cfg(not(target_family = "wasm"))]
 use crate::handlers::sync::MEDIA_BODY_LIMIT;
@@ -376,7 +377,7 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         )
         .route(
             "/api/scheduler/{name}/reschedule",
-            post(reschedule_scheduler_handler),
+            get(reschedule_preview_handler).post(reschedule_scheduler_handler),
         )
         .merge(media_routes())
         .merge(notes_vcs_routes())
@@ -643,7 +644,10 @@ pub fn create_local_router(collection: Arc<spares_core::collection::Collection>)
         .route("/api/sync/devices", get(needs_server))
         .route("/api/sync/unenroll", post(needs_server))
         .route("/api/scheduler/{name}/optimize", post(needs_server))
-        .route("/api/scheduler/{name}/reschedule", post(needs_server))
+        .route(
+            "/api/scheduler/{name}/reschedule",
+            get(needs_server).post(needs_server),
+        )
         .fallback(not_on_device)
         // Also when a route has the path for another method: `POST /api/notes/live` matches
         // `GET /api/notes/{id}`.

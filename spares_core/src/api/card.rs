@@ -16,6 +16,8 @@ use crate::api::fetch_review_logs;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::placeholders_2d;
 use crate::api::preset::CardConfigs;
+use crate::api::review::cards_kept_by_reschedule;
+use crate::api::review::insert_review;
 use crate::api::undo::insert_events;
 use crate::api::undo::payloads::ForgetCardPayload;
 use crate::api::undo::payloads::Transition;
@@ -29,6 +31,9 @@ use crate::model::CardId;
 use crate::model::EventType;
 use crate::model::NEW_CARD_STATE;
 use crate::model::NoteId;
+use crate::model::RescheduleData;
+use crate::model::RescheduleOrigin;
+use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::TagId;
@@ -205,6 +210,42 @@ pub(crate) fn build_update_card_payload(
     }
 }
 
+/// Logs that `card` was given `due` by hand, as a [`ReviewLogKind::Reschedule`] row.
+async fn log_due_set_by_hand(
+    db: &SqlitePool,
+    card: &Card,
+    due: DateTime<Utc>,
+    at: DateTime<Utc>,
+) -> Result<(), Error> {
+    let data = RescheduleData {
+        previous_due: card.due,
+        due,
+        origin: RescheduleOrigin::Manual,
+    };
+    insert_review(
+        db,
+        &ReviewLog {
+            card_id: Some(card.id),
+            reviewed_at: at,
+            kind: ReviewLogKind::Reschedule,
+            scheduler_name: get_default_scheduler_name().to_string(),
+            previous_state: card.state,
+            custom_data: to_value(data).unwrap(),
+            ..ReviewLog::new()
+        },
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Changes the cards' desired retention, special state or due date.
+///
+/// A new due date for a card that is not new is logged as a [`ReviewLogKind::Reschedule`] row of
+/// origin [`RescheduleOrigin::Manual`], so that rescheduling keeps it until the card's next review
+/// (see [`cards_kept_by_reschedule`]). With `log`, the change is then a
+/// [`EventType::SetCardsDue`] event, whose undo deletes those rows.
+#[expect(clippy::too_many_lines)]
 pub async fn update_cards(
     db: &SqlitePool,
     body: UpdateCardsRequest,
@@ -228,6 +269,7 @@ pub async fn update_cards(
         })
     });
     let mut config = None;
+    let mut set_due = false;
     for card_id in card_ids {
         let existing_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
             .bind(card_id)
@@ -259,6 +301,10 @@ pub async fn update_cards(
         updated_card.special_state = new_special_state;
         updated_card.due = new_due;
         updated_card.updated_at = updated_at;
+        if new_due != existing_card.due && existing_card.state != NEW_CARD_STATE {
+            log_due_set_by_hand(db, &existing_card, new_due, at).await?;
+            set_due = true;
+        }
         if let Some(new_desired_retention) = body.desired_retention
             && (new_desired_retention - existing_card.desired_retention).abs() > ALLOWED_F64_ERROR
             && updated_card.state != NEW_CARD_STATE
@@ -276,9 +322,17 @@ pub async fn update_cards(
                 }
                 let config = config.as_ref().expect("read above");
                 let configs = CardConfigs::load(db, config, Some(&[updated_card.id])).await?;
-                // Reschedule card
+                // A card moved since its last review, including by this request, keeps its due
+                // date, as in a full reschedule.
+                let pinned = cards_kept_by_reschedule(db, config, Some(&[updated_card.id])).await?;
                 scheduler
-                    .reschedule(db, &configs, vec![(updated_card.clone(), review_logs)], at)
+                    .reschedule(
+                        db,
+                        &configs,
+                        vec![(updated_card.clone(), review_logs)],
+                        &pinned,
+                        at,
+                    )
                     .await?;
             }
         }
@@ -300,7 +354,14 @@ pub async fn update_cards(
     let event_id = if log && !card_payloads.is_empty() {
         let event_ids = insert_events(
             db,
-            &[(EventType::UpdateCards, to_value(&card_payloads).unwrap())],
+            &[(
+                if set_due {
+                    EventType::SetCardsDue
+                } else {
+                    EventType::UpdateCards
+                },
+                to_value(&card_payloads).unwrap(),
+            )],
             at,
             None,
         )

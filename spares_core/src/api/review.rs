@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -2188,8 +2189,59 @@ pub async fn submit_study_action(
     Ok(SubmitStudyActionResponse { event_id: None })
 }
 
+/// The cards moved without a review since their last replayed row: their latest
+/// [`ReviewLogKind::Reschedule`] row (a due date set by hand, a postponement, an advance or a
+/// break) is newer than their latest review or forget. Rescheduling keeps their due date, unless
+/// [`reschedule_moved_cards`](crate::config::SparesExternalConfig::reschedule_moved_cards) is
+/// set.
+///
+/// With `card_ids`, only those cards are looked at.
+pub(crate) async fn pinned_card_ids(
+    db: &SqlitePool,
+    card_ids: Option<&[CardId]>,
+) -> Result<HashSet<CardId>, Error> {
+    let ids = card_ids.map(|ids| format!("[{}]", ids.iter().join(",")));
+    // Rows are ordered as replay orders them, so a review and a move in the same second are
+    // told apart by which was written last.
+    let pinned: Vec<CardId> = sqlx::query_scalar(
+        r"SELECT card_id FROM (
+            SELECT card_id, kind, ROW_NUMBER() OVER (
+                PARTITION BY card_id ORDER BY reviewed_at DESC, id DESC
+            ) AS latest
+            FROM review_log
+            WHERE card_id IS NOT NULL
+              AND (kind < ?1 OR kind = ?2)
+              AND (?3 IS NULL OR card_id IN (SELECT value FROM json_each(?3)))
+          )
+          WHERE latest = 1 AND kind = ?2",
+    )
+    .bind(ReviewLogKind::FIRST_UNREPLAYED)
+    .bind(ReviewLogKind::Reschedule)
+    .bind(ids)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(pinned.into_iter().collect())
+}
+
+/// The cards a reschedule with `config` keeps where they are: the [`pinned_card_ids`], unless
+/// [`reschedule_moved_cards`](crate::config::SparesExternalConfig::reschedule_moved_cards) is
+/// set.
+pub(crate) async fn cards_kept_by_reschedule(
+    db: &SqlitePool,
+    config: &SparesExternalConfig,
+    card_ids: Option<&[CardId]>,
+) -> Result<HashSet<CardId>, Error> {
+    if config.reschedule_moved_cards {
+        Ok(HashSet::new())
+    } else {
+        pinned_card_ids(db, card_ids).await
+    }
+}
+
 /// Recomputes every card's memory state from its review log and gives it a new due date, with
-/// the steps of each card's [preset](crate::config::QueuePreset).
+/// the steps of each card's [preset](crate::config::QueuePreset). Cards moved since their last
+/// review keep their due date (see [`cards_kept_by_reschedule`]).
 ///
 /// Logs the cards it changed as an [`EventType::RescheduleCards`] event, and returns its id (none
 /// if no card changed). Undoing it by id restores those cards, not the scheduler settings that
@@ -2236,8 +2288,9 @@ pub(crate) async fn reschedule_all_cards(
             (card, review_logs)
         })
         .collect::<Vec<_>>();
+    let pinned = cards_kept_by_reschedule(db, config, None).await?;
     scheduler
-        .reschedule(db, &configs, cards_with_review_logs, at)
+        .reschedule(db, &configs, cards_with_review_logs, &pinned, at)
         .await?;
 
     let after: HashMap<CardId, Card> = sqlx::query_as::<_, Card>(r"SELECT * FROM card")

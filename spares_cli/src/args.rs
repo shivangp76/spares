@@ -460,6 +460,11 @@ pub(crate) enum CardCommands {
     /// then places it again with the load balancing, sibling dispersal and easy days settings.
     /// Suspended and buried cards are included and keep their state.
     ///
+    /// Cards moved since their last review (given a due date by hand, postponed, advanced or moved
+    /// past a break) keep their due date, and the others are placed around them. Their memory
+    /// state is still recomputed. Set `reschedule_moved_cards = true` in config.toml to move
+    /// them too.
+    ///
     /// It always reschedules every card; there is no `--query`. Cards are placed one at a time,
     /// each seeing the due dates already given to the others, so rescheduling only some of them
     /// would leave the load spread across days unbalanced.

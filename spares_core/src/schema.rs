@@ -1121,6 +1121,19 @@ pub mod review {
         pub event_id: Option<i64>,
     }
 
+    /// What `POST /api/scheduler/{name}/reschedule` would do, from
+    /// `GET /api/scheduler/{name}/reschedule`.
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct ReschedulePreviewResponse {
+        /// How many cards were moved since their last review: given a due date by hand,
+        /// postponed, advanced or moved past a break.
+        pub moved_count: usize,
+        /// Whether those cards keep their due date, which is unless
+        /// [`reschedule_moved_cards`](crate::config::SparesExternalConfig::reschedule_moved_cards)
+        /// is set.
+        pub moved_cards_kept: bool,
+    }
+
     #[serde_with::serde_as]
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct RatingSubmission {

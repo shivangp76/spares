@@ -161,13 +161,18 @@ fn changed_rows(event: &Event) -> BTreeSet<(&'static str, i64)> {
         EventType::UpdateCards
         | EventType::AdvanceCards
         | EventType::PostponeCards
+        | EventType::SetCardsDue
+        | EventType::ScheduleBreak
         | EventType::BuryCards
         | EventType::UnburyCards
         | EventType::DailyUnbury
         | EventType::RescheduleCards => {
             rows.card_changes(&payload::<Vec<UpdateCardPayload>>(event));
         }
-        EventType::UnadvanceCards | EventType::UnpostponeCards => {
+        EventType::UnadvanceCards
+        | EventType::UnpostponeCards
+        | EventType::UnsetCardsDue
+        | EventType::UnscheduleBreak => {
             rows.card_changes(&payload::<UnmoveCardsPayload>(event).cards);
         }
     }

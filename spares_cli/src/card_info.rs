@@ -6,6 +6,7 @@ use reqwest::Client;
 use spares_core::model::CardId;
 use spares_core::model::RatingId;
 use spares_core::model::RescheduleData;
+use spares_core::model::RescheduleOrigin;
 use spares_core::model::ReviewLogKind;
 use spares_core::model::StateId;
 use spares_core::schema::card::CardReviewEntry;
@@ -214,13 +215,20 @@ fn format_summary(entries: &[CardReviewEntry]) -> String {
     out
 }
 
-/// A move of a card's due date, with how far it moved, like `Postpone +3d`.
+/// A move of a card's due date, with what moved it and how far, like `Postpone +3d` or
+/// `Set due -2d`.
 fn move_label(reschedule: RescheduleData) -> String {
+    let verb = match reschedule.origin {
+        RescheduleOrigin::Manual => "Set due",
+        RescheduleOrigin::Postpone => "Postpone",
+        RescheduleOrigin::Advance => "Advance",
+        RescheduleOrigin::Break => "Break",
+    };
     let seconds = (reschedule.due - reschedule.previous_due).num_seconds();
     if seconds >= 0 {
-        format!("Postpone +{}", format_interval(seconds))
+        format!("{verb} +{}", format_interval(seconds))
     } else {
-        format!("Advance -{}", format_interval(-seconds))
+        format!("{verb} -{}", format_interval(-seconds))
     }
 }
 
@@ -434,18 +442,20 @@ mod tests {
 
     #[test]
     fn moves_are_listed_with_how_far_they_moved() {
-        let moved = |id, days: i64| {
+        let moved = |id, days: i64, origin| {
             let mut e = entry(id, ReviewLogKind::Reschedule, None, REVIEW_STATE);
             e.reschedule = Some(RescheduleData {
                 previous_due: e.reviewed_at,
                 due: e.reviewed_at + chrono::Duration::days(days),
+                origin,
             });
             e
         };
         let entries = [
             entry(0, ReviewLogKind::Review, Some(3), 0),
-            moved(1, 3),
-            moved(2, -2),
+            moved(1, 3, RescheduleOrigin::Postpone),
+            moved(2, -2, RescheduleOrigin::Advance),
+            moved(3, 5, RescheduleOrigin::Manual),
         ];
         let out = format_card_info(&entries, &ratings(), &states());
         assert!(out.contains("Reviews        1\n"), "{out}");
@@ -455,8 +465,9 @@ mod tests {
             .skip(1)
             .take_while(|l| !l.is_empty())
             .collect::<Vec<_>>();
-        assert!(rows[0].contains("Advance -2d"), "{out}");
-        assert!(rows[1].contains("Postpone +3d"), "{out}");
+        assert!(rows[0].contains("Set due +5d"), "{out}");
+        assert!(rows[1].contains("Advance -2d"), "{out}");
+        assert!(rows[2].contains("Postpone +3d"), "{out}");
     }
 
     #[test]

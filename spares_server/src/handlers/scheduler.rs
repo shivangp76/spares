@@ -8,6 +8,7 @@ use serde::Deserialize;
 use spares_core::api::scheduler::get_scheduler_ratings;
 use spares_core::api::scheduler::get_scheduler_states;
 use spares_core::api::scheduler::optimize_scheduler;
+use spares_core::api::scheduler::reschedule_preview;
 use spares_core::api::scheduler::reschedule_scheduler;
 use spares_core::api::scheduler::resolve_rating_from_score;
 use spares_core::schema::review::OptimizeRequest;
@@ -75,6 +76,16 @@ pub(crate) async fn reschedule_scheduler_handler(
     Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let res = reschedule_scheduler(&data.db, name.as_str(), Utc::now())
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(res))
+}
+
+pub(crate) async fn reschedule_preview_handler(
+    Path(name): Path<String>,
+    Coll(data): Coll,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let res = reschedule_preview(&data.db, name.as_str())
         .await
         .map_err(error_to_response)?;
     Ok(Json(res))
