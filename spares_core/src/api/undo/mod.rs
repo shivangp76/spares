@@ -41,6 +41,7 @@ use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnmoveCardsPayload;
 use crate::api::undo::payloads::UnreviewPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
+use crate::api::undo::payloads::UpdateCardTagsPayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
 use crate::api::undo::payloads::UpdateParserPayload;
 use crate::api::undo::payloads::UpdateTagPayload;
@@ -666,6 +667,12 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
                 serde_json::from_value(event.payload.clone()).unwrap();
             // Undo payload already has .after = value to restore (create_undo_event swapped it)
             update_notes_event(db, payload, false).await?;
+        }
+        EventType::UpdateCardTags => {
+            let payload: UpdateCardTagsPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // Undo payload already has .after = value to restore (create_undo_event swapped it)
+            crate::api::card_tags::update_card_tags_event(db, payload).await?;
         }
         // For every card kind, the payload already has .after = value to restore
         // (create_undo_event swapped it). Their `review_log` rows were handled while inverting.

@@ -29,6 +29,7 @@ use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnmoveCardsPayload;
 use crate::api::undo::payloads::UnreviewPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
+use crate::api::undo::payloads::UpdateCardTagsPayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
 use crate::api::undo::payloads::UpdateParserPayload;
 use crate::api::undo::payloads::UpdateTagPayload;
@@ -130,6 +131,12 @@ fn changed_rows(event: &Event) -> BTreeSet<(&'static str, i64)> {
                     rows.cards(cards.before.iter().chain(&cards.after).map(|card| card.id));
                 }
             }
+            rows.deleted_tags(&payload.deleted_tags);
+            rows.deleted_tags(&payload.restored_tags);
+        }
+        EventType::UpdateCardTags => {
+            let payload: UpdateCardTagsPayload = payload(event);
+            rows.cards(payload.cards.iter().map(|card| card.card_id));
             rows.deleted_tags(&payload.deleted_tags);
             rows.deleted_tags(&payload.restored_tags);
         }

@@ -492,6 +492,10 @@ pub enum EventType {
     ScheduleBreak,
     /// The undo of a `ScheduleBreak`. Carries `UnmoveCardsPayload`, like `UnadvanceCards`.
     UnscheduleBreak,
+    /// Tags given to or taken from cards themselves rather than their notes. Carries
+    /// `UpdateCardTagsPayload`, and is its own undo, like `UpdateNotes`. See
+    /// [`crate::api::card_tags`].
+    UpdateCardTags,
 }
 
 impl EventType {

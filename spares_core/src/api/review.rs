@@ -385,6 +385,7 @@ fn build_review_card_response(
         parser_name,
         keywords,
         tags,
+        card_tags: Vec::new(),
         cli,
         browser_sources: None,
         device_sources: None,
@@ -1215,6 +1216,10 @@ async fn add_card_extras(
     response: &mut GetReviewCardResponse,
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<(), Error> {
+    response.card_tags = crate::api::card_tags::card_tag_names(db, &[response.card_id])
+        .await?
+        .remove(&response.card_id)
+        .unwrap_or_default();
     let parser = find_parser(&response.parser_name, all_parsers)?;
     let loaded = load_review_card(db, parser.as_ref(), response).await;
     // Only cards compiled in the browser need their note parsed to be shown at all
@@ -2881,6 +2886,7 @@ mod tests {
                     crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
                 )),
                 due: Some(now),
+                tags: UpdateTags::None,
             },
             now,
             false,
@@ -2950,6 +2956,7 @@ mod tests {
                     crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
                 )),
                 due: Some(now),
+                tags: UpdateTags::None,
             },
             now,
             false,
@@ -3038,6 +3045,7 @@ mod tests {
                         crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
                     )),
                     due: Some(t),
+                    tags: UpdateTags::None,
                 },
                 now,
                 false,
@@ -3072,6 +3080,7 @@ mod tests {
                     crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
                 )),
                 due: Some(t4),
+                tags: UpdateTags::None,
             },
             now,
             false,
@@ -3127,6 +3136,7 @@ mod tests {
                         crate::schema::card::SpecialStateUpdate::BuriedUntilLaterToday,
                     )),
                     due: Some(now),
+                    tags: UpdateTags::None,
                 },
                 now,
                 false,

@@ -17,6 +17,7 @@ use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnmoveCardsPayload;
 use crate::api::undo::payloads::UnreviewPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
+use crate::api::undo::payloads::UpdateCardTagsPayload;
 use crate::api::undo::payloads::UpdateNotePayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
 use crate::api::undo::payloads::UpdateParserPayload;
@@ -61,6 +62,7 @@ pub async fn create_undo_event(
         EventType::UnsetCardsDue => EventType::SetCardsDue,
         EventType::ScheduleBreak => EventType::UnscheduleBreak,
         EventType::UnscheduleBreak => EventType::ScheduleBreak,
+        EventType::UpdateCardTags => EventType::UpdateCardTags,
         EventType::UpdateCards
         | EventType::BuryCards
         | EventType::UnburyCards
@@ -325,6 +327,11 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::RelocateCards => {
             let payload: RelocateCardsPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            Ok(serde_json::to_value(payload.swap()).unwrap())
+        }
+        EventType::UpdateCardTags => {
+            let payload: UpdateCardTagsPayload =
                 serde_json::from_value(event.payload.clone()).unwrap();
             Ok(serde_json::to_value(payload.swap()).unwrap())
         }

@@ -268,6 +268,54 @@ pub struct UpdateNotesPayload {
     pub restored_tags: Vec<DeletedTag>,
 }
 
+/// A card's own tags (not its filtered tags) before and after a change, by name
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CardTagsTransition {
+    pub card_id: CardId,
+    pub tags: Transition<Vec<String>>,
+}
+
+impl CardTagsTransition {
+    pub fn swap(self) -> Self {
+        Self {
+            card_id: self.card_id,
+            tags: self.tags.swap(),
+        }
+    }
+}
+
+/// Payload for `UpdateCardTags`. Its undo swaps each card's tags and the two lists of tags.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct UpdateCardTagsPayload {
+    pub cards: Vec<CardTagsTransition>,
+    /// The cards' notes, whose files show the cards' tags, so undo regenerates them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub note_ids: Vec<NoteId>,
+    /// [`auto_delete`](Tag::auto_delete) tags deleted because the cards were the last to have
+    /// them, so undo can restore them as they were.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted_tags: Vec<DeletedTag>,
+    /// Tags to restore before the cards link to them: an undo's, swapped from the `deleted_tags`
+    /// of the change it reverts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restored_tags: Vec<DeletedTag>,
+}
+
+impl UpdateCardTagsPayload {
+    pub fn swap(self) -> Self {
+        Self {
+            cards: self
+                .cards
+                .into_iter()
+                .map(CardTagsTransition::swap)
+                .collect(),
+            note_ids: self.note_ids,
+            deleted_tags: self.restored_tags,
+            restored_tags: self.deleted_tags,
+        }
+    }
+}
+
 /// Payload for `RelocateCards`, applied in this order: `deleted_cards` are deleted, `moved` cards
 /// are moved, then `restored_cards` are inserted. Its undo swaps each move and the two lists.
 #[derive(Clone, Debug, Deserialize, Serialize)]

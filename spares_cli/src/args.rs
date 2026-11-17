@@ -414,6 +414,16 @@ pub(crate) enum CardCommands {
         special_state: Option<SpecialStateLocal>,
         #[arg(long)]
         due: Option<DateTime<Utc>>,
+        /// Tags to take from the cards themselves (not from their notes)
+        #[arg(long, value_delimiter = ' ', num_args = 1..)]
+        tags_to_remove: Option<Vec<String>>,
+        /// Tags to give the cards themselves rather than their notes. A note file shows them on
+        /// the card's first cloze, as `tag:` (`rtag:` for the reverse card of an `r:` cloze).
+        #[arg(long, value_delimiter = ' ', num_args = 1..)]
+        tags_to_add: Option<Vec<String>>,
+        /// Take all of the cards' own tags first (their notes keep theirs)
+        #[arg(long, default_value_t = false)]
+        remove_all_tags: bool,
     },
     /// Get a card by id or note id
     Get {

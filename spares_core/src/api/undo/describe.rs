@@ -17,6 +17,7 @@ use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnreviewPayload;
 use crate::api::undo::payloads::UpdateCardPayload;
+use crate::api::undo::payloads::UpdateCardTagsPayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
 use crate::api::undo::payloads::UpdateParserPayload;
 use crate::api::undo::payloads::UpdateTagPayload;
@@ -135,6 +136,11 @@ async fn describe(
             let p: UpdateNotesPayload = serde_json::from_value(payload).unwrap();
             let ids: Vec<String> = p.notes.iter().map(|n| n.id.letters()).collect();
             format!("Edit {}", count_ids("note", &ids))
+        }
+        EventType::UpdateCardTags => {
+            let p: UpdateCardTagsPayload = serde_json::from_value(payload).unwrap();
+            let ids: Vec<i64> = p.cards.iter().map(|c| c.card_id).collect();
+            format!("Tag {}", count_ids("card", &ids))
         }
         EventType::RelocateCards => {
             let p: RelocateCardsPayload = serde_json::from_value(payload).unwrap();

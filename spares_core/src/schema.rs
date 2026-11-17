@@ -282,6 +282,9 @@ pub mod note {
         pub note_preview: String,
         /// The tags of the card's note, leaving out filtered tags.
         pub note_tags: Vec<String>,
+        /// The card's own tags, leaving out filtered tags (see [`crate::api::card_tags`]).
+        #[serde(default)]
+        pub card_tags: Vec<String>,
         pub stats: CardStats,
     }
 
@@ -495,7 +498,7 @@ pub mod note {
         pub selector: NotesSelector,
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Default, Deserialize, Serialize)]
     /// To remove all tags, `UpdateTags::SetTags` must be used
     pub enum UpdateTags {
         ModifyTags {
@@ -503,7 +506,14 @@ pub mod note {
             tags_to_add: Option<Vec<String>>,
         },
         SetTags(Vec<String>),
+        #[default]
         None,
+    }
+
+    impl UpdateTags {
+        pub fn is_none(&self) -> bool {
+            matches!(self, Self::None)
+        }
     }
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -682,6 +692,7 @@ pub mod card {
     use crate::model::SpecialState;
     use crate::model::StateId;
     use crate::model::TagId;
+    use crate::schema::note::UpdateTags;
     use crate::schema::some_option;
 
     #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -764,6 +775,10 @@ pub mod card {
         pub special_state: Option<Option<SpecialStateUpdate>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub due: Option<DateTime<Utc>>,
+        /// The cards' own tags, which their notes don't have. Filtered tags can't be given or
+        /// taken here. See [`crate::api::card_tags`].
+        #[serde(default, skip_serializing_if = "UpdateTags::is_none")]
+        pub tags: UpdateTags,
     }
 
     impl CardResponse {
@@ -1019,6 +1034,10 @@ pub mod review {
         /// See [`Self::keywords`]. In name order. Empty from a server older than this field.
         #[serde(default)]
         pub tags: Vec<String>,
+        /// The card's own tags, in name order, leaving out filtered tags (see
+        /// [`crate::api::card_tags`]). Empty from a server older than this field.
+        #[serde(default)]
+        pub card_tags: Vec<String>,
         /// Present iff this card is a CLI card.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub cli: Option<CliReviewInfo>,

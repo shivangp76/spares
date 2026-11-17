@@ -36,6 +36,7 @@ use crate::schema::card::GetLeechesRequest;
 use crate::schema::card::UpdateCardsRequest;
 use crate::schema::note::CreateNoteRequest;
 use crate::schema::note::CreateNotesRequest;
+use crate::schema::note::UpdateTags;
 use crate::schema::review::RatingSubmission;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
@@ -489,6 +490,7 @@ async fn set_due(pool: &SqlitePool, card_id: CardId, due: DateTime<Utc>, at: Dat
             desired_retention: None,
             special_state: None,
             due: Some(due),
+            tags: UpdateTags::None,
         },
         at,
         true,
@@ -638,6 +640,7 @@ async fn changing_desired_retention_keeps_a_due_date_set_by_hand(pool: SqlitePoo
             desired_retention: Some(0.97),
             special_state: None,
             due: None,
+            tags: UpdateTags::None,
         },
         now,
         true,

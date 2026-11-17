@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod browser_render;
 pub mod card;
+pub mod card_tags;
 pub mod image;
 pub mod image_occlusion;
 pub mod note;

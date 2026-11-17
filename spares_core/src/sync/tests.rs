@@ -806,6 +806,7 @@ async fn card_fields_merge() {
             desired_retention: None,
             special_state: Some(Some(SpecialStateUpdate::Suspended)),
             due: None,
+            tags: UpdateTags::None,
         },
         Utc::now(),
         true,

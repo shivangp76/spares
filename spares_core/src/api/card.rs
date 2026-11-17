@@ -11,6 +11,7 @@ use sqlx::sqlite::SqlitePool;
 use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::api::MAX_ROWS_IN_QUERY;
+use crate::api::card_tags;
 use crate::api::execute_batched_query;
 use crate::api::fetch_review_logs;
 use crate::api::fetch_review_logs_for_replay;
@@ -39,6 +40,7 @@ use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::TagId;
+use crate::notes_vcs;
 use crate::schedulers::BreakOutcome;
 use crate::schedulers::BreakPlan;
 use crate::schedulers::SrsScheduler;
@@ -266,6 +268,18 @@ pub async fn update_cards(
             evaluator.get_card_ids(db).await?
         }
     };
+    // Checked before any card changes, since filtered tags are the only way tagging can fail
+    if !body.tags.is_none() {
+        let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+        let filtered = card_tags::filtered_tag_names_on(&mut conn).await?;
+        card_tags::updated_tag_names(&[], &body.tags, &filtered)?;
+    }
+    // A request that only changes tags logs no card changes
+    let changes_cards = body.tags.is_none()
+        || body.desired_retention.is_some()
+        || body.special_state.is_some()
+        || body.due.is_some();
+    let tagged_card_ids = card_ids.clone();
     let mut card_responses = Vec::new();
     let mut card_payloads: Vec<UpdateCardPayload> = Vec::new();
     let requested_special_state = body.special_state.map(|x| {
@@ -349,7 +363,7 @@ pub async fn update_cards(
             .fetch_one(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        if log {
+        if log && changes_cards {
             card_payloads.push(build_update_card_payload(
                 card_id,
                 &existing_card,
@@ -377,6 +391,18 @@ pub async fn update_cards(
     } else {
         None
     };
+    let mut tx = db.begin().await.map_err(|e| Error::Sqlx { source: e })?;
+    let tag_changes = card_tags::update_card_tags_on(&mut tx, &tagged_card_ids, &body.tags).await?;
+    tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    let tagged_note_ids: Vec<NoteId> = tag_changes.note_ids.iter().copied().collect();
+    let event_id = if log {
+        card_tags::log_card_tag_changes(db, tag_changes, at, event_id)
+            .await?
+            .or(event_id)
+    } else {
+        event_id
+    };
+    notes_vcs::reconcile_after(db, tagged_note_ids, "tag cards").await;
     Ok(UpdateCardsResponse {
         cards: card_responses,
         event_id,
@@ -804,6 +830,7 @@ mod tests {
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
     use crate::schema::note::CreateNotesRequest;
+    use crate::schema::note::UpdateTags;
 
     #[sqlx::test]
     async fn test_update_card(pool: SqlitePool) -> () {
@@ -839,6 +866,7 @@ mod tests {
             desired_retention: None,
             special_state: Some(Some(SpecialStateUpdate::Suspended)),
             due: None,
+            tags: UpdateTags::None,
         };
         let update_card_response =
             update_cards(&pool, update_card_request, Utc::now(), false).await;
@@ -884,6 +912,7 @@ mod tests {
                 desired_retention: None,
                 special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
                 due: Some(now),
+                tags: UpdateTags::None,
             },
             now,
             false,
@@ -918,6 +947,7 @@ mod tests {
                 desired_retention: None,
                 special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
                 due: Some(t1),
+                tags: UpdateTags::None,
             },
             now,
             false,
@@ -933,6 +963,7 @@ mod tests {
                 desired_retention: None,
                 special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
                 due: Some(t2),
+                tags: UpdateTags::None,
             },
             now,
             false,
@@ -965,6 +996,7 @@ mod tests {
                 desired_retention: None,
                 special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
                 due: Some(now),
+                tags: UpdateTags::None,
             },
             now,
             false,
@@ -1002,6 +1034,7 @@ mod forget_tests {
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
     use crate::schema::note::CreateNotesRequest;
+    use crate::schema::note::UpdateTags;
     use crate::schema::review::RatingSubmission;
     use crate::schema::review::StudyAction;
     use crate::schema::review::SubmitStudyActionRequest;
@@ -1163,6 +1196,7 @@ mod forget_tests {
                 desired_retention: Some(0.85),
                 special_state: None,
                 due: None,
+                tags: UpdateTags::None,
             },
             now,
             false,

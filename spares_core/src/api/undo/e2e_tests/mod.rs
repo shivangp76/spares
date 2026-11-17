@@ -1,4 +1,5 @@
 mod card;
+mod card_tags;
 mod history;
 mod ids;
 mod move_cards;

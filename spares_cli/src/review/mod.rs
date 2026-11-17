@@ -274,6 +274,12 @@ async fn fetch_review_card(
             if !review_card.tags.is_empty() {
                 println!("Tags: {}", review_card.tags.join(", ").magenta().bold());
             }
+            if !review_card.card_tags.is_empty() {
+                println!(
+                    "Card tags: {}",
+                    review_card.card_tags.join(", ").magenta().bold()
+                );
+            }
             if !is_cli {
                 let file_name = review_card
                     .card_front_rendered_path

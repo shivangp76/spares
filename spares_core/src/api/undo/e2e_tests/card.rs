@@ -21,6 +21,7 @@ use crate::model::TagId;
 use crate::schema::card::CardsSelector;
 use crate::schema::card::SpecialStateUpdate;
 use crate::schema::card::UpdateCardsRequest;
+use crate::schema::note::UpdateTags;
 use crate::schema::review::RatingSubmission;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
@@ -46,6 +47,7 @@ async fn e2e_undo_update_card_restores_special_state(pool: SqlitePool) {
             desired_retention: None,
             special_state: Some(Some(SpecialStateUpdate::Suspended)),
             due: None,
+            tags: UpdateTags::None,
         },
         Utc::now(),
         true,
@@ -99,6 +101,7 @@ async fn e2e_undo_update_card_restores_due(pool: SqlitePool) {
             desired_retention: None,
             special_state: None,
             due: Some(new_due),
+            tags: UpdateTags::None,
         },
         Utc::now(),
         true,
@@ -719,6 +722,7 @@ async fn e2e_undo_update_card_does_not_log_when_no_change(pool: SqlitePool) {
             desired_retention: None,
             special_state: None,
             due: None,
+            tags: UpdateTags::None,
         },
         Utc::now(),
         true,

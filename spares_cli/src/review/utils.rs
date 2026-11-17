@@ -247,6 +247,7 @@ pub(crate) async fn bury_cards(
         desired_retention: None,
         special_state: Some(Some(SpecialStateUpdate::Buried)),
         due: None,
+        tags: UpdateTags::None,
     };
     let url = format!("{}/api/cards", base_url);
     let response = client
@@ -300,6 +301,7 @@ pub(crate) async fn suspend_cards(
         desired_retention: None,
         special_state: Some(Some(SpecialStateUpdate::Suspended)),
         due: None,
+        tags: UpdateTags::None,
     };
     let url = format!("{}/api/cards", base_url);
     let response = client
@@ -401,6 +403,7 @@ pub(crate) async fn set_due_date(
         desired_retention: None,
         special_state: None,
         due: Some(due_date),
+        tags: UpdateTags::None,
     };
     let url = format!("{}/api/cards", base_url);
     let response = client
@@ -434,6 +437,7 @@ pub(super) async fn bury_until_later_today(
         desired_retention: None,
         special_state: Some(Some(SpecialStateUpdate::BuriedUntilLaterToday)),
         due: Some(Utc::now()),
+        tags: UpdateTags::None,
     };
     let url = format!("{}/api/cards", base_url);
     let response = client

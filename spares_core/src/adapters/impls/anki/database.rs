@@ -41,6 +41,7 @@ use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::tts::TtsSetting;
 use crate::schema::card::CardsSelector;
 use crate::schema::card::UpdateCardsRequest;
+use crate::schema::note::UpdateTags;
 use crate::schema::review::RatingSubmission;
 use crate::schema::review::StudyAction;
 use crate::schema::review::SubmitStudyActionRequest;
@@ -248,6 +249,7 @@ pub async fn populate_reviews(
                         desired_retention: Some(desired_retention),
                         special_state: None,
                         due: None,
+                        tags: UpdateTags::None,
                     };
                     update_cards(spares_pool, body, card.created_at, false).await?;
                 }

@@ -12,6 +12,7 @@ use spares_core::schema::card::ScheduleBreakResponse;
 use spares_core::schema::card::UnburyRequest;
 use spares_core::schema::card::UpdateCardsRequest;
 use spares_core::schema::card::UpdateCardsResponse;
+use spares_core::schema::note::UpdateTags;
 use spares_core::schema::review::OptimizeRequest;
 use spares_core::schema::review::OptimizeResponse;
 use spares_core::schema::review::ReschedulePreviewResponse;
@@ -61,6 +62,9 @@ pub(crate) async fn handle(
             desired_retention,
             special_state: special_state_local,
             due,
+            tags_to_remove,
+            tags_to_add,
+            remove_all_tags,
         } => {
             let selector = if let Some(ids) = selector_local.ids {
                 CardsSelector::Ids(ids)
@@ -78,11 +82,22 @@ pub(crate) async fn handle(
                 }
                 SpecialStateLocal::None => None,
             });
+            let tags = if remove_all_tags {
+                UpdateTags::SetTags(tags_to_add.unwrap_or_default())
+            } else if tags_to_add.is_some() || tags_to_remove.is_some() {
+                UpdateTags::ModifyTags {
+                    tags_to_remove,
+                    tags_to_add,
+                }
+            } else {
+                UpdateTags::None
+            };
             let request = UpdateCardsRequest {
                 selector,
                 desired_retention,
                 special_state,
                 due,
+                tags,
             };
             let url = format!("{}/api/cards", base_url);
             let response = client

@@ -208,6 +208,7 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
         name: String,
         note_data: String,
         note_tags: Json<Vec<String>>,
+        card_tags: Json<Vec<String>>,
         interval_days: Option<f64>,
         reps: u32,
         lapses: u32,
@@ -218,6 +219,9 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
         "SELECT c.*, p.name, n.data AS note_data,
            COALESCE((SELECT JSON_GROUP_ARRAY(t.name) FROM note_tag nt JOIN tag t ON t.id = nt.tag_id
              WHERE nt.note_id = n.id), '[]') AS note_tags,
+           COALESCE((SELECT JSON_GROUP_ARRAY(name) FROM (SELECT t.name FROM card_tag ct
+             JOIN tag t ON t.id = ct.tag_id WHERE ct.card_id = c.id AND t.query IS NULL
+             ORDER BY t.name)), '[]') AS card_tags,
            {} AS interval_days, {} AS reps, {} AS lapses, {} AS last_reviewed,
            (SELECT rl.scheduler_name FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {}
              ORDER BY rl.reviewed_at DESC, rl.id DESC LIMIT 1) AS scheduler_name
@@ -274,6 +278,7 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
                 .take(CARD_NOTE_PREVIEW_CHARS)
                 .collect(),
             note_tags: row.note_tags.0,
+            card_tags: row.card_tags.0,
             stats: CardStats {
                 interval_days: row.interval_days,
                 reps: row.reps,
