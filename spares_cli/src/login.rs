@@ -16,6 +16,7 @@
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
+use std::path::Path;
 use std::path::PathBuf;
 
 use clap::Args;
@@ -55,27 +56,62 @@ pub(crate) fn credentials_file() -> PathBuf {
 
 impl Credentials {
     pub(crate) fn read() -> Self {
-        std::fs::read_to_string(credentials_file())
+        let path = credentials_file();
+        if let Some(warning) = permissions_warning(&path) {
+            eprintln!("{warning}");
+        }
+        std::fs::read_to_string(path)
             .ok()
             .and_then(|contents| toml_edit::de::from_str(&contents).ok())
             .unwrap_or_default()
     }
 
     fn write(&self) -> Result<(), Error> {
-        let path = credentials_file();
         std::fs::create_dir_all(config_dir()).into_diagnostic()?;
+        self.write_to(&credentials_file())
+    }
+
+    fn write_to(&self, path: &Path) -> Result<(), Error> {
         let contents = toml_edit::ser::to_string_pretty(self).into_diagnostic()?;
-        // Readable only by its owner, from the start
         let tmp = path.with_extension("toml.tmp");
+        // The mode given when opening applies only to a new file, so a leftover temporary file
+        // would keep its own; set it explicitly too, before the token is written
+        let _ = std::fs::remove_file(&tmp);
         {
             let mut options = std::fs::OpenOptions::new();
             options.write(true).create(true).truncate(true);
             #[cfg(unix)]
             std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
             let mut file = options.open(&tmp).into_diagnostic()?;
+            #[cfg(unix)]
+            file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))
+                .into_diagnostic()?;
             std::io::Write::write_all(&mut file, contents.as_bytes()).into_diagnostic()?;
         }
-        std::fs::rename(&tmp, &path).into_diagnostic()
+        std::fs::rename(&tmp, path).into_diagnostic()
+    }
+}
+
+/// A warning when the credentials file can be read or written by anyone but its owner, as ssh
+/// warns about a private key.
+fn permissions_warning(path: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path).ok()?.permissions().mode() & 0o777;
+        (mode & 0o077 != 0).then(|| {
+            format!(
+                "Warning: {} holds login tokens but has mode {mode:o}, so other users can \
+                 access it. Run `chmod 600 {}`.",
+                path.display(),
+                path.display()
+            )
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
     }
 }
 
@@ -280,5 +316,29 @@ mod tests {
             "https://spares.example.com"
         );
         assert_eq!(normalize_host("http://vps:8080"), "http://vps:8080");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn credentials_are_written_for_their_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("spares-credentials-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("credentials.toml");
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        // A leftover temporary file from an interrupted write, readable by everyone
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, "").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        Credentials::default().write_to(&path).unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(permissions_warning(&path), None);
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let warning = permissions_warning(&path).unwrap();
+        assert!(warning.contains("mode 644"), "{warning}");
+        assert_eq!(permissions_warning(&dir.join("missing.toml")), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
