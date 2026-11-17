@@ -152,6 +152,8 @@ export default function CardTools({
   const [retention, setRetention] = useState("");
   const [specialState, setSpecialState] = useState<SpecialStateChoice>("");
   const [due, setDue] = useState("");
+  const [tagsToAdd, setTagsToAdd] = useState("");
+  const [tagsToRemove, setTagsToRemove] = useState("");
 
   const [leeches, setLeeches] = useState<CardResponse[] | null>(null);
 
@@ -226,6 +228,15 @@ export default function CardTools({
         if (specialState)
           req.special_state = specialState === "None" ? null : specialState;
         if (due) req.due = new Date(due).toISOString();
+        const add = splitTags(tagsToAdd);
+        const remove = splitTags(tagsToRemove);
+        if (add.length || remove.length)
+          req.tags = {
+            ModifyTags: {
+              tags_to_add: add.length ? add : null,
+              tags_to_remove: remove.length ? remove : null,
+            },
+          };
         if (!Object.keys(req).length) throw new Error("Nothing to change");
 
         let selector: CardsSelector;
@@ -350,6 +361,24 @@ export default function CardTools({
               style={input}
             />
           </label>
+          <label title="Tags of the cards themselves, which their notes don't have. Separate them with commas.">
+            Add card tags{" "}
+            <input
+              value={tagsToAdd}
+              onChange={(e) => setTagsToAdd(e.target.value)}
+              placeholder="none"
+              style={{ ...input, width: 140 }}
+            />
+          </label>
+          <label title="Separate them with commas">
+            Remove card tags{" "}
+            <input
+              value={tagsToRemove}
+              onChange={(e) => setTagsToRemove(e.target.value)}
+              placeholder="none"
+              style={{ ...input, width: 140 }}
+            />
+          </label>
           <button onClick={edit} disabled={busy}>
             Apply
           </button>
@@ -432,4 +461,12 @@ export default function CardTools({
       {outcome && <ActionResult key={outcome.seq} outcome={outcome.outcome} />}
     </div>
   );
+}
+
+/** The tags of a comma-separated list, as typed */
+function splitTags(text: string): string[] {
+  return text
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
 }

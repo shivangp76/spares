@@ -2179,7 +2179,9 @@ export default function ReviewPage() {
             )}
           </div>
           {/* Shown here, as the rendered card leaves them out. Each on its own line. */}
-          {(card.keywords.length > 0 || card.tags.length > 0) && (
+          {(card.keywords.length > 0 ||
+            card.tags.length > 0 ||
+            (card.card_tags?.length ?? 0) > 0) && (
             <div
               style={{
                 marginTop: -4,
@@ -2193,6 +2195,9 @@ export default function ReviewPage() {
                 <div>Keywords: {card.keywords.join(", ")}</div>
               )}
               {card.tags.length > 0 && <div>Tags: {card.tags.join(", ")}</div>}
+              {card.card_tags && card.card_tags.length > 0 && (
+                <div>Card tags: {card.card_tags.join(", ")}</div>
+              )}
             </div>
           )}
 

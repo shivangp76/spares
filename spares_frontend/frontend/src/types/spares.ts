@@ -31,6 +31,8 @@ export interface GetReviewCardResponse {
   keywords: string[];
   // In name order
   tags: string[];
+  // The card's own tags, which its note doesn't have, in name order. Absent from older servers.
+  card_tags?: string[];
   // Present iff the card is reviewed by running an external command (CLI only)
   cli?: CliReviewInfo;
   // Present iff the parser's sources are compiled in the browser (Typst)
@@ -293,7 +295,19 @@ export interface UpdateCardsRequest {
   // Omit to leave unchanged, `null` to clear
   special_state?: SpecialStateUpdate | null;
   due?: string;
+  // The cards' own tags, which their notes don't have. Omit to leave them unchanged.
+  tags?: UpdateTags;
 }
+
+/** How a request changes tags, as `UpdateTags` in spares_core takes it */
+export type UpdateTags =
+  | {
+      ModifyTags: {
+        tags_to_remove: string[] | null;
+        tags_to_add: string[] | null;
+      };
+    }
+  | { SetTags: string[] };
 
 export interface UpdateCardsResponse {
   cards: CardResponse[];
@@ -810,6 +824,8 @@ export interface CardMatch {
   note_preview: string;
   /** Its note's tags, leaving out filtered tags */
   note_tags: string[];
+  /** Its own tags, which its note doesn't have. Absent from older servers. */
+  card_tags?: string[];
   stats: CardStats;
 }
 

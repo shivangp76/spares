@@ -181,6 +181,26 @@ const BULK_ACTIONS: BulkAction[] = [
     input: { kind: "tags", suggestions: listManualTagNames },
     run: (selector, tags) => tagNotesOf(selector, [], tags),
   },
+  {
+    label: "Add tags to cards",
+    input: { kind: "tags", suggestions: listManualTagNames },
+    run: (selector, tags) =>
+      editCards(
+        selector,
+        { tags: { ModifyTags: { tags_to_add: tags, tags_to_remove: null } } },
+        `Added ${tagList(tags)} to`,
+      ),
+  },
+  {
+    label: "Remove tags from cards",
+    input: { kind: "tags", suggestions: listManualTagNames },
+    run: (selector, tags) =>
+      editCards(
+        selector,
+        { tags: { ModifyTags: { tags_to_add: null, tags_to_remove: tags } } },
+        `Removed ${tagList(tags)} from`,
+      ),
+  },
   FILTERED_TAG_ACTION,
 ];
 
@@ -213,6 +233,7 @@ function formatDays(days: number): string {
 const SEARCH_COLUMNS: readonly CardColumn[] = [
   "text",
   "tags",
+  "card_tags",
   "retrievability",
   "interval",
   "reps",
@@ -257,6 +278,12 @@ function cardColumns(
       sortField: "tag",
       hideNarrow: true,
       render: (r) => r.extras?.note_tags.join(", ") || "—",
+    },
+    {
+      id: "card_tags",
+      label: "Card tags",
+      hideNarrow: true,
+      render: (r) => r.extras?.card_tags?.join(", ") || "—",
     },
     {
       id: "order",
