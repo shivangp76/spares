@@ -32,6 +32,7 @@ Spares was built to address the numerous drawbacks of Anki. See [this](spares_fr
   - Support for partial references
   - Multiple source citations
 - **Tag Hierarchy**: Tree-like structure for organizing notes
+- **Card Tags**: Tags on single cards, written on their clozes in note files (`tag:hard`), and a `buried` tag for the cards you keep burying instead of rating
 - **LaTeX Integration**:
   - File-based templates that automatically update
   - Background parallel rendering

@@ -28,6 +28,16 @@ See `spares_core::parsers::ClozeGroupingSettings` for a full list of cloze group
 
 Tags are ways to connect notes together. They are generally used on a large scale, like grouping notes for a certain topic or class.
 
+A card can also have tags of its own, which its note's other cards don't have, such as `hard` on the one card of a note you keep failing. Searching `tag=hard` finds a card when it or its note has the tag. A note's file shows its cards' tags on their clozes, right after the card's order, and pushing the file from the notes repository changes them:
+
+```md
+{{[o:1;tag:hard] Paris }} is the capital of {{[o:2,3;r:;tag:geography;rtag:hard] France }}.
+```
+
+`rtag:` is the reverse card's, for a cloze with `r:`. Writing `tag:` on a new cloze tags the card it creates. The tags of image occlusion and CLI cards are not written in the file, only kept by spares. Tag cards with `spares card edit --tags-to-add hard --ids 12` (or `--query`), with **Add tags to cards** on the web app's Cards page, or in the file, and take them away with `--tags-to-remove` or by deleting the key. A card's tags are listed beside its note's while reviewing, and in the Cards page's Card tags column.
+
+A card you bury on two days without rating it in between gets the tag `buried` (see `TagBuriedConfig` on `spares_core::config`, the `[queue.tag_buried]` table of `config.toml`), so `tag=buried` lists the cards you keep putting off, which are usually ones to rewrite, split or drop. The days need not follow each other, burying it again on the same day doesn't count, and only burying it yourself counts, not sibling burying. Rating the card starts its count again but leaves the tag; undoing the bury takes the tag too. Set `days = 0` to turn it off.
+
 ## Keywords
 
 Keywords are used specifically for searching. For example, you may have multiple notes on Spanish irregular verbs. You may want to add "Irregular verbs" as a keyword to make it easy to find related notes. Keywords can be thought of as tags on a smaller scale. However, they are more flexible since they can contain longer phrases. It also removes the hassle of assigning these keywords to a hierarchy when the concept is too local. For example, it would be annoying to assign every little keyword like "Irregular verbs" and "Subjunctive" to the "spanish:grammar" tag since that relation would rarely be used. Keywords can contain more variation within their name (like case insensitivity) which can be taken care of when searching. Hence, they are less rigid than tags. Keywords can also be used to store the source of the data. For example, you might want to add the author, book title, and chapter number as keywords. Keywords are separated by commas for searching convenience.

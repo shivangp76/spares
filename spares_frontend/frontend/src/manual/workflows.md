@@ -99,6 +99,12 @@ spares note edit --tags-to-add tag1 tag2 --files aaa.tex aab.tex
 spares note edit --tags-to-remove tag1 tag2 --files aaa.tex aab.tex
 ```
 
+Single cards are tagged the same way, without tagging their notes' other cards (see [Tags](concepts.md#tags)):
+```sh
+spares card edit --tags-to-add hard --query 'c.lapses>=4'
+spares card edit --tags-to-remove buried --ids 12 15
+```
+
 ## Getting notes created `n` days before a note
 
 You might be reviewing an old note and realize you forgot the note. Let's say this note was taken during a lecture in class. Then, you may need to understand the notes created a few days before that note. For example, this note may build on an idea introduced a few days earlier in class. A relative date in the query finds all notes created `n` days before a note, so that you can perform an action on them, such as marking them as forgotten. You may also wish to filter the notes by the tag.
@@ -137,8 +143,10 @@ Spares can keep your note files in a git repository, so you can branch them, let
 
 - `notes.git/` in your collection's directory (`<SPARES_ROOT>/users/<id>/`) is spares' copy. Only the spares server writes to it, and it commits every change, so its `main` describes the database.
 - `notes/` (and the `~/notes` symlink) becomes your clone of it.
-- **Fetch** to get changes made in spares: web edits, `spares note edit`, undo, tag renames, renders.
+- **Fetch** to get changes made in spares: web edits, `spares note edit`, undo, tag renames, cards' tags (such as `buried`), renders.
 - **Push to `main`** to import your changes into spares.
+
+A note's file shows its cards' own tags on their clozes, as `tag:` (see [Tags](concepts.md#tags)). Editing the key and pushing changes the card's tags, and deleting it takes them all. A card tagged in spares since you fetched, such as one tagged `buried` while reviewing, makes a push of its note stale until you fetch and rebase, as any change made in spares does.
 
 ### Setup
 
