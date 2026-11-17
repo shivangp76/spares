@@ -38,6 +38,7 @@ fn test_get_cards_grouping_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::ClozeData(
                         "a".to_string(),
@@ -71,6 +72,7 @@ fn test_get_cards_grouping_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1;ro:]b}}c{{[g:1]d}}e".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -94,6 +96,7 @@ fn test_get_cards_grouping_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData(
                         "a{{[g:1;o:1;ro:]b}}c{{[g:1]d}}e{{[o:2]f}}g".to_string(),
@@ -136,6 +139,7 @@ fn test_get_cards_grouping_multiple() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -166,6 +170,7 @@ fn test_get_cards_grouping_multiple() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -189,6 +194,7 @@ fn test_get_cards_grouping_multiple() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c{{[o:2]d}}e".to_string()),
                     NotePart::ClozeStart("{{[g:1; g:2;o:3]".to_string()),
@@ -225,6 +231,7 @@ fn test_get_cards_grouping_all_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -255,6 +262,7 @@ fn test_get_cards_grouping_all_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -303,6 +311,7 @@ fn test_get_cards_grouping_all_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:*]".to_string()),
                     NotePart::ClozeData(
@@ -331,6 +340,7 @@ fn test_get_cards_grouping_all_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:*]".to_string()),
                     NotePart::ClozeData(
@@ -374,6 +384,7 @@ fn test_get_cards_grouping_all_3() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -404,6 +415,7 @@ fn test_get_cards_grouping_all_3() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[g:2;o:2]".to_string()),
@@ -444,6 +456,7 @@ fn test_get_cards_grouping_all_3() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -474,6 +487,7 @@ fn test_get_cards_grouping_all_3() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[g:2;o:2]".to_string()),
@@ -522,6 +536,7 @@ fn test_get_cards_grouping_all_4() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -548,6 +563,7 @@ fn test_get_cards_grouping_all_4() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[g:1;o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -600,6 +616,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1;ro:]".to_string()),
                     NotePart::SurroundingData("a".to_string()),
@@ -622,6 +639,7 @@ fn test_get_cards_2_cards_same_grouping_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;o:1;ro:]a}}b".to_string()),
                     NotePart::ClozeStart("{{[g:2;o:2]".to_string()),
@@ -666,6 +684,7 @@ fn test_get_cards_circular_grouping_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1; g:2;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -694,6 +713,7 @@ fn test_get_cards_circular_grouping_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::ClozeStart("{{[g:1;o:1; g:2;o:2]".to_string()),
                     NotePart::ClozeData(
@@ -722,6 +742,7 @@ fn test_get_cards_circular_grouping_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("{{[g:1;o:1; g:2;o:2]a}}".to_string()),
                     NotePart::ClozeStart("{{[g:1; g:3;o:3]".to_string()),
@@ -770,6 +791,7 @@ fn test_get_cards_order_before_grouping() {
             type_answer: None,
             inherit: None,
             cloze_uid: None,
+            tags: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[g:1;o:1]".to_string()),
@@ -811,6 +833,7 @@ fn test_get_cards_grouping_multiple_times() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[h:Test Override;g:1;o:1; g:2;o:2]".to_string()),
@@ -844,6 +867,7 @@ fn test_get_cards_grouping_multiple_times() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[h:Test Override;g:1;o:1; g:2;o:2]".to_string()),

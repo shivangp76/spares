@@ -258,6 +258,18 @@ pub struct ClozeGroupingSettings {
     pub back_emphasis: bool,
     /// Whether the answer is typed before the card is flipped, and how it is compared.
     pub type_answer: Option<TypeAnswer>,
+    /// `tag:a,b`: the card's own tags (see [`crate::api::card_tags`]), on the cloze that keeps the
+    /// card's orders. For a cloze with `r:`, they are the forward card's, and `rtag:` gives the
+    /// reverse card's (`reverse_tags`). With `ro:`, the only card is the reverse one, which takes
+    /// `tag:`.
+    ///
+    /// Like `s:`, they are read but never stored in the note's text: the database keeps a card's
+    /// tags, and spares writes them into the note's file in the notes repository (see
+    /// [`crate::parsers::card_tags`]). `None` leaves the card's tags as they are, and an empty
+    /// `tag:` takes them all.
+    pub tags: Option<Vec<String>>,
+    /// `rtag:`, the tags of the reverse card of a cloze with `r:`. See [`Self::tags`].
+    pub reverse_tags: Option<Vec<String>>,
     /// Internal
     /// Will not serialize this grouping in the cloze settings string
     pub skip_serialization: bool,
@@ -528,6 +540,8 @@ impl ClozeGroupingSettings {
             back_reveal: BackReveal::default(),
             back_emphasis: DEFAULT_BACK_EMPHASIS,
             type_answer: None,
+            tags: None,
+            reverse_tags: None,
             skip_serialization: false,
             from_all_groupings: false,
         };

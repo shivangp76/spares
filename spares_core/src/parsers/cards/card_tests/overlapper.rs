@@ -61,6 +61,7 @@ fn blank_card(grouping: ClozeGrouping, data: Vec<NotePart>) -> CardData {
         type_answer: None,
         inherit: None,
         cloze_uid: None,
+        tags: None,
         data,
     }
 }

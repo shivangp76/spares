@@ -232,6 +232,8 @@ pub(super) fn boil_up_settings(
                 back_reveal,
                 back_emphasis,
                 type_answer,
+                tags,
+                reverse_tags,
                 // Individual cloze settings. Don't boil up
                 hidden_no_answer: _,
                 skip_serialization,
@@ -281,6 +283,12 @@ pub(super) fn boil_up_settings(
                 boiled_cloze_settings.inherit = *inherit;
                 grouping_settings.inherit = None;
             }
+            if tags.is_some() {
+                boiled_cloze_settings.tags = tags.take();
+            }
+            if reverse_tags.is_some() {
+                boiled_cloze_settings.reverse_tags = reverse_tags.take();
+            }
         }
 
         // Update the cloze that keeps the card's settings with boiled settings
@@ -294,6 +302,8 @@ pub(super) fn boil_up_settings(
         cloze.1.back_emphasis = boiled_cloze_settings.back_emphasis;
         cloze.1.type_answer = boiled_cloze_settings.type_answer;
         cloze.1.inherit = boiled_cloze_settings.inherit;
+        cloze.1.tags = boiled_cloze_settings.tags;
+        cloze.1.reverse_tags = boiled_cloze_settings.reverse_tags;
 
         // Validate settings
         let contains_image_occlusion = clozes

@@ -21,6 +21,10 @@ pub struct CardData {
     pub inherit: Option<CardInheritance>,
     pub cloze_uid: Option<ClozeUid>,
     pub data: Vec<NotePart>,
+    /// The card's own tags written on its cloze, if any (see
+    /// [`ClozeGroupingSettings::tags`](crate::parsers::ClozeGroupingSettings::tags)). `None`
+    /// leaves the card's tags as they are.
+    pub tags: Option<Vec<String>>,
 }
 
 impl CardData {

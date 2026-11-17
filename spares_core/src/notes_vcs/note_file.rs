@@ -10,6 +10,7 @@ use crate::NoteErrorKind;
 use crate::adapters::impls::spares::SparesAdapter;
 use crate::adapters::impls::spares::SparesRequestProcessor;
 use crate::api::note::RenderNoteData;
+use crate::api::note::card_tags_from_value;
 use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::helpers::value_to_string_vec;
@@ -20,6 +21,8 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
 use crate::parsers::TemplateType;
+use crate::parsers::card_tags::CardTagsByOrder;
+use crate::parsers::card_tags::take_card_tags;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::generate_files::construct_note_file_contents;
 use crate::parsers::get_file_notes;
@@ -69,6 +72,8 @@ pub struct NoteFields {
     pub keywords: BTreeSet<String>,
     pub tags: BTreeSet<String>,
     pub custom_data: CustomData,
+    /// The own tags of its cards, which the file shows on their clozes, so `data` is without them
+    pub card_tags: CardTagsByOrder,
 }
 
 /// A valid note updating `note_id`, from its file
@@ -90,8 +95,9 @@ impl ParsedNoteFile {
                     .collect()
             })
             .unwrap_or_default();
+        let (data, card_tags) = take_card_tags(parser, &self.data);
         NoteFields {
-            data: self.data.clone(),
+            data,
             keywords: self
                 .settings
                 .keywords
@@ -101,6 +107,7 @@ impl ParsedNoteFile {
                 .collect(),
             tags: self.settings.tags.iter().cloned().collect(),
             custom_data: self.settings.custom_data.clone(),
+            card_tags,
         }
     }
 }
@@ -124,6 +131,7 @@ impl NoteFields {
             linked_notes: Some(Vec::new()),
             note_data: self.data.clone(),
             custom_data: self.custom_data.clone(),
+            card_tags: self.card_tags.clone(),
         };
         Some(construct_note_file_contents(
             parser,
@@ -155,6 +163,7 @@ pub fn db_note_fields(row: &RenderNoteData) -> NoteFields {
             .collect(),
         tags: value_to_string_vec(&row.tags_value).into_iter().collect(),
         custom_data: row.custom_data.as_object().cloned().unwrap_or_default(),
+        card_tags: card_tags_from_value(&row.card_tags_value),
     }
 }
 

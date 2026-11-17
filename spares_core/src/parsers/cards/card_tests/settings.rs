@@ -40,6 +40,7 @@ fn test_get_cards_front_conceal_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -65,6 +66,7 @@ fn test_get_cards_front_conceal_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -88,6 +90,7 @@ fn test_get_cards_front_conceal_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -136,6 +139,7 @@ fn test_get_cards_front_conceal_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1;f:all]".to_string()),
@@ -166,6 +170,7 @@ fn test_get_cards_front_conceal_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -189,6 +194,7 @@ fn test_get_cards_front_conceal_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1;f:all]b}}c{{[o:2]d".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -224,6 +230,7 @@ fn test_get_cards_back_reveal_1() {
             type_answer: None,
             inherit: None,
             cloze_uid: None,
+            tags: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1;b:a]".to_string()),
@@ -259,6 +266,7 @@ fn test_get_cards_back_reveal_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -284,6 +292,7 @@ fn test_get_cards_back_reveal_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -307,6 +316,7 @@ fn test_get_cards_back_reveal_2() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -363,6 +373,7 @@ fn test_get_cards_suspended_only_deserialized() {
             type_answer: None,
             inherit: None,
             cloze_uid: None,
+            tags: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -398,6 +409,7 @@ fn test_get_cards_suspended_false() {
             type_answer: None,
             inherit: None,
             cloze_uid: None,
+            tags: None,
             data: vec![
                 NotePart::SurroundingData("a".to_string()),
                 NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -437,6 +449,7 @@ fn test_get_cards_previous_order_reorder() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -460,6 +473,7 @@ fn test_get_cards_previous_order_reorder() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -500,6 +514,7 @@ fn test_get_cards_previous_order_new_card() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -523,6 +538,7 @@ fn test_get_cards_previous_order_new_card() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -546,6 +562,7 @@ fn test_get_cards_previous_order_new_card() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c{{[o:2]d}}e".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -586,6 +603,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -609,6 +627,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b}}c".to_string()),
                     NotePart::ClozeStart("{{[o:2,3;r:]".to_string()),
@@ -632,6 +651,7 @@ fn test_get_cards_previous_order_with_reverse() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::ClozeData(
                         "a{{[o:1]b}}c".to_string(),
@@ -676,6 +696,7 @@ fn test_get_cards_inherit_basic() {
                 },
                 mode: InheritMode::Copy,
             }),
+            tags: None,
             cloze_uid: None,
             data: vec![
                 // `inh:` is not serialized, so ClozeStart has no settings.
@@ -750,6 +771,7 @@ fn test_get_cards_inherit_with_order() {
                 },
                 mode: InheritMode::Copy,
             }),
+            tags: None,
             cloze_uid: None,
             data: vec![
                 NotePart::ClozeStart("{{[o:1]".to_string()),

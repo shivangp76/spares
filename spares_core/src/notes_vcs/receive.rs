@@ -53,7 +53,7 @@ use crate::api::note::delete_notes;
 use crate::api::note::get_note;
 use crate::api::note::get_note_links_map;
 use crate::api::note::get_render_note_data;
-use crate::api::note::update_notes;
+use crate::api::note::update_note_from_file;
 use crate::api::undo::is_reverted;
 use crate::api::undo::join_event_group;
 use crate::api::undo::undo_event;
@@ -1182,7 +1182,9 @@ impl Import<'_> {
             tags: UpdateTags::SetTags(parsed.settings.tags),
             custom_data: Some(parsed.settings.custom_data),
         };
-        let response = update_notes(self.db, request, self.at, &self.parsers, true).await?;
+        // The file shows every card's tags, so a card without `tag:` has none
+        let response =
+            update_note_from_file(self.db, request, self.at, &self.parsers, true).await?;
         self.join(response.event_id).await
     }
 
@@ -1322,7 +1324,8 @@ fn imported_ids(journal: &Journal) -> Vec<NoteId> {
 
 /// Why a pushed change to a note is refused because the note is live, or would become live. A
 /// live note's data and custom data come from its source file, so an edit here would be overwritten
-/// by the next `spares import` of that file. Its tags and keywords stay editable, as on the web.
+/// by the next `spares import` of that file. Its tags and keywords, and its cards' tags, stay
+/// editable, as on the web.
 fn live_note_edit(
     context: &NoteFileContext,
     parser: &dyn Parseable,
@@ -1340,6 +1343,7 @@ fn live_note_edit(
         .to_string();
     new.tags.clone_from(&old.tags);
     new.keywords.clone_from(&old.keywords);
+    new.card_tags.clone_from(&old.card_tags);
     if same_note(context, parser, id, &old, &new) {
         return None;
     }

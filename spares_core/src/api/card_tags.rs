@@ -5,12 +5,17 @@
 //! removed here and are left out of every list of a card's own tags. A search for `tag=name`
 //! finds a card when the card or its note has the tag.
 //!
+//! A note's file shows its cards' tags on their clozes, as `tag:` (see
+//! [`crate::parsers::card_tags`]), so they can also be changed by pushing the file, or given to a
+//! new card by writing `tag:` on its cloze.
+//!
 //! Changes are logged as an [`EventType::UpdateCardTags`] event, with a `CreateTag` event before
 //! it for each tag it created, in one group, as note updates do. Undoing it puts the cards' tags
 //! back by name.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -43,6 +48,9 @@ use crate::model::EventType;
 use crate::model::NoteId;
 use crate::model::TagId;
 use crate::notes_vcs;
+use crate::parsers::CardData;
+use crate::parsers::NotePart;
+use crate::parsers::card_tags::CardTagsByOrder;
 use crate::schema::note::UpdateTags;
 
 /// The own tags of each of `card_ids` (see the module docs), sorted by name. Cards without any
@@ -146,6 +154,13 @@ pub(crate) struct CardTagChanges {
 impl CardTagChanges {
     pub fn is_empty(&self) -> bool {
         self.cards.is_empty()
+    }
+
+    pub fn extend(&mut self, other: Self) {
+        self.cards.extend(other.cards);
+        self.note_ids.extend(other.note_ids);
+        self.created.extend(other.created);
+        self.deleted.extend(other.deleted);
     }
 }
 
@@ -276,6 +291,97 @@ pub(crate) async fn set_card_tags(
     Ok(changes)
 }
 
+/// The own tags of the cards of each of `note_ids` by card order, for writing them into the notes'
+/// files (see [`crate::parsers::card_tags`]). Notes without any are left out.
+pub(crate) async fn card_tags_by_order(
+    conn: &mut SqliteConnection,
+    note_ids: &[NoteId],
+) -> Result<HashMap<NoteId, CardTagsByOrder>, Error> {
+    let mut tags: HashMap<NoteId, CardTagsByOrder> = HashMap::new();
+    for chunk in note_ids.chunks(MAX_ROWS_IN_QUERY) {
+        let query_str = format!(
+            r#"SELECT c.note_id, c."order", t.name FROM card c JOIN card_tag ct ON ct.card_id = c.id
+            JOIN tag t ON t.id = ct.tag_id
+            WHERE c.note_id IN ({}) AND t.query IS NULL ORDER BY c.note_id, c."order", t.name"#,
+            placeholders(chunk.len())
+        );
+        let mut query = sqlx::query_as::<_, (NoteId, u32, String)>(AssertSqlSafe(query_str));
+        for note_id in chunk {
+            query = query.bind(note_id);
+        }
+        for (note_id, order, name) in query
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?
+        {
+            tags.entry(note_id)
+                .or_default()
+                .entry(order)
+                .or_default()
+                .push(name);
+        }
+    }
+    Ok(tags)
+}
+
+/// Whether a card's settings are written in its note's text, where its tags can be too, rather
+/// than in an image occlusion's file or a CLI block
+fn tags_in_text(card: &CardData) -> bool {
+    !card
+        .data
+        .iter()
+        .any(|part| matches!(part, NotePart::ImageOcclusion { .. } | NotePart::Cli { .. }))
+}
+
+/// The tags each of a note's newly parsed `cards` should have, by position, checked and in the
+/// order they are stored in. `None` leaves a card's tags as they are. With `exact`, as for a note
+/// file pushed from the notes repository, which shows every card's tags, a card whose cloze has
+/// no `tag:` has none, unless its settings can't be written in the note's text.
+pub(crate) fn tags_of_parsed_cards(
+    cards: &[CardData],
+    filtered_tag_names: &[String],
+    exact: bool,
+) -> Result<Vec<Option<Vec<String>>>, Error> {
+    cards
+        .iter()
+        .map(|card| match &card.tags {
+            Some(tags) => Ok(Some(updated_tag_names(
+                &[],
+                &UpdateTags::SetTags(tags.clone()),
+                filtered_tag_names,
+            )?)),
+            None if exact && tags_in_text(card) => Ok(Some(Vec::new())),
+            None => Ok(None),
+        })
+        .collect()
+}
+
+/// Gives the cards of note `note_id` the tags in `tags` (see [`tags_of_parsed_cards`]), the
+/// card of order `i + 1` those at `i`.
+pub(crate) async fn set_note_card_tags(
+    conn: &mut SqliteConnection,
+    note_id: NoteId,
+    tags: &[Option<Vec<String>>],
+) -> Result<CardTagChanges, Error> {
+    if tags.iter().all(Option::is_none) {
+        return Ok(CardTagChanges::default());
+    }
+    let cards: Vec<(CardId, u32)> =
+        sqlx::query_as(r#"SELECT id, "order" FROM card WHERE note_id = ?"#)
+            .bind(note_id)
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let tags: Vec<(CardId, Vec<String>)> = cards
+        .into_iter()
+        .filter_map(|(card_id, order)| {
+            let tags = tags.get((order as usize).checked_sub(1)?)?.clone()?;
+            Some((card_id, tags))
+        })
+        .collect();
+    set_card_tags(conn, &tags).await
+}
+
 /// Applies `update` to the own tags of each of `card_ids`, in one transaction. See
 /// [`updated_tag_names`].
 pub(crate) async fn update_card_tags_on(
@@ -369,7 +475,8 @@ pub async fn update_card_tags_event(
 
 /// Changes the own tags of `card_ids` as `update` says, logged as an
 /// [`EventType::UpdateCardTags`] event if `log`. The notes of the cards that changed have their
-/// files rewritten in the notes repository. Returns the event, if one was logged.
+/// files rewritten in the notes repository, which show cards' tags on their clozes (see
+/// [`crate::parsers::card_tags`]). Returns the event, if one was logged.
 pub async fn update_card_tags(
     db: &SqlitePool,
     card_ids: &[CardId],

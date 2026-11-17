@@ -39,6 +39,7 @@ use crate::model::Tag;
 use crate::parsers::ConstructFileDataType;
 use crate::parsers::NoteImportAction;
 use crate::parsers::TemplateType;
+use crate::parsers::card_tags::CardTagsByOrder;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::get_all_parsers;
@@ -265,6 +266,7 @@ async fn test_note_generator(pool: SqlitePool) {
                 linked_notes: note.linked_notes,
                 custom_data: note.custom_data,
                 tags: note.tags,
+                card_tags: CardTagsByOrder::new(),
             })
             .collect::<Vec<_>>();
         let full_requests = requests

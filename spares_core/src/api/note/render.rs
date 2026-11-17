@@ -33,6 +33,7 @@ use crate::model::NoteId;
 use crate::model::NoteLink;
 use crate::notes_vcs;
 use crate::parsers::Parseable;
+use crate::parsers::card_tags::CardTagsByOrder;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::generate_files::GenerateNoteFilesRequests;
@@ -52,6 +53,9 @@ pub struct RenderNoteData {
     pub custom_data: Value,
     pub parser_name: String,
     pub tags_value: Value,
+    /// The own tags of the note's cards, as a JSON object of tag arrays by card order. See
+    /// [`card_tags_from_value`].
+    pub card_tags_value: Value,
 }
 
 /// Keywords of all notes, normalized once so that many searched keywords can be matched
@@ -112,7 +116,7 @@ pub async fn get_render_note_data(
     requested_note_ids: Option<Vec<NoteId>>,
 ) -> Result<Vec<RenderNoteData>, Error> {
     let query_str = format!(
-        r"SELECT
+        r#"SELECT
           n.id as note_id,
           n.data,
           COALESCE((SELECT JSON_GROUP_ARRAY(nk.keyword)
@@ -120,7 +124,13 @@ pub async fn get_render_note_data(
            WHERE nk.note_id = n.id AND nk.embedded = 0), '[]') as keywords_value,
           n.custom_data,
           p.name as parser_name,
-          COALESCE(JSON_GROUP_ARRAY(t.name), '[]') AS tags_value
+          COALESCE(JSON_GROUP_ARRAY(t.name), '[]') AS tags_value,
+          COALESCE((SELECT JSON_GROUP_OBJECT(c."order", JSON((SELECT JSON_GROUP_ARRAY(ct_t.name)
+             FROM card_tag ct JOIN tag ct_t ON ct_t.id = ct.tag_id
+             WHERE ct.card_id = c.id AND ct_t.query IS NULL)))
+           FROM card c WHERE c.note_id = n.id AND EXISTS (SELECT 1 FROM card_tag ct
+             JOIN tag ct_t ON ct_t.id = ct.tag_id WHERE ct.card_id = c.id AND ct_t.query IS NULL)),
+           '{{}}') AS card_tags_value
         FROM
           note n
         LEFT JOIN
@@ -133,7 +143,7 @@ pub async fn get_render_note_data(
         GROUP BY
           n.id
         ORDER BY
-          n.id",
+          n.id"#,
         requested_note_ids
             .as_ref()
             .filter(|ids| !ids.is_empty())
@@ -563,6 +573,7 @@ pub fn render_note_data_to_generate_files_request<S: ::std::hash::BuildHasher>(
         custom_data,
         parser_name: _,
         tags_value,
+        card_tags_value,
     } = render_note_data;
     let linked_notes = linked_notes_map.as_ref().map(|mapping| {
         mapping.get(note_id).map(|note_links| {
@@ -594,7 +605,24 @@ pub fn render_note_data_to_generate_files_request<S: ::std::hash::BuildHasher>(
         linked_notes: linked_notes.flatten(),
         custom_data: custom_data.as_object().unwrap().clone(),
         tags,
+        card_tags: card_tags_from_value(card_tags_value),
     }
+}
+
+/// The own tags of a note's cards from [`RenderNoteData::card_tags_value`], a JSON object of tag
+/// arrays by card order
+pub fn card_tags_from_value(value: &Value) -> CardTagsByOrder {
+    value
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(order, tags)| {
+            let mut tags = value_to_string_vec(tags);
+            tags.sort();
+            Some((order.parse().ok()?, tags))
+                .filter(|(_, tags): &(u32, Vec<String>)| !tags.is_empty())
+        })
+        .collect()
 }
 
 #[cfg(test)]

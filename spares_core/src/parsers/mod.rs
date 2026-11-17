@@ -25,6 +25,7 @@ use crate::platform::is_file;
 use crate::platform::read_to_string;
 
 pub mod audio;
+pub mod card_tags;
 mod cards;
 pub(crate) mod cli;
 mod clozes;
@@ -617,6 +618,7 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
+    use crate::parsers::card_tags::CardTagsByOrder;
 
     #[test]
     fn test_parsers_validation() {
@@ -646,6 +648,7 @@ mod tests {
             linked_notes: None,
             note_data: "a".to_string(),
             custom_data: CustomData::default(),
+            card_tags: CardTagsByOrder::new(),
         };
         for parser_fn in get_all_parsers() {
             let parser = parser_fn();
@@ -696,6 +699,7 @@ mod tests {
             type_answer: None,
             inherit: None,
             cloze_uid: None,
+            tags: None,
             data: vec![NotePart::SurroundingData("front text".to_string())],
         };
         let request = |keywords: &[&str], tags: &[&str]| GenerateNoteFilesRequest {
@@ -705,6 +709,7 @@ mod tests {
             linked_notes: None,
             note_data: "front text".to_string(),
             custom_data: CustomData::default(),
+            card_tags: CardTagsByOrder::new(),
         };
         let before = request(&["first keyword"], &["first tag"]);
         let after = request(&["other keyword"], &["other tag", "second tag"]);

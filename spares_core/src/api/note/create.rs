@@ -13,6 +13,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::TagErrorKind;
 use crate::api::MAX_ROWS_IN_QUERY;
+use crate::api::card_tags;
 use crate::api::execute_batched_query;
 use crate::api::fetch_review_logs;
 use crate::api::max_rows_for;
@@ -106,6 +107,12 @@ pub async fn create_notes(
         .map(|create_note_request| &create_note_request.tags)
         .collect::<Vec<_>>();
     validate_tags(db, tags_by_note).await?;
+    let filtered_tag_names = {
+        let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+        card_tags::filtered_tag_names_on(&mut conn).await?
+    };
+    // The tags the notes' clozes give their cards, by note and card position
+    let mut new_card_tags: Vec<(NoteId, Vec<Option<Vec<String>>>)> = Vec::new();
 
     let mut note_responses = Vec::new();
     let mut generate_files_requests = Vec::new();
@@ -149,6 +156,8 @@ pub async fn create_notes(
             data,
             external_config.as_ref().map(|c| &c.overlapper),
         )?;
+        let note_card_tags =
+            card_tags::tags_of_parsed_cards(&card_datas, &filtered_tag_names, false)?;
         // Check this note's `mv:` directives (with the earlier notes', so no card moves twice)
         // before anything of it is written
         let note_moves = card_datas
@@ -276,8 +285,17 @@ pub async fn create_notes(
             linked_notes: None, // This is expensive so only done in `render_notes()`,
             custom_data: note.custom_data.as_object().unwrap().clone(),
             tags,
+            card_tags: note_card_tags
+                .iter()
+                .enumerate()
+                .filter_map(|(i, tags)| {
+                    let tags = tags.clone().filter(|tags| !tags.is_empty())?;
+                    Some((i as u32 + 1, tags))
+                })
+                .collect(),
         };
         generate_files_requests.push(generate_files_request);
+        new_card_tags.push((note_id, note_card_tags));
     }
 
     // Create all note_keywords at the very end, in bulk
@@ -293,6 +311,18 @@ pub async fn create_notes(
     create_cards(db, &card_entries).await?;
 
     apply_srs_inheritance(db, &inherit_entries).await?;
+
+    let mut card_tag_changes = card_tags::CardTagChanges::default();
+    if new_card_tags
+        .iter()
+        .any(|(_, tags)| tags.iter().any(Option::is_some))
+    {
+        let mut tx = db.begin().await.map_err(|e| Error::Sqlx { source: e })?;
+        for (note_id, tags) in &new_card_tags {
+            card_tag_changes.extend(card_tags::set_note_card_tags(&mut tx, *note_id, tags).await?);
+        }
+        tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    }
 
     // Create card files, without compiling. (There is no point in compiling if the linked notes are not updated.)
     notes_vcs::fill_linked_notes(db, &mut generate_files_requests).await?;
@@ -382,6 +412,12 @@ pub async fn create_notes(
     let move_event_id = move_cards(db, &move_entries, at, log).await?;
     if let (Some(leader), Some(move_event_id)) = (event_id, move_event_id) {
         join_event_group(db, leader, move_event_id).await?;
+    }
+    // Last in the group, so an undo takes the tags back before it deletes the cards
+    if log {
+        event_id = card_tags::log_card_tag_changes(db, card_tag_changes, at, event_id)
+            .await?
+            .or(event_id);
     }
 
     Ok(NotesResponse {

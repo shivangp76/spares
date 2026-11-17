@@ -48,6 +48,10 @@ pub struct ClozeSettingsKeys {
     pub id: &'static str,
     /// Speaks the cloze's text. See [`crate::parsers::tts`] for its values.
     pub tts: &'static str,
+    /// The card's own tags, separated by commas. See [`ClozeGroupingSettings::tags`].
+    pub tags: &'static str,
+    /// The reverse card's own tags. See [`ClozeGroupingSettings::reverse_tags`].
+    pub reverse_tags: &'static str,
 }
 
 impl Default for ClozeSettingsKeys {
@@ -69,6 +73,8 @@ impl Default for ClozeSettingsKeys {
             overlapper: "ov",
             id: "id",
             tts: TtsSetting::KEY,
+            tags: "tag",
+            reverse_tags: "rtag",
         }
     }
 }
@@ -171,6 +177,9 @@ pub fn construct_cloze_string(
             back_reveal,
             back_emphasis,
             type_answer,
+            // Kept in the database, not in the note's text, so only written with `inherit`
+            tags,
+            reverse_tags,
             skip_serialization: _,
             from_all_groupings: _,
         } = settings;
@@ -186,6 +195,21 @@ pub fn construct_cloze_string(
                     .collect::<Vec<_>>()
                     .join(",")
             ));
+        }
+        if serialize_ephemeral {
+            for (key, tags) in [
+                (cloze_settings_keys.tags, tags),
+                (cloze_settings_keys.reverse_tags, reverse_tags),
+            ] {
+                if let Some(tags) = tags {
+                    grouping_parts.push(format!(
+                        "{}{}{}",
+                        key,
+                        settings_key_value_delim,
+                        quote_setting_value(&tags.join(","), settings_delim)
+                    ));
+                }
+            }
         }
         if *include_forward_card && *include_backward_card {
             grouping_parts.push(format!(
@@ -394,6 +418,17 @@ fn hint_note(description: &str, hint: &str, key: &str, value: &str, hint_key: &s
     )
 }
 
+/// The tags of a `tag:` or `rtag:` value: separated by commas, possibly quoted (see
+/// [`quote_setting_value`])
+pub(crate) fn parse_tag_list(value: &str) -> Vec<String> {
+    unquote_setting_value(value)
+        .split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
 #[expect(clippy::too_many_lines, reason = "One branch per key")]
 fn parse_grouping_settings(
     grouping_settings: &mut Vec<(&str, &str)>,
@@ -418,6 +453,8 @@ fn parse_grouping_settings(
         overlapper: overlapper_key,
         id: id_key,
         tts: tts_key,
+        tags: tags_key,
+        reverse_tags: reverse_tags_key,
     }: &ClozeSettingsKeys,
     modify_defaults_fn: ModifyDefaultsFn,
 ) -> Result<ClozeGroupingSettings, LibraryError> {
@@ -492,6 +529,10 @@ fn parse_grouping_settings(
                             at: card_settings_indices.clone().into(),
                         })
                     })?);
+            } else if key == tags_key {
+                current_grouping_settings.tags = Some(parse_tag_list(value));
+            } else if key == reverse_tags_key {
+                current_grouping_settings.reverse_tags = Some(parse_tag_list(value));
             } else if key == overlapper_key {
                 settings.is_overlapper = true;
             } else if key == inherit_key || key == move_card_key {

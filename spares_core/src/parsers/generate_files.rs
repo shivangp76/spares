@@ -33,6 +33,8 @@ use crate::parsers::RenderOutputDirectoryType;
 use crate::parsers::RenderedFile;
 use crate::parsers::TemplateType;
 use crate::parsers::WebRenderMode;
+use crate::parsers::card_tags::CardTagsByOrder;
+use crate::parsers::card_tags::show_card_tags;
 use crate::parsers::get_cards;
 use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionSources;
@@ -139,6 +141,9 @@ pub struct GenerateNoteFilesRequest {
     pub linked_notes: Option<Vec<LinkedNote>>,
     pub note_data: String,
     pub custom_data: CustomData,
+    /// The own tags of the note's cards, which its file shows on their clozes (see
+    /// [`crate::parsers::card_tags`]). Only the note's file has them, not its cards' files.
+    pub card_tags: CardTagsByOrder,
 }
 
 #[derive(Clone, Debug)]
@@ -299,6 +304,16 @@ pub fn construct_note_file_contents(
     body_placeholder: &str,
     request: &GenerateNoteFilesRequest,
 ) -> String {
+    let with_card_tags;
+    let request = if request.card_tags.is_empty() {
+        request
+    } else {
+        with_card_tags = GenerateNoteFilesRequest {
+            note_data: show_card_tags(parser, &request.note_data, &request.card_tags),
+            ..request.clone()
+        };
+        &with_card_tags
+    };
     let note_file_data = parser.construct_full_file_data(
         &[(ConstructFileDataType::Note, request)],
         &NoteImportAction::Update(request.note_id),

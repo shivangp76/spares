@@ -2245,3 +2245,86 @@ async fn test_anki_push_adds_back_a_note_deleted_in_anki(pool: SqlitePool) {
     );
     assert!(!refresh(&pool, &anki).await.changed);
 }
+
+async fn card_tags_of(pool: &SqlitePool, card_id: i64) -> Vec<String> {
+    spares_core::api::card_tags::card_tag_names(pool, &[card_id])
+        .await
+        .unwrap()
+        .remove(&card_id)
+        .unwrap_or_default()
+}
+
+#[sqlx::test]
+async fn test_card_tags_in_note_files(pool: SqlitePool) {
+    let _guard = setup(&pool).await;
+    init(&pool).await;
+    let card_id = card_at(&pool, first(), 1).await.unwrap();
+
+    // Tagging a card in spares writes its tag onto its cloze in the note's file
+    spares_core::api::card_tags::update_card_tags(
+        &pool,
+        &[card_id],
+        &UpdateTags::ModifyTags {
+            tags_to_remove: None,
+            tags_to_add: Some(vec!["hard".to_string()]),
+        },
+        Utc::now(),
+        true,
+    )
+    .await
+    .unwrap();
+    let file = read(&note_path(&repo(), first()));
+    assert!(file.contains("{{[o:1;tag:hard] Cloze here }}"), "{file}");
+    assert_eq!(
+        last_message(&repo()),
+        format!("spares: tag cards note {}", first())
+    );
+    assert_eq!(status(&repo()), "");
+    assert_eq!(
+        note_data(&pool, first()).await,
+        "First {{[o:1] Cloze here }}"
+    );
+
+    // Pushing a change to the key changes the card's tags, not the note's text
+    let clone = clone();
+    commit_edit(&clone, first(), |file| {
+        file.replace("tag:hard]", "tag:hard,later]")
+    });
+    assert!(push(&pool, &clone, true).await.receive.ok);
+    assert_eq!(card_tags_of(&pool, card_id).await, ["hard", "later"]);
+    assert_eq!(
+        note_data(&pool, first()).await,
+        "First {{[o:1] Cloze here }}"
+    );
+
+    // An edit elsewhere in the note keeps them
+    commit_edit(&clone, first(), |file| file.replace("First", "Primero"));
+    assert!(push(&pool, &clone, true).await.receive.ok);
+    assert_eq!(card_tags_of(&pool, card_id).await, ["hard", "later"]);
+
+    // Removing the key takes them
+    commit_edit(&clone, first(), |file| file.replace(";tag:hard,later", ""));
+    assert!(push(&pool, &clone, true).await.receive.ok);
+    assert_eq!(card_tags_of(&pool, card_id).await, Vec::<String>::new());
+    assert_eq!(
+        read(&note_path(&repo(), first())),
+        read(&note_path(&clone, first()))
+    );
+
+    // A card tagged in spares since the clone fetched makes a push of its note stale
+    spares_core::api::card_tags::update_card_tags(
+        &pool,
+        &[card_id],
+        &UpdateTags::ModifyTags {
+            tags_to_remove: None,
+            tags_to_add: Some(vec!["buried".to_string()]),
+        },
+        Utc::now(),
+        true,
+    )
+    .await
+    .unwrap();
+    commit_edit(&clone, first(), |file| file.replace("Primero", "First"));
+    assert!(!push(&pool, &clone, true).await.receive.ok);
+    assert_eq!(card_tags_of(&pool, card_id).await, ["buried"]);
+}

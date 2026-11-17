@@ -239,6 +239,19 @@ pub fn syntax_examples(
             ),
         ),
         (
+            "Card tags",
+            format!(
+                "`{}` gives the cloze's card tags of its own, which its note doesn't have, separated \
+                 by commas (`{}` for the reverse card of a cloze with `{}`). They stay on the card, \
+                 not in the note's text, and its file in the notes repository shows them here.",
+                keys.tags, keys.reverse_tags, keys.include_reverse
+            ),
+            format!(
+                "The capital of France is {}.",
+                cloze("Paris", &[(keys.tags, "hard,geography:europe")])
+            ),
+        ),
+        (
             "Inherit a card's reviews",
             format!(
                 "`{}{}gir/1` gives the new card the scheduling and reviews of card 1 of note \
@@ -459,6 +472,8 @@ mod tests {
                 "{name}: {speech:?}"
             );
             assert_eq!(parsed("Suspended")[0].is_suspended, Some(true));
+            let card_tags = parsed("Card tags")[0].tags.clone().unwrap_or_default();
+            assert_eq!(card_tags, ["hard", "geography:europe"], "{name}");
             for (name, mode) in [
                 (
                     "Inherit a card's reviews",

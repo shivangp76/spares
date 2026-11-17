@@ -313,6 +313,8 @@ pub fn get_cards_main(
             back_reveal,
             back_emphasis,
             type_answer,
+            tags,
+            reverse_tags,
             skip_serialization: _,
             from_all_groupings: _,
         } = &settings;
@@ -468,6 +470,11 @@ pub fn get_cards_main(
                 // WORKAROUND: To reduce complexity, `inherit` only applies to the first (forward) card. For `r:` clozes that produce both a forward and backward card, the backward card starts fresh. If we wanted to implement it for the backwards card as well, we would need modify the syntax of `inh:` and also add a key to `ClozeGroupingSettings` which is already a large struct.
                 inherit: if is_first_direction { *inherit } else { None },
                 cloze_uid: *cloze_uid,
+                tags: if is_first_direction {
+                    tags.clone()
+                } else {
+                    reverse_tags.clone()
+                },
             });
             is_first_direction = false;
         }
@@ -678,6 +685,7 @@ fn build_cli_cards(
                 type_answer: None,
                 inherit: None,
                 cloze_uid: cli_data.id,
+                tags: None,
                 data: note_parts.clone(),
             }
         })

@@ -86,6 +86,7 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettings;
 use crate::parsers::Parseable;
 use crate::parsers::TemplateType;
+use crate::parsers::card_tags::CardTagsByOrder;
 use crate::parsers::find_parser;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::generate_files::construct_note_file_contents;
@@ -510,6 +511,8 @@ fn note_contents(
                 custom_data: Value::Object(row_custom_data),
                 parser_name: row.parser_name.clone(),
                 tags_value: row.tags_value.clone(),
+                // Anki has no tags of single cards
+                card_tags_value: Value::Object(serde_json::Map::new()),
             };
             let file_fields = file_note_fields(context, parser, base, id).map(|mut fields| {
                 fields.custom_data.clone_from(&custom_data);
@@ -530,6 +533,7 @@ fn note_contents(
                 .and_then(|id| linked_notes_from_map(&db_notes.links, id)),
             note_data: data.clone(),
             custom_data,
+            card_tags: CardTagsByOrder::new(),
         };
         return render(parser, note_path.id(), &request).map(Some);
     }
@@ -552,6 +556,7 @@ fn note_contents(
             .and_then(|id| linked_notes_from_map(&db_notes.links, id)),
         note_data: anki_note.note_data.clone(),
         custom_data,
+        card_tags: CardTagsByOrder::new(),
     };
     render(parser, note_path.id(), &request).map(Some)
 }

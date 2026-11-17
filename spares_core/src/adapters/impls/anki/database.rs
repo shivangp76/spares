@@ -37,6 +37,7 @@ use crate::model::DEFAULT_DESIRED_RETENTION;
 use crate::model::NOTE_ID_KEY;
 use crate::model::NoteId;
 use crate::model::RatingId;
+use crate::parsers::card_tags::CardTagsByOrder;
 use crate::parsers::generate_files::GenerateNoteFilesRequest;
 use crate::parsers::tts::TtsSetting;
 use crate::schema::card::CardsSelector;
@@ -341,6 +342,7 @@ impl AnkiNote {
             linked_notes: None,
             custom_data: self.custom_data.clone(),
             tags: self.tags.clone(),
+            card_tags: CardTagsByOrder::new(),
         })
     }
 }

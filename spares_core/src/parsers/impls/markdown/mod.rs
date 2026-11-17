@@ -210,6 +210,8 @@ impl Parseable for MarkdownParser {
             linked_notes,
             custom_data,
             tags,
+            // Already in `note_data` (see `construct_note_file_contents`)
+            card_tags: _,
         } = request;
         let keywords_str = keywords.join(", ");
         let tags_str = tags.join(", ");

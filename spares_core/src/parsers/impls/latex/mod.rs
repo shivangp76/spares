@@ -300,6 +300,8 @@ fn construct_file_data(
         linked_notes,
         custom_data,
         tags,
+        // Already in `note_data` (see `construct_note_file_contents`)
+        card_tags: _,
     } = request;
     let keywords_str = keywords.join(", ");
     let tags_str = tags.join(", ");
@@ -735,6 +737,7 @@ mod tests {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a\n".to_string()),
                     NotePart::ClozeStart("\\begin{cl}[o:1]".to_string()),
@@ -763,6 +766,7 @@ mod tests {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a\n".to_string()),
                     NotePart::ClozeStart("\\begin{cl}".to_string()),

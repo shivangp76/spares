@@ -175,6 +175,8 @@ impl Parseable for TypstParser {
             linked_notes,
             custom_data,
             tags,
+            // Already in `note_data` (see `construct_note_file_contents`)
+            card_tags: _,
         } = request;
         let keywords_str = keywords.join(", ");
         let tags_str = tags.join(", ");
@@ -787,6 +789,7 @@ pub mod tests {
                     type_answer: None,
                     inherit: None,
                     cloze_uid: None,
+                    tags: None,
                     data: vec![
                         NotePart::ClozeStart("#cl[".to_string()),
                         NotePart::ClozeData(
@@ -808,6 +811,7 @@ pub mod tests {
                     type_answer: None,
                     inherit: None,
                     cloze_uid: None,
+                    tags: None,
                     data: vec![
                         NotePart::SurroundingData("#cl[\n- Test ".to_string()),
                         NotePart::ClozeStart("#cl[".to_string()),
@@ -845,6 +849,7 @@ pub mod tests {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("[".to_string()),
                     NotePart::ClozeStart("#cl[".to_string()),

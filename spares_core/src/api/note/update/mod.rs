@@ -14,6 +14,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::ParserErrorKind;
 use crate::api::MAX_ROWS_IN_QUERY;
+use crate::api::card_tags;
 use crate::api::fetch_batched_query;
 use crate::api::note::CardMove;
 use crate::api::note::check_card_moves;
@@ -84,6 +85,9 @@ struct ParsedNote {
     new_cards: Vec<CardData>,
     all_keywords: Vec<(String, bool)>, // (keyword, is_embedded)
     old_card_orders: Vec<usize>,
+    /// The tags of the cards by position, as their clozes give them (see
+    /// [`card_tags::tags_of_parsed_cards`])
+    card_tags: Vec<Option<Vec<String>>>,
 }
 
 /// Per-note state accumulated in Phase 2b and consumed in Phase 4.
@@ -183,6 +187,33 @@ pub async fn update_notes_batch(
     all_parsers: &[fn() -> Box<dyn Parseable>],
     log: bool,
 ) -> Result<Vec<UpdateNotesResponse>, Error> {
+    update_notes_batch_with(db, bodies, at, all_parsers, log, false).await
+}
+
+/// [`update_notes`] for a note's file pushed from the notes repository, which shows the tags of
+/// the note's cards on their clozes (see [`crate::parsers::card_tags`]): a card whose cloze has no
+/// `tag:` is left with none. Elsewhere, such a card keeps its tags, since the text a client sends,
+/// such as the note's stored text, may not show them.
+pub(crate) async fn update_note_from_file(
+    db: &SqlitePool,
+    body: UpdateNotesRequest,
+    at: DateTime<Utc>,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+    log: bool,
+) -> Result<UpdateNotesResponse, Error> {
+    let mut responses = update_notes_batch_with(db, vec![body], at, all_parsers, log, true).await?;
+    Ok(responses.remove(0))
+}
+
+/// [`update_notes_batch`], with `exact_card_tags` as [`update_note_from_file`] says
+async fn update_notes_batch_with(
+    db: &SqlitePool,
+    bodies: Vec<UpdateNotesRequest>,
+    at: DateTime<Utc>,
+    all_parsers: &[fn() -> Box<dyn Parseable>],
+    log: bool,
+    exact_card_tags: bool,
+) -> Result<Vec<UpdateNotesResponse>, Error> {
     let mut commit = NotesCommit::default();
     let mut responses = Vec::with_capacity(bodies.len());
     let mut result = Ok(());
@@ -194,6 +225,7 @@ pub async fn update_notes_batch(
             at,
             all_parsers,
             log,
+            exact_card_tags,
             &mut commit,
         ))
         .await
@@ -244,6 +276,7 @@ async fn update_notes_uncommitted(
     at: DateTime<Utc>,
     all_parsers: &[fn() -> Box<dyn Parseable>],
     log: bool,
+    exact_card_tags: bool,
     commit: &mut NotesCommit,
 ) -> Result<UpdateNotesResponse, Error> {
     // Destructuring is used so if the struct is ever updated, the compiler will warn us to make the appropriate changes here.
@@ -321,6 +354,10 @@ async fn update_notes_uncommitted(
         })
         .await?;
     let notes_map: HashMap<NoteId, Note> = existing_notes.into_iter().map(|n| (n.id, n)).collect();
+    let current_card_tags = {
+        let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+        card_tags::card_tags_by_order(&mut conn, &note_ids).await?
+    };
     // This mirrors what the old per-note `fetch_one` produced when a selector referenced a
     // non-existent note: a `RowNotFound` sqlx error.
     for id in &note_ids {
@@ -540,6 +577,18 @@ async fn update_notes_uncommitted(
         // order, so the `filter_map` below never drops a real order.
         let old_card_orders: Vec<usize> = old_cards.iter().filter_map(|card| card.order).collect();
 
+        let new_card_tags = card_tags::tags_of_parsed_cards(
+            &new_cards,
+            &existing_filtered_tag_names,
+            exact_card_tags,
+        )?;
+        let note_card_tags = current_card_tags.get(note_id);
+        let card_tags_unchanged = new_card_tags.iter().enumerate().all(|(i, tags)| {
+            tags.as_ref().is_none_or(|tags| {
+                let current = note_card_tags.and_then(|by_order| by_order.get(&(i as u32 + 1)));
+                *tags == current.cloned().unwrap_or_default()
+            })
+        });
         let keywords_unchanged = all_keywords.iter().cloned().collect::<BTreeSet<_>>()
             == current_keywords.remove(note_id).unwrap_or_default();
         // A card taken from another note (`mv:`), or lined up with another old card (see
@@ -557,6 +606,7 @@ async fn update_notes_uncommitted(
             && new_custom_data == existing_note.custom_data
             && keywords_unchanged
             && tags_unchanged(&tags, current_tags.get(note_id))
+            && card_tags_unchanged
         {
             unchanged_notes.push(NoteResponse::new(
                 existing_note,
@@ -579,6 +629,7 @@ async fn update_notes_uncommitted(
             new_cards,
             all_keywords,
             old_card_orders,
+            card_tags: new_card_tags,
         });
     }
 
@@ -592,6 +643,7 @@ async fn update_notes_uncommitted(
     // `mv:` directives, checked before the transaction commits and carried out once the update's
     // event is logged
     let mut move_entries: Vec<CardMove> = Vec::new();
+    let mut card_tag_changes = card_tags::CardTagChanges::default();
 
     for parsed in parsed_notes {
         let created_at: i64 = sqlx::query_scalar(
@@ -629,6 +681,10 @@ async fn update_notes_uncommitted(
                 at,
             )
             .await?,
+        );
+
+        card_tag_changes.extend(
+            card_tags::set_note_card_tags(&mut *tx, parsed.note_id, &parsed.card_tags).await?,
         );
 
         let tag_changes = tags::update_tags(
@@ -760,6 +816,10 @@ async fn update_notes_uncommitted(
 
     check_card_moves(&mut tx, &move_entries).await?;
     tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    let note_card_tags = {
+        let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+        card_tags::card_tags_by_order(&mut conn, &all_note_ids).await?
+    };
 
     // ---- Phase 4: Build responses, parse requests, delete old files, and undo snapshots ----
 
@@ -835,6 +895,7 @@ async fn update_notes_uncommitted(
                 .cloned()
                 .unwrap_or_default(),
             tags,
+            card_tags: note_card_tags.get(&note_id).cloned().unwrap_or_default(),
         };
         parse_note_requests.push((updated_note.parser_id, parse_note_request));
 
@@ -957,6 +1018,14 @@ async fn update_notes_uncommitted(
     if let (Some(leader), Some(move_event_id)) = (event_id, move_event_id) {
         join_event_group(db, leader, move_event_id).await?;
     }
+    // Last in the group, so an undo takes the tags back before it deletes the cards it created
+    let event_id = if log {
+        card_tags::log_card_tag_changes(db, card_tag_changes, at, event_id)
+            .await?
+            .or(event_id)
+    } else {
+        event_id
+    };
 
     // In the order of `note_ids`, as before notes were left alone
     note_responses.extend(unchanged_notes);

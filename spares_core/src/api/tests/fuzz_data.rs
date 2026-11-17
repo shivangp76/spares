@@ -259,6 +259,8 @@ fn generate_note(node: &ClozeEntry, parser: &dyn Parseable, rng: &mut ThreadRng)
         back_reveal: BackReveal::FullNote,
         back_emphasis: false,
         type_answer: None,
+        tags: None,
+        reverse_tags: None,
         skip_serialization: false,
         from_all_groupings: false,
     };

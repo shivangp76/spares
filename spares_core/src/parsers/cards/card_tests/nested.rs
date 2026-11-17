@@ -33,6 +33,7 @@ fn test_get_cards_nested_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -56,6 +57,7 @@ fn test_get_cards_nested_1() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -92,6 +94,7 @@ fn test_get_cards_nested_1_reverse() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1,2;r:]".to_string()),
@@ -115,6 +118,7 @@ fn test_get_cards_nested_1_reverse() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::ClozeData(
                         "a".to_string(),
@@ -141,6 +145,7 @@ fn test_get_cards_nested_1_reverse() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1,2;r:]b".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),
@@ -189,6 +194,7 @@ fn test_get_cards_nested_siblings() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a".to_string()),
                     NotePart::ClozeStart("{{[o:1]".to_string()),
@@ -212,6 +218,7 @@ fn test_get_cards_nested_siblings() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b".to_string()),
                     NotePart::ClozeStart("{{[o:2]".to_string()),
@@ -235,6 +242,7 @@ fn test_get_cards_nested_siblings() {
                 type_answer: None,
                 inherit: None,
                 cloze_uid: None,
+                tags: None,
                 data: vec![
                     NotePart::SurroundingData("a{{[o:1]b{{[o:2]c}}d".to_string()),
                     NotePart::ClozeStart("{{[o:3]".to_string()),

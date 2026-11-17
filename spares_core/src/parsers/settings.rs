@@ -542,7 +542,7 @@ pub enum SettingsSyntax {
 
 /// Splits `settings` at each delimiter that is not escaped or in a quoted value (see
 /// [`SettingsSyntax::Cloze`]). The parts keep their escapes and quotes.
-fn split_cloze_settings<'a>(
+pub(crate) fn split_cloze_settings<'a>(
     settings: &'a str,
     settings_delim: &str,
     settings_key_value_delim: &str,
