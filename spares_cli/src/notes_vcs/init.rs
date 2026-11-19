@@ -44,7 +44,8 @@ rd = ["diff", "--tool", "spares-render-diff"]
 spares-pull = ["util", "exec", "--", "sh", "-c", '''
   jj git fetch && jj rebase -b "${1:-@}" -d main@origin
 ''', "spares-pull"]
-# Push a revision (default: @, or @- when @ is empty and not a merge) to spares
+# Push a revision (default: @, or @- when @ is empty and not a merge) to spares, then fetch the
+# commits spares made on top of it and move @ onto them
 spares-push = ["util", "exec", "--", "sh", "-c", '''
   set -e
   rev="${1:-@}"
@@ -59,8 +60,20 @@ spares-push = ["util", "exec", "--", "sh", "-c", '''
   fi
   # Checked above to be on top of spares' `main`, so moving the local bookmark anywhere is safe
   jj bookmark set main --allow-backwards -r "$rev"
-  # A rejected push must not leave the local `main` on the rejected commit
-  jj git push -b main || { jj bookmark set main --allow-backwards -r main@origin >/dev/null 2>&1; exit 1; }
+  # A rejected push must not leave the local `main` on the rejected commit. The variable tells the
+  # hook that this alias fetches afterwards.
+  SPARES_PUSH_FETCHES=1 jj git push -b main || { jj bookmark set main --allow-backwards -r main@origin >/dev/null 2>&1; exit 1; }
+  # Read after the push, which rewrites the commits when `git.sign-on-push` signs them
+  pushed="$(jj log --no-graph -r main -T commit_id)"
+  jj git fetch || { echo "pushed, but fetching failed; run 'jj spares-pull'" >&2; exit 1; }
+  if [ -n "$(jj log --no-graph -r '@ & ::main@origin' -T '"x"')" ]; then
+    # @ itself was pushed: start a new change on spares' latest `main`
+    jj new main@origin
+  elif [ "$(jj log --no-graph -r main@origin -T commit_id)" != "$pushed" ] \
+    && [ -n "$(jj log --no-graph -r "@ & $pushed::" -T '"x"')" ]; then
+    # Work on top of the pushed revision goes on top of spares' commits, as `jj spares-pull` does
+    jj rebase -b @ -d main@origin
+  fi
 ''', "spares-push"]
 # Update `anki` with Anki's notes and fetch it
 spares-anki-pull = ["util", "exec", "--", "sh", "-c", '''

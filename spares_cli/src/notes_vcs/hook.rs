@@ -294,6 +294,9 @@ async fn post_receive(base_url: &str, client: &Client) -> Result<bool, String> {
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string());
     if head.as_deref() == Some(new.as_str()) {
         say("spares matches your push; there is nothing to fetch");
+    } else if std::env::var_os("SPARES_PUSH_FETCHES").is_some() {
+        // Set by `jj spares-push`, which fetches and rebases onto spares' commits itself
+        say("spares committed the notes as it wrote them; fetching them");
     } else {
         say("fetch (`jj spares-pull` / `git pull --rebase`) to get the notes as spares wrote them");
     }
