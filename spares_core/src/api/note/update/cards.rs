@@ -17,7 +17,6 @@ use crate::api::note::copy_review_logs_on;
 use crate::api::note::create_cards_on;
 use crate::api::note::live::PARKED_CARD_ORDER_START;
 use crate::api::placeholders;
-use crate::model::AUTO_FIX_MISSING_CARDS;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::NoteId;
@@ -380,15 +379,14 @@ pub(super) async fn update_cards(
         }
     }
     apply_srs_inheritance_on(&mut *conn, &inherit_entries).await?;
-    if AUTO_FIX_MISSING_CARDS {
-        verify_card_consistency(&mut *conn, note_id, new_card_data_ref, at).await?;
-    }
+    verify_card_consistency(&mut *conn, note_id, new_card_data_ref, at).await?;
     Ok(move_entries)
 }
 
 /// Ensures the set of cards in the database exactly matches what the parser
-/// produced for the note. This is a safety net for historical data corruption
-/// where the DB may have fewer (or more) cards than expected.
+/// produced for the note. This is a safety net for data corruption where the DB
+/// may have fewer (or more) cards than expected. It warns when it repairs a note,
+/// since that means something else went wrong.
 #[expect(clippy::too_many_lines)]
 async fn verify_card_consistency(
     conn: &mut SqliteConnection,
@@ -411,6 +409,10 @@ async fn verify_card_consistency(
         .collect();
 
     if !missing_orders.is_empty() {
+        log::warn!(
+            "note {} lacked the cards of orders {missing_orders:?}, which were created",
+            note_id.letters()
+        );
         let template = existing_cards.first();
         let cards_to_create: Vec<Card> = missing_orders
             .iter()
@@ -493,6 +495,12 @@ async fn verify_card_consistency(
         .copied()
         .filter(|o| !expected_orders.contains(o))
         .collect();
+    if !extra_orders.is_empty() {
+        log::warn!(
+            "note {} had cards of orders {extra_orders:?} that its text doesn't, which were deleted",
+            note_id.letters()
+        );
+    }
     for order in &extra_orders {
         sqlx::query(r#"DELETE FROM card WHERE note_id = ? AND "order" = ?"#)
             .bind(note_id)
