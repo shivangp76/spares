@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import {
   NetworkError,
@@ -11,7 +11,7 @@ import {
 } from "../api/client";
 import AuthLayout from "../components/AuthLayout";
 import { LOGIN_DOCS, docUrl } from "../help/pages";
-import { isSameHost, nextPath } from "../login";
+import { hostOf, isSameHost, nextPath } from "../login";
 import { errorMessage } from "../utils";
 
 export default function LoginPage() {
@@ -45,6 +45,16 @@ export default function LoginPage() {
     );
   }, []);
   const thisHost = isSameHost(serverUrl, window.location.origin);
+  const hostLabel = thisHost ? "this host" : hostOf(serverUrl);
+
+  const passwordId = useId();
+  const [showPassword, setShowPassword] = useState(false);
+  const hostDetails = useRef<HTMLDetailsElement>(null);
+  // Set on the element at once, not through state, so the browser can focus an invalid field in it
+  // in the same submit
+  function openHostDetails() {
+    if (hostDetails.current) hostDetails.current.open = true;
+  }
 
   /** Logs in, then checks the scheduler with the host before saving the session. */
   async function handleSubmit(e: React.FormEvent) {
@@ -102,20 +112,6 @@ export default function LoginPage() {
     >
       <form onSubmit={handleSubmit} className="login-form">
         <label>
-          Server URL
-          <input
-            type="url"
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.target.value)}
-            placeholder="https://your-server.example.com"
-            required
-          />
-          <span className="field-hint">
-            The address of the spares host, which is this page's when it serves
-            the page.
-          </span>
-        </label>
-        <label>
           Name
           <input
             type="text"
@@ -123,41 +119,79 @@ export default function LoginPage() {
             onChange={(e) => setUser(e.target.value)}
             autoComplete="username"
             autoCapitalize="none"
+            autoFocus
             required
           />
           <span className="field-hint">
             Your account on the host, or its email address.
           </span>
         </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-          />
-        </label>
-        <label>
-          Scheduler
-          <input
-            type="text"
-            value={schedulerName}
-            onChange={(e) => setSchedulerName(e.target.value)}
-            placeholder="The server's default"
-          />
-          <span className="field-hint">
-            What schedules the cards you rate. The server's are checked when you
-            log in.
-          </span>
-        </label>
+        <div>
+          <label htmlFor={passwordId}>Password</label>
+          <div className="password-field">
+            <input
+              id={passwordId}
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+            <button
+              type="button"
+              className="touch-target-small"
+              aria-pressed={showPassword}
+              aria-controls={passwordId}
+              onClick={() => setShowPassword((shown) => !shown)}
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </div>
+        </div>
+        {/* Rarely changed, so closed until a value or an error needs them */}
+        <details ref={hostDetails} className="login-advanced">
+          <summary>
+            Host and scheduler{" "}
+            <span className="hint">
+              ({hostLabel}, {schedulerName.trim() || "its default scheduler"})
+            </span>
+          </summary>
+          <label>
+            Server URL
+            <input
+              type="url"
+              value={serverUrl}
+              onChange={(e) => setServerUrl(e.target.value)}
+              // A field in a closed section can't be focused to show what's wrong with it
+              onInvalid={openHostDetails}
+              placeholder="https://your-server.example.com"
+              required
+            />
+            <span className="field-hint">
+              The address of the spares host, which is this page's when it
+              serves the page.
+            </span>
+          </label>
+          <label>
+            Scheduler
+            <input
+              type="text"
+              value={schedulerName}
+              onChange={(e) => setSchedulerName(e.target.value)}
+              placeholder="The server's default"
+            />
+            <span className="field-hint">
+              What schedules the cards you rate. The server's are checked when
+              you log in.
+            </span>
+          </label>
+        </details>
         <button
           type="submit"
           disabled={checking}
           className="touch-target login-submit"
         >
-          {checking ? "Checking…" : "Login"}
+          {checking ? "Logging in…" : "Log in"}
         </button>
         {verified && !error && (
           <div role="status" style={{ fontSize: 13 }}>

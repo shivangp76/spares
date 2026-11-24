@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_AFTER_LOGIN, isSameHost, loginPath, nextPath } from "./login";
+import {
+  DEFAULT_AFTER_LOGIN,
+  hostOf,
+  isSameHost,
+  loginPath,
+  nextPath,
+} from "./login";
 
 const place = (pathname: string, search = "", hash = "") => ({
   pathname,
@@ -71,5 +77,18 @@ describe("isSameHost", () => {
   test("an address that isn't a URL yet", () => {
     expect(isSameHost("", origin)).toBe(false);
     expect(isSameHost("spares.example.com", origin)).toBe(false);
+  });
+});
+
+describe("hostOf", () => {
+  test("a URL's host and port", () => {
+    expect(hostOf(" https://spares.example.com:8443/x ")).toBe(
+      "spares.example.com:8443",
+    );
+  });
+
+  test("what was typed, if it isn't a URL", () => {
+    expect(hostOf("spares.example")).toBe("spares.example");
+    expect(hostOf("  ")).toBe("no host");
   });
 });

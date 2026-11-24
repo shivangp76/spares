@@ -34,6 +34,15 @@ export function nextPath(search: string): string {
   return url.pathname + url.search + url.hash;
 }
 
+/** `serverUrl`'s host (name and port) to show in a line of text, or what was typed if it isn't a URL. */
+export function hostOf(serverUrl: string): string {
+  try {
+    return new URL(serverUrl.trim()).host;
+  } catch {
+    return serverUrl.trim() || "no host";
+  }
+}
+
 /**
  * Whether `serverUrl`, as typed on the login page, is the host at `origin`. Signing up and
  * resetting a password talk to the host that served the page, so the login page offers them only
