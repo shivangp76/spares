@@ -3,6 +3,17 @@
 :root {
   color-scheme: light dark;
 
+  /* Sizes to pick from, so new styles match the old ones. Text: hints and labels, secondary text,
+     body text. Corners: small controls, buttons and fields, menus, panels and cards. */
+  --font-xs: 12px;
+  --font-sm: 13px;
+  --font-md: 14px;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
   --bg: light-dark(#fff, #18191b);
   --text: light-dark(#000, #e4e4e7);
   /* Secondary text, e.g. statuses and counts */
@@ -139,7 +150,7 @@ a:visited {
 
 .typst-tools button {
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--font-xs);
   opacity: 0.6;
 }
 
@@ -154,10 +165,10 @@ a:visited {
   padding: 4px 12px;
   background: var(--button-bg);
   border: 1px solid var(--button-border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-md);
   line-height: 1.4;
   cursor: pointer;
   transition:
@@ -180,10 +191,10 @@ a:visited {
   padding: 5px 8px;
   background: var(--bg);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-md);
 }
 
 :where(input:not(.cm-panels *), textarea)::placeholder {
@@ -220,7 +231,7 @@ a:visited {
 .button-primary {
   background: var(--accent);
   border: 1px solid var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: light-dark(#fff, #0d1424);
   font-weight: 600;
 }
@@ -237,7 +248,7 @@ a:visited {
   --tool-bg: var(--tone-gray-bg);
   background: var(--tool-bg);
   border: 1px solid var(--tool-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--tool-fg);
 }
 
@@ -267,7 +278,7 @@ a:visited {
 .button-link {
   background: var(--tone-blue-bg);
   border: 1px solid var(--tone-blue-border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--tone-blue-fg);
 }
 
@@ -279,7 +290,7 @@ a:visited {
 .button-icon {
   background: none;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -325,7 +336,7 @@ button:disabled {
 .navbar-link,
 .navbar-link:visited {
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--text-secondary);
   text-decoration: none;
   font-size: 15px;
@@ -357,11 +368,11 @@ button:disabled {
 .navbar-button {
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-sm);
   cursor: pointer;
   transition:
     background-color 0.15s,
@@ -417,7 +428,7 @@ button.navbar-link-current {
   flex-direction: column;
   padding: 4px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   box-shadow: var(--shadow-popover);
 }
@@ -429,11 +440,11 @@ button.navbar-link-current {
   gap: 12px;
   padding: 7px 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-md);
   text-align: left;
   text-decoration: none;
   cursor: pointer;
@@ -458,7 +469,7 @@ button.navbar-link-current {
 
 .nav-menu-key {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--font-xs);
   font-weight: normal;
 }
 
@@ -472,7 +483,7 @@ button.navbar-link-current {
 .sync-conflict-badge {
   display: inline-block;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--warning);
   color: var(--surface);
   font-size: 11px;
@@ -625,7 +636,7 @@ input[type="checkbox"] {
 .help-dialog {
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
   width: min(440px, calc(100% - 32px));
@@ -650,7 +661,7 @@ input[type="checkbox"] {
 
 .help-dialog td:first-child button {
   padding: 2px 6px;
-  font-size: 12px;
+  font-size: var(--font-xs);
   text-align: left;
 }
 
@@ -664,7 +675,7 @@ input[type="checkbox"] {
   border: none;
   background: none;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-xs);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
@@ -677,7 +688,7 @@ input[type="checkbox"] {
 .audio-recorder {
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
   width: min(400px, calc(100% - 32px));
@@ -723,14 +734,14 @@ input[type="checkbox"] {
 
 .page-description {
   margin: 0 0 16px;
-  font-size: 14px;
+  font-size: var(--font-md);
   color: var(--text-secondary);
 }
 
 /* A compact button beside a line of text, as Undo after an action */
 .button-small {
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--font-xs);
 }
 
 /* Read by screen readers but not shown, as the name of a button that only shows an icon */
@@ -746,7 +757,7 @@ input[type="checkbox"] {
 /* The help under a form field */
 .field-hint {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--font-xs);
   color: var(--text-muted);
 }
 
@@ -757,7 +768,7 @@ input[type="checkbox"] {
   padding: 28px 28px 24px;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 1px 3px light-dark(rgb(0 0 0 / 0.06), rgb(0 0 0 / 0.4));
 }
 
@@ -773,7 +784,7 @@ input[type="checkbox"] {
 }
 
 .login-form label {
-  font-size: 14px;
+  font-size: var(--font-md);
   font-weight: 500;
 }
 
@@ -815,10 +826,10 @@ input[type="checkbox"] {
   padding: 0 12px;
   background: var(--bg);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
@@ -830,7 +841,7 @@ input[type="checkbox"] {
 /* Rarely changed, so its summary is a step quieter than the fields above it */
 .login-advanced summary {
   width: fit-content;
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -840,7 +851,7 @@ input[type="checkbox"] {
 }
 
 .login-advanced summary .hint {
-  font-size: 12px;
+  font-size: var(--font-xs);
 }
 
 /* Its fields hang under the summary, so they read as part of it */
@@ -871,10 +882,10 @@ input[type="checkbox"] {
   padding: 4px 12px;
   background: var(--bg);
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
@@ -887,7 +898,7 @@ input[type="checkbox"] {
 .login-submit {
   padding: 10px 0;
   margin-top: 4px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -904,7 +915,7 @@ input[type="checkbox"] {
   padding: 10px 12px;
   background: var(--tone-red-bg);
   border: 1px solid var(--tone-red-border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--tone-red-fg);
   line-height: 1.4;
 }
@@ -925,7 +936,7 @@ input[type="checkbox"] {
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--border-subtle);
-  font-size: 13px;
+  font-size: var(--font-sm);
 }
 
 .login-links a,
@@ -940,13 +951,13 @@ input[type="checkbox"] {
 
 /* A short note beside or under a control, quieter than the text around it */
 .hint {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-muted);
 }
 
 /* Text a step quieter than the page's, at a smaller size */
 .secondary-text {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
 }
 
@@ -956,7 +967,7 @@ input[type="checkbox"] {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
 }
 
@@ -965,7 +976,7 @@ input[type="checkbox"] {
 }
 
 .error-text-small {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--error);
 }
 
@@ -973,7 +984,7 @@ input[type="checkbox"] {
 .error-detail {
   margin-bottom: 8px;
   font-family: monospace;
-  font-size: 13px;
+  font-size: var(--font-sm);
   white-space: pre-wrap;
   color: var(--error);
 }
@@ -990,7 +1001,7 @@ input[type="checkbox"] {
 .empty-state {
   padding: 32px 16px;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: var(--font-md);
   text-align: center;
 }
 
@@ -998,7 +1009,7 @@ input[type="checkbox"] {
 .section-label {
   margin-bottom: 6px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-xs);
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1012,7 +1023,7 @@ input[type="checkbox"] {
 
 .stat-subheading {
   margin: 20px 0 8px;
-  font-size: 14px;
+  font-size: var(--font-md);
 }
 
 .stat-subheading:first-child {
@@ -1045,9 +1056,9 @@ input[type="checkbox"] {
 .stat-nav a {
   flex: none;
   padding: 3px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-sm);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -1064,7 +1075,7 @@ input[type="checkbox"] {
   padding: 14px 20px 18px;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 
 /* A legend sits on its fieldset's border; floated, it is the panel's heading instead */
@@ -1099,7 +1110,7 @@ input[type="checkbox"] {
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: var(--font-md);
 }
 
 /* Grey blocks in the shape of what is loading, so the page doesn't jump when it comes */
@@ -1111,7 +1122,7 @@ input[type="checkbox"] {
 
 .skeleton-line {
   height: 14px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: linear-gradient(
     90deg,
     var(--hover) 0%,
@@ -1123,7 +1134,7 @@ input[type="checkbox"] {
 }
 
 .skeleton-block {
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 
 @keyframes skeleton-shimmer {
@@ -1147,7 +1158,7 @@ input[type="checkbox"] {
 }
 
 .help-dialog-intro {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
   margin: 8px 0 12px;
 }
@@ -1156,7 +1167,7 @@ input[type="checkbox"] {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0 2px;
-  font-size: 14px;
+  font-size: var(--font-md);
 }
 
 .help-dialog td {
@@ -1179,10 +1190,10 @@ kbd {
   padding: 1px 6px;
   border: 1px solid var(--border-strong);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--font-xs);
   text-align: center;
 }
 
@@ -1338,7 +1349,7 @@ html:has(.review-answer-bar) {
   .navbar-link,
   button.navbar-link {
     padding: 4px 6px;
-    font-size: 14px;
+    font-size: var(--font-md);
     white-space: nowrap;
   }
 
@@ -1403,7 +1414,7 @@ html:has(.review-answer-bar) {
   .review-more-actions > summary {
     display: list-item;
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--font-sm);
   }
 
   .review-meta-right {
@@ -1530,16 +1541,16 @@ html:has(.review-answer-bar) {
 .syntax-example pre {
   margin: 0 0 6px;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
-  font-size: 12px;
+  font-size: var(--font-xs);
   white-space: pre-wrap;
 }
 
 .syntax-example-cards {
   margin: 0;
   padding-left: 22px;
-  font-size: 12px;
+  font-size: var(--font-xs);
   color: var(--text-secondary);
 }
 
@@ -1565,7 +1576,7 @@ html:has(.review-answer-bar) {
   flex-direction: column;
   gap: 6px;
   flex: 0 0 190px;
-  font-size: 14px;
+  font-size: var(--font-md);
 }
 
 .manual-contents [aria-current] {
@@ -1585,9 +1596,9 @@ html:has(.review-answer-bar) {
 
 .manual-text pre {
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
-  font-size: 13px;
+  font-size: var(--font-sm);
   overflow-x: auto;
 }
 
@@ -1595,7 +1606,7 @@ html:has(.review-answer-bar) {
   display: block;
   overflow-x: auto;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: var(--font-md);
 }
 
 .manual-text th,
