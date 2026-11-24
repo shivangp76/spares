@@ -519,7 +519,7 @@ async function startNote(
   parser: string,
   text: string,
 ): Promise<ReturnType<Page["locator"]>> {
-  await page.getByRole("button", { name: "New note" }).click();
+  await page.getByRole("button", { name: "New note", exact: true }).click();
   const form = page
     .locator("div")
     .filter({ has: page.getByRole("heading", { name: "New Note" }) })
@@ -542,7 +542,7 @@ async function createNote(
   text: string,
 ): Promise<void> {
   const form = await startNote(page, parser, text);
-  await form.getByRole("button", { name: "Create" }).click();
+  await form.getByRole("button", { name: "Create", exact: true }).click();
   await see(page, /Note \w+ created\./);
 }
 
@@ -598,7 +598,7 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       ),
     );
   }
-  // Confirmations, e.g. of Stop Keeping a Copy
+  // The browser's own confirmations, if any; the app's are clicked through
   page.on("dialog", (dialog) => dialog.accept());
   try {
     await page.goto(`${ORIGIN}/login`);
@@ -750,7 +750,9 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       imageForm.locator(".cm-content").first(),
       `offline-${engine}.svg`,
     );
-    await imageForm.getByRole("button", { name: "Create" }).click();
+    await imageForm
+      .getByRole("button", { name: "Create", exact: true })
+      .click();
     await see(page, /Note \w+ created\./);
     await page
       .frameLocator('iframe[title="Rendered card"]')
@@ -882,7 +884,9 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       "the server doesn't have the image occlusion before a note names it",
       (await serverMedia("image-occlusion")).length === occlusionsBefore.length,
     );
-    await occlusionForm.getByRole("button", { name: "Create" }).click();
+    await occlusionForm
+      .getByRole("button", { name: "Create", exact: true })
+      .click();
     await see(page, /Note \w+ created\./);
     await page.getByRole("button", { name: /^Sync/ }).click();
     await see(page, /Synced: received \d+ changes, sent [1-9]/);
@@ -922,7 +926,9 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     }, CLOZES_SVG);
     await dialog.getByRole("button", { name: "Save and insert" }).click();
     await dialog.waitFor({ state: "detached" });
-    await typstOcclusionForm.getByRole("button", { name: "Create" }).click();
+    await typstOcclusionForm
+      .getByRole("button", { name: "Create", exact: true })
+      .click();
     await see(page, /Note \w+ created\./);
     check(
       "a Typst card shows an image occlusion made on the device before a sync",
@@ -958,7 +964,9 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     }, CLOZES_SVG);
     await dialog.getByRole("button", { name: "Save and insert" }).click();
     await dialog.waitFor({ state: "detached" });
-    await markdownOcclusionForm.getByRole("button", { name: "Create" }).click();
+    await markdownOcclusionForm
+      .getByRole("button", { name: "Create", exact: true })
+      .click();
     await see(page, /Note \w+ created\./);
     const fronts = await deviceMarkdownFronts(page, `"said ${engine}"`);
     const clozeFront = fronts.find(
@@ -1020,7 +1028,7 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await page.getByLabel("Server URL").fill(ORIGIN);
     await page.getByLabel("Name").fill(USER);
     await page.getByLabel("Password").fill(PASSWORD);
-    await page.getByRole("button", { name: "Login" }).click();
+    await page.getByRole("button", { name: "Log in" }).click();
     await page.getByRole("button", { name: /^Sync/ }).click();
     await see(page, /Synced: received|Already in sync/);
     check("synced after logging out and back in", true);
@@ -1142,7 +1150,14 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       .filter({ hasText: "Lost phone" })
       .getByRole("button", { name: "Remove" })
       .click();
-    await page.getByText("Lost phone").waitFor({ state: "detached" });
+    await page
+      .getByRole("dialog", { name: /^Remove Lost phone/ })
+      .getByRole("button", { name: "Remove" })
+      .click();
+    await page
+      .getByRole("listitem")
+      .filter({ hasText: "Lost phone" })
+      .waitFor({ state: "detached" });
     check(
       "removed a lost device",
       (await api<{ name: string }[]>("GET", "/api/sync/devices")).every(
@@ -1151,6 +1166,10 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     );
 
     await page.getByRole("button", { name: "Stop Keeping a Copy" }).click();
+    await page
+      .getByRole("dialog", { name: "Stop keeping a copy on this device?" })
+      .getByRole("button", { name: "Stop keeping a copy" })
+      .click();
     await page
       .getByRole("button", { name: "Keep a Copy on This Device" })
       .waitFor();
