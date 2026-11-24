@@ -1300,8 +1300,9 @@ mod tests {
         );
     }
 
-    /// A CLI note stored before `id` keys existed has no uid on its old side, so matching falls
-    /// back to position. That migrates it cleanly: cards survive and ids are written into the text.
+    /// A CLI note stored without `id` keys (e.g. after `spares import --strip-liveness`) has no
+    /// uid on its old side, so matching falls back to position: cards survive and ids are written
+    /// into the text.
     #[sqlx::test]
     async fn test_update_note_cli_note_without_ids_migrates(pool: SqlitePool) -> () {
         let parser = create_parser_helper(&pool, "markdown").await;

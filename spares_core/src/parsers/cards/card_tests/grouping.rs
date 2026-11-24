@@ -947,7 +947,7 @@ fn test_grouping_all_keeps_no_card_orders() {
     );
     // `g:*,1` is the same as `g:*`
     assert_rewrites_to(r"{{[g:*,1]a}}{{b}}", r"{{[g:*]a}}{{[o:1]b}}");
-    // Orders notes written before kept on `g:*` move to the cards' own clozes
+    // Orders written on `g:*` aren't kept there: each card's go on its own cloze
     assert_rewrites_to(
         r"{{[g:*;hide:; o:1;hide:; o:2;hide:]c}}{{a}}{{b}}",
         r"{{[g:*;hide:]c}}{{[o:1]a}}{{[o:2]b}}",
@@ -996,18 +996,6 @@ fn test_adding_grouping_all_cloze_keeps_card_orders() {
         vec![
             (ClozeGrouping::Auto(1), Some(1)),
             (ClozeGrouping::Auto(2), Some(2)),
-        ]
-    );
-}
-
-#[test]
-fn test_grouping_all_orders_written_before_are_read() {
-    // Notes written before kept a card's orders on its first cloze, even in all groupings
-    assert_eq!(
-        previous_orders(r"{{[g:*; o:1; g:1;o:2]a}}{{b}}{{[g:1]c}}"),
-        vec![
-            (ClozeGrouping::Custom("1".to_string()), Some(2)),
-            (ClozeGrouping::Auto(1), Some(1)),
         ]
     );
 }

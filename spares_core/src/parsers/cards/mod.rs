@@ -253,20 +253,7 @@ pub fn get_cards_main(
     // Extract old orders before they're modified by `modify_card_settings()`
     let old_orders: Vec<Option<Vec<usize>>> = cards_raw
         .iter()
-        .map(|clozes| {
-            clozes[settings_cloze_position(clozes)]
-                .1
-                .orders
-                .clone()
-                // Notes written before orders were kept off clozes in all groupings (`g:*`) may
-                // have a card's orders on its first cloze instead
-                .or_else(|| {
-                    clozes
-                        .iter()
-                        .find(|(_, x)| !x.skip_serialization)
-                        .and_then(|(_, x)| x.orders.clone())
-                })
-        })
+        .map(|clozes| clozes[settings_cloze_position(clozes)].1.orders.clone())
         .collect::<Vec<_>>();
 
     // Modify card settings
@@ -673,8 +660,9 @@ fn build_cli_cards(
             let order_n = i + 1;
             CardData {
                 order: Some(order_n),
-                // Only consulted when no old card carries a uid, i.e. when migrating a note whose
-                // stored text predates `id` keys. Position is the right answer there.
+                // Only consulted when no old card carries a uid: a note whose stored text has no
+                // `id` keys, e.g. after `spares import --strip-liveness`. Position is the right
+                // answer there.
                 previous_order: Some(order_n),
                 grouping: ClozeGrouping::Auto(order_n as u32),
                 is_suspended: None,

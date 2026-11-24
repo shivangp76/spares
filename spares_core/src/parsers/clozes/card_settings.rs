@@ -145,8 +145,8 @@ pub fn construct_cloze_string(
             ));
         }
     };
-    // Orders belong to a card, so they are never written on `g:*`, though notes written before
-    // kept them there (see `settings_cloze_position`)
+    // Orders belong to a card, so they are never written on `g:*` (see
+    // `settings_cloze_position`)
     let all_groupings_settings =
         global_settings
             .all_groupings
