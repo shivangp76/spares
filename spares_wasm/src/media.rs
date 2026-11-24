@@ -45,39 +45,6 @@ pub(crate) const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS media_file (
     height INTEGER
 )";
 
-/// Adds `width` and `height` to a `media_file` made before them, and records them for the images it
-/// has.
-pub(crate) async fn migrate(device: &SqlitePool) -> Result<(), JsValue> {
-    let columns: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM pragma_table_info('media_file')")
-            .fetch_all(device)
-            .await
-            .map_err(sqlx_error)?;
-    if columns.iter().any(|column| column == "width") {
-        return Ok(());
-    }
-    for statement in [
-        "ALTER TABLE media_file ADD COLUMN width INTEGER",
-        "ALTER TABLE media_file ADD COLUMN height INTEGER",
-    ] {
-        sqlx::query(statement)
-            .execute(device)
-            .await
-            .map_err(sqlx_error)?;
-    }
-    let paths: Vec<String> = sqlx::query_scalar("SELECT path FROM media_file WHERE kind != ?")
-        .bind(MediaKind::Audio.as_str())
-        .fetch_all(device)
-        .await
-        .map_err(sqlx_error)?;
-    for path in paths {
-        if let Some(contents) = read(device, &path).await? {
-            set_size(device, &path, &contents).await?;
-        }
-    }
-    Ok(())
-}
-
 /// Records the size of the file at `path`, if it is an image, from its `contents`.
 async fn set_size(device: &SqlitePool, path: &str, contents: &[u8]) -> Result<(), JsValue> {
     let size = platform::image_dimensions(contents);
