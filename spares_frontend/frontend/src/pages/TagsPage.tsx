@@ -885,11 +885,7 @@ export default function TagsPage() {
                   <tr>
                     <td
                       colSpan={6}
-                      style={{
-                        ...td,
-                        color: "var(--text-muted)",
-                        textAlign: "center",
-                      }}
+                      className="empty-state"
                     >
                       No tags found
                     </td>

@@ -210,7 +210,10 @@ export default function HistoryPage() {
         </table>
       </div>
       {loaded && entries.length === 0 && !error && (
-        <p style={{ color: "var(--text-secondary)" }}>No changes yet.</p>
+        <p className="empty-state">
+          No changes yet. Every change to the collection is listed here, to
+          undo or redo.
+        </p>
       )}
       {more && (
         <button

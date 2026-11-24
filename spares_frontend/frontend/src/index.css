@@ -986,6 +986,14 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
+/* What a list or page shows when it has nothing, with what to do next */
+.empty-state {
+  padding: 32px 16px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: center;
+}
+
 /* The small capitalised name over a group, as `sectionLabel` in utils.ts gives inline */
 .section-label {
   margin-bottom: 6px;

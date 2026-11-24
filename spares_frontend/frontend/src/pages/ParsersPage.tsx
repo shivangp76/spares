@@ -281,11 +281,7 @@ export default function ParsersPage() {
                 <tr>
                   <td
                     colSpan={3}
-                    style={{
-                      ...td,
-                      color: "var(--text-muted)",
-                      textAlign: "center",
-                    }}
+                    className="empty-state"
                   >
                     No parsers
                     {addable.length > 0 &&

@@ -1059,11 +1059,7 @@ export default function CardsPage() {
                     <tr>
                       <td
                         colSpan={columns.length + 1}
-                        style={{
-                          ...td,
-                          color: "var(--text-muted)",
-                          textAlign: "center",
-                        }}
+                        className="empty-state"
                       >
                         {searchResults === null && page === 1 ? (
                           <>
@@ -1071,7 +1067,7 @@ export default function CardsPage() {
                             written on the <Link to="/notes">Notes</Link> page.
                           </>
                         ) : (
-                          "No cards found"
+                          "No cards match this search."
                         )}
                       </td>
                     </tr>

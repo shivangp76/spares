@@ -222,7 +222,11 @@ export default function ConflictsPage() {
       {conflicts === null && !error && (
         <p className="loading-delayed">Loading…</p>
       )}
-      {conflicts?.length === 0 && <p>No conflicts.</p>}
+      {conflicts?.length === 0 && (
+        <p className="empty-state">
+          No conflicts: every sync merged on its own.
+        </p>
+      )}
       {conflicts?.map((conflict) => (
         <Conflict
           key={conflict.id}

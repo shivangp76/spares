@@ -975,11 +975,7 @@ export default function NotesPage() {
                     <tr>
                       <td
                         colSpan={columns.length + 1}
-                        style={{
-                          ...td,
-                          color: "var(--text-muted)",
-                          textAlign: "center",
-                        }}
+                        className="empty-state"
                       >
                         {searchResults === null && page === 1 ? (
                           <>
@@ -993,7 +989,7 @@ export default function NotesPage() {
                             , or press <kbd>?</kbd> to learn how.
                           </>
                         ) : (
-                          "No notes found"
+                          "No notes match this search."
                         )}
                       </td>
                     </tr>
