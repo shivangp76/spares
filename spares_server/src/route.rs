@@ -314,13 +314,13 @@ fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
                 .layer(DefaultBodyLimit::max(SYNC_BODY_LIMIT)),
         )
         .route("/api/sync/enroll", post(sync_enroll_handler))
-        .layer(middleware::from_fn(relay_to_upstream))
-        .layer(middleware::from_fn(require_protocol));
+        .route_layer(middleware::from_fn(relay_to_upstream))
+        .route_layer(middleware::from_fn(require_protocol));
     // The web app asks for these too.
     let devices = Router::new()
         .route("/api/sync/unenroll", post(sync_unenroll_handler))
         .route("/api/sync/devices", get(sync_devices_handler))
-        .layer(middleware::from_fn(relay_to_upstream));
+        .route_layer(middleware::from_fn(relay_to_upstream));
     let relayed = protocol.merge(devices);
     Router::new()
         .merge(relayed)
@@ -353,7 +353,10 @@ fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
                 .layer(DefaultBodyLimit::max(MEDIA_BODY_LIMIT)),
         )
         .route("/api/sync/run", post(sync_run_handler))
-        .layer(middleware::from_fn(crate::handlers::relay::refuse_loops))
+        // Route layers, since a router's layers also wrap its fallback, which these would carry
+        // into every router they are merged into: a path no route has would read the config of a
+        // collection that no request without a login has
+        .route_layer(middleware::from_fn(crate::handlers::relay::refuse_loops))
 }
 
 /// The routes that need the server's files, processes or role: the rest of the API besides
@@ -945,6 +948,30 @@ mod tests {
         assert_eq!(get(uri(1, "markup"), None).await.0, StatusCode::NO_CONTENT);
         assert_eq!(get(uri(2, "image"), None).await.0, StatusCode::NOT_FOUND);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A path no route has is not found, outside any collection, with or without the web app. The
+    /// sync routes' middleware, which reads the collection's config, used to run for it, and panic.
+    #[tokio::test]
+    async fn unknown_paths_are_not_found_before_logging_in() {
+        let (host, root) = crate::host::tests::test_host().await;
+        let dir = root.0.join("frontend");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("index.html"), "<html></html>").unwrap();
+        let state = Arc::new(AppState { host });
+        let cases = [
+            (None, "/", StatusCode::NOT_FOUND),
+            (None, "/review", StatusCode::NOT_FOUND),
+            (None, "/api/nonexistent", StatusCode::NOT_FOUND),
+            (Some(dir.clone()), "/", StatusCode::OK),
+            (Some(dir.clone()), "/review", StatusCode::OK),
+        ];
+        for (frontend, uri, expected) in cases {
+            let router = create_router(Arc::clone(&state), frontend.clone());
+            let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+            let response = router.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), expected, "{uri} with {frontend:?}");
+        }
     }
 
     /// Browsers don't keep API responses, which would answer later requests with old data.
