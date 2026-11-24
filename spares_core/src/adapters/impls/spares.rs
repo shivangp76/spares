@@ -282,7 +282,6 @@ impl SrsAdapter for SparesAdapter {
         _base_url: &str,
         _spares_pool: &SqlitePool,
         _migration_function: Option<MigrationFunc>,
-        _initial_migration: bool,
         _dry_run: bool,
     ) -> Result<(), Error> {
         unreachable!("The default adapter has no migrations.");

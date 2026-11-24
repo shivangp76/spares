@@ -198,40 +198,41 @@ impl SrsAdapter for AnkiAdapter {
         base_url: &str,
         spares_pool: &SqlitePool,
         migration_function: Option<MigrationFunc>,
-        initial_migration: bool,
         dry_run: bool,
     ) -> Result<(), Error> {
         let client = Client::new();
 
-        // Update Anki model's fields, if needed
-        if initial_migration {
-            if !dry_run {
-                self.verify_anki_is_open()?;
-            }
-            let params = ApiRequestParams::GetModelFieldNames(GetModelFieldNamesApiRequestData {
-                model_name: ModelName::Basic,
-            });
-            let api_request = ApiRequest {
-                action: ApiAction::GetModelFieldNames,
-                params,
-                version: 6,
-            };
-            let model_field_names_value = execute_request(&api_request, &client).await?;
-            let model_field_names: Vec<String> =
-                serde_json::from_value(model_field_names_value.clone()).map_err(|e| {
-                    Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
-                        adapter_name: ANKI_ADAPTER_NAME.to_string(),
-                        error: e.to_string(),
-                    }))
-                })?;
-            if !model_field_names.contains(&SPARES_KEYWORDS_FIELD_NAME.to_string()) {
-                create_field(SPARES_KEYWORDS_FIELD_NAME, &client).await?;
-            }
-            if !model_field_names.contains(&SPARES_ID_FIELD_NAME.to_string()) {
-                create_field(SPARES_ID_FIELD_NAME, &client).await?;
-            }
-            if !model_field_names.contains(&SPARES_PARSER_NAME_FIELD_NAME.to_string()) {
-                create_field(SPARES_PARSER_NAME_FIELD_NAME, &client).await?;
+        // Add the fields spares reads to Anki's `Basic` note type, if needed
+        if !dry_run {
+            self.verify_anki_is_open()?;
+        }
+        let params = ApiRequestParams::GetModelFieldNames(GetModelFieldNamesApiRequestData {
+            model_name: ModelName::Basic,
+        });
+        let api_request = ApiRequest {
+            action: ApiAction::GetModelFieldNames,
+            params,
+            version: 6,
+        };
+        let model_field_names_value = execute_request(&api_request, &client).await?;
+        let model_field_names: Vec<String> =
+            serde_json::from_value(model_field_names_value.clone()).map_err(|e| {
+                Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                    adapter_name: ANKI_ADAPTER_NAME.to_string(),
+                    error: e.to_string(),
+                }))
+            })?;
+        for field in [
+            SPARES_KEYWORDS_FIELD_NAME,
+            SPARES_ID_FIELD_NAME,
+            SPARES_PARSER_NAME_FIELD_NAME,
+        ] {
+            if !model_field_names.iter().any(|name| name == field) {
+                if dry_run {
+                    println!("Would add the field {field} to Anki's Basic note type");
+                } else {
+                    create_field(field, &client).await?;
+                }
             }
         }
 
@@ -256,47 +257,42 @@ impl SrsAdapter for AnkiAdapter {
             })?;
 
         // Add Anki's reviews
-        if initial_migration {
-            let spares_and_anki_note_ids = notes_responses
-                .iter()
-                .flat_map(|x| &x.notes)
-                .map(|note_response| -> Result<(NoteId, i64), String> {
-                    let anki_note_id = get_note_id(note_response).map_err(|e| format!("{}", e))?;
-                    Ok((note_response.id, anki_note_id))
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| {
-                    Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
-                        adapter_name: ANKI_ADAPTER_NAME.to_string(),
-                        error: e.clone(),
-                    }))
-                })?;
-            println!("Modifying cards and review log...");
-            let start = Instant::now();
-            populate_reviews(
-                dry_run,
-                spares_and_anki_note_ids,
-                spares_pool,
-                &anki_db_path,
-            )
-            .await?;
-            let duration = start.elapsed();
-            println!("Add Anki's review log duration: {:?}", duration);
-        }
+        let spares_and_anki_note_ids = notes_responses
+            .iter()
+            .flat_map(|x| &x.notes)
+            .map(|note_response| -> Result<(NoteId, i64), String> {
+                let anki_note_id = get_note_id(note_response).map_err(|e| format!("{}", e))?;
+                Ok((note_response.id, anki_note_id))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
+                    adapter_name: ANKI_ADAPTER_NAME.to_string(),
+                    error: e.clone(),
+                }))
+            })?;
+        println!("Modifying cards and review log...");
+        let start = Instant::now();
+        populate_reviews(
+            dry_run,
+            spares_and_anki_note_ids,
+            spares_pool,
+            &anki_db_path,
+        )
+        .await?;
+        let duration = start.elapsed();
+        println!("Add Anki's review log duration: {:?}", duration);
 
-        // This is deterministic, so the ids should always be the same. This means it can be run once and only needs to be rerun if:
-        // - a new note is added without a SparesId in Anki
-        // - if notes are added/deleted in Anki
-        if initial_migration {
-            println!("Populating SparesId in Anki...");
-            let start = Instant::now();
-            let mut adapter = AnkiAdapter::default();
-            adapter
-                .add_spares_id(&notes_responses, &client, dry_run)
-                .await?;
-            let duration = start.elapsed();
-            println!("Add SparesId to Anki duration: {:?}", duration);
-        }
+        // Later changes on either side go through the notes repository's `anki` branch, which finds
+        // the notes by their SparesId (see `crate::notes_vcs::anki`)
+        println!("Populating SparesId in Anki...");
+        let start = Instant::now();
+        let mut adapter = AnkiAdapter::default();
+        adapter
+            .add_spares_id(&notes_responses, &client, dry_run)
+            .await?;
+        let duration = start.elapsed();
+        println!("Add SparesId to Anki duration: {:?}", duration);
 
         Ok(())
     }

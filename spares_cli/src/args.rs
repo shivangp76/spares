@@ -65,7 +65,14 @@ pub(crate) enum Commands {
     /// vcs refresh anki`).
     #[command(arg_required_else_help = true)]
     Sync(SyncArgs),
-    /// Migrate data from an adapter
+    /// Import a collection from another program once, with its review history
+    ///
+    /// For Anki: adds the fields spares reads (`KEYWORDS`, `SparesId`, `SparesParserName`) to its
+    /// `Basic` note type through `AnkiConnect`, so Anki must be open, then creates a spares note
+    /// from each of its notes in the database at `ANKI_DB_PATH`, replays their reviews, and writes
+    /// each note's spares id into its `SparesId` field. Run it once: afterwards, changes on either
+    /// side are synced through the notes repository's `anki` branch (`spares vcs refresh anki`),
+    /// and running it again would create the notes again.
     Migrate(MigrateArgs),
     #[command(arg_required_else_help = true)]
     Keyword(KeywordArgs),
@@ -1025,7 +1032,17 @@ mod tests {
 
     #[test]
     fn migrate_parses() {
-        assert!(Cli::try_parse_from(["spares", "migrate", "--adapter", "anki"]).is_ok());
+        let cli = Cli::try_parse_from(["spares", "migrate", "--adapter", "anki"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Migrate(MigrateArgs { dry_run: false, .. })
+        ));
+        let cli =
+            Cli::try_parse_from(["spares", "migrate", "--adapter", "anki", "--dry-run"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Migrate(MigrateArgs { dry_run: true, .. })
+        ));
         assert!(Cli::try_parse_from(["spares", "migrate"]).is_err());
     }
 

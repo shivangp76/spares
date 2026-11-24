@@ -150,7 +150,6 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         }
         Commands::Migrate(migrate::MigrateArgs {
             adapter: adapter_string,
-            initial_migration,
             dry_run,
         }) => {
             let mut adapter =
@@ -165,16 +164,9 @@ async fn process_args(args: Cli) -> Result<(), Error> {
                 .connect_with(connect_options)
                 .await
                 .map_err(|e| miette!("Failed to connect to the database: {:?}", e))?;
-            migrate::migrate_from_adapter(
-                &base_url,
-                &pool,
-                &client,
-                adapter.as_mut(),
-                initial_migration,
-                dry_run,
-            )
-            .await
-            .map_err(|e| miette!("{}", e))?;
+            migrate::migrate_from_adapter(&base_url, &pool, &client, adapter.as_mut(), dry_run)
+                .await
+                .map_err(|e| miette!("{}", e))?;
             Ok(())
         }
         Commands::Import(import::ImportArgs {

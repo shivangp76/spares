@@ -19,11 +19,11 @@ use crate::utils::with_spinner;
 
 #[derive(Args, Debug)]
 pub(crate) struct MigrateArgs {
+    /// The program to import from: `anki`
     #[arg(short, long)]
     pub(crate) adapter: String,
-    #[arg(short, long, default_value_t = false)]
-    pub(crate) initial_migration: bool,
-    #[arg(short, long, default_value_t = true)]
+    /// Print what would be imported, and change nothing in spares or Anki
+    #[arg(short, long)]
     pub(crate) dry_run: bool,
 }
 
@@ -80,7 +80,7 @@ fn migration_func(
     (new_front, new_back)
 }
 
-async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result<(), String> {
+async fn call_render_notes(client: &Client, base_url: &str, dry_run: bool) -> Result<(), String> {
     let start = Instant::now();
     let url = format!("{}/api/notes/generate_files", base_url);
     let request = RenderNotesRequest {
@@ -92,7 +92,9 @@ async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result
         generate_rendered: false,
         force_generate_rendered: false,
     };
-    if run {
+    if dry_run {
+        println!("{:?}", request);
+    } else {
         let response = with_spinner("Rendering notes", client.post(url).json(&request).send())
             .await
             .map_err(|e| format!("{}", e))?;
@@ -101,8 +103,6 @@ async fn call_render_notes(client: &Client, base_url: &str, run: bool) -> Result
             let body: Value = response.json().await.map_err(|e| format!("{}", e))?;
             return Err(body.to_string());
         }
-    } else {
-        println!("{:?}", request);
     }
     let duration = start.elapsed();
     println!("Notes render duration: {:?}", duration);
@@ -114,23 +114,16 @@ pub(crate) async fn migrate_from_adapter(
     spares_pool: &SqlitePool,
     client: &Client,
     adapter: &mut dyn SrsAdapter,
-    initial_migration: bool,
-    run: bool,
+    dry_run: bool,
 ) -> Result<(), String> {
     let start = Instant::now();
     adapter
-        .migrate(
-            base_url,
-            spares_pool,
-            Some(migration_func),
-            initial_migration,
-            run,
-        )
+        .migrate(base_url, spares_pool, Some(migration_func), dry_run)
         .await
         .map_err(|e| format!("{}", e))?;
 
     // Render notes after adding spares id, so in case the migration is aborted, the data can still be recovered.
-    call_render_notes(client, base_url, run).await?;
+    call_render_notes(client, base_url, dry_run).await?;
 
     let duration = start.elapsed();
     println!("\nTotal duration: {:?}", duration);

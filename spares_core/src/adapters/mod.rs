@@ -24,12 +24,14 @@ pub mod migration;
 pub trait SrsAdapter: Send + Sync {
     fn get_adapter_name(&self) -> &'static str;
 
+    /// Imports the adapter's collection into spares once: its notes, through the server at
+    /// `base_url`, and their review history, into `spares_pool`. Later changes are synced through
+    /// the adapter's branch in the notes repository instead (see [`crate::notes_vcs::anki`]).
     async fn migrate(
         &mut self,
         base_url: &str,
         spares_pool: &SqlitePool,
         migration_function: Option<MigrationFunc>,
-        initial_migration: bool,
         dry_run: bool,
     ) -> Result<(), Error>;
 
