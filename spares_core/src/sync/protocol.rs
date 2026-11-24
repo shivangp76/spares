@@ -64,10 +64,6 @@ pub fn host_id() -> String {
     format!("{}-{copy:x}", *RUN)
 }
 
-fn version_1() -> u32 {
-    1
-}
-
 /// `GET /api/sync/meta?replica=N`: what the client needs to decide how to sync.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MetaResponse {
@@ -81,8 +77,7 @@ pub struct MetaResponse {
     /// The newest database migration the server has run.
     pub schema_version: i64,
     pub replica: u8,
-    /// The server's [`SYNC_PROTOCOL_VERSION`]. Version 1 had none.
-    #[serde(default = "version_1")]
+    /// The server's [`SYNC_PROTOCOL_VERSION`].
     pub protocol_version: u32,
     /// Whether the server has no notes, as on the first sync.
     pub empty: bool,

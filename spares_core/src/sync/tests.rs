@@ -1586,6 +1586,27 @@ async fn a_device_has_to_enroll_and_its_number_is_its_own() {
             .replica,
         0
     );
+
+    // A number a replica synced under without being enrolled is free, and the new device doesn't
+    // show that replica's last sync.
+    unenroll(&replicas.server, UnenrollRequest { replica: 3 })
+        .await
+        .unwrap();
+    exec(
+        &replicas.server,
+        "INSERT INTO sync_client (replica, last_usn, last_sync_at) VALUES (3, 0, 7)",
+    )
+    .await;
+    assert_eq!(
+        on_server_enroll(&replicas.server, name("watch"))
+            .await
+            .unwrap()
+            .replica,
+        3
+    );
+    let devices = on_server(list(&replicas.server)).await.unwrap();
+    let watch = devices.iter().find(|d| d.replica == 3).unwrap();
+    assert_eq!(watch.last_sync_at, None);
 }
 
 #[tokio::test]

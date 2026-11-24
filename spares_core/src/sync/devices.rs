@@ -94,9 +94,7 @@ pub struct Device {
 
 /// Gives a device a replica number (see the [module docs](self)): the one it claims, if it isn't
 /// another device's, else `0` for a host if it is free, else the smallest free one from `2` to
-/// `4`. A number is taken while a device is enrolled under it, or while `sync_client` records a
-/// replica that synced under it without enrolling (from before enrollment existed), which only a
-/// claim can take over.
+/// `4`. A number is taken while a device is enrolled under it.
 pub async fn enroll(db: &SqlitePool, request: EnrollRequest) -> Result<EnrollResponse, Error> {
     let name = request.name.trim();
     if name.is_empty() {
@@ -128,11 +126,7 @@ pub async fn enroll(db: &SqlitePool, request: EnrollRequest) -> Result<EnrollRes
         tx.commit().await.map_err(sqlx_error)?;
         return Ok(EnrollResponse { replica: claimed });
     }
-    let mut taken: Vec<i64> =
-        sqlx::query_scalar("SELECT replica FROM sync_device UNION SELECT replica FROM sync_client")
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(sqlx_error)?;
+    let mut taken = enrolled;
     taken.push(i64::from(own));
     let laptop = request
         .host
@@ -149,6 +143,13 @@ pub async fn enroll(db: &SqlitePool, request: EnrollRequest) -> Result<EnrollRes
                 DEVICE_REPLICAS.end()
             ))
         })?;
+    // What a replica that once synced under the number without being enrolled left, so the new
+    // device doesn't show its last sync
+    sqlx::query("DELETE FROM sync_client WHERE replica = ?")
+        .bind(i64::from(replica))
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_error)?;
     sqlx::query("INSERT INTO sync_device (replica, name, enrolled_at) VALUES (?, ?, ?)")
         .bind(i64::from(replica))
         .bind(name)

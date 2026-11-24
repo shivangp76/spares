@@ -402,7 +402,7 @@ pub struct MediaFile {
     /// The blake3 hash of its contents, as hex, for image occlusions only. Their files change under
     /// one name (see [`replace_media`]), so a sync compares them by it. Images and clips are named
     /// by their hash already, so their names are compared, without reading every one at each
-    /// sync. `None` from a server from before it was listed.
+    /// sync: theirs is `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
 }

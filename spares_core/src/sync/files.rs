@@ -426,7 +426,7 @@ mod tests {
             hash: hash.map(ToString::to_string),
         };
         assert!(replaces(&file(Some("b"), 2), &file(Some("a"), 1)));
-        // Older, the same, changed in the same second, or from a server listing no hashes
+        // Older, the same, changed in the same second, or without a hash
         assert!(!replaces(&file(Some("b"), 1), &file(Some("a"), 2)));
         assert!(!replaces(&file(Some("a"), 2), &file(Some("a"), 1)));
         assert!(!replaces(&file(Some("b"), 1), &file(Some("a"), 1)));
