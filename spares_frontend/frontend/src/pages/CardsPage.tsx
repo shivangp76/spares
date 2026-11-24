@@ -134,7 +134,7 @@ const BULK_ACTIONS: BulkAction[] = [
       editCards(selector, { special_state: "Buried" }, "Buried"),
   },
   {
-    label: "Unsuspend",
+    label: "Unsuspend / Unbury",
     run: (selector) =>
       editCards(selector, { special_state: null }, "Unsuspended and unburied"),
   },

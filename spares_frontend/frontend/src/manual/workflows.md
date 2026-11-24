@@ -89,6 +89,8 @@ spares card edit -q 'QUERY and c.user_buried' --special-state none
 ```
 where QUERY is replaced with your query
 
+In the web app, search for `QUERY and c.user_buried` on the Cards page and choose **Unsuspend / Unbury**, which unburies the cards found (and unsuspends any suspended ones).
+
 ## Bulk note actions
 
 spares ships with fzf support which can be used to perform bulk note actions, such as tagging. This selector can also be used to find all notes with a certain tag by typing `tag: .*tag1`. For more than 1 tag, see `spares_query` for advanced querying.
