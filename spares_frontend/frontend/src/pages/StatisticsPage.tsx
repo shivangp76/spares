@@ -46,15 +46,45 @@ import {
 import { errorMessage, formatDuration, td, th } from "../utils";
 import PageTitle from "../components/PageTitle";
 
-const sectionTitle: React.CSSProperties = {
-  fontSize: 12,
-  color: "var(--text-muted)",
-  margin: "32px 0 12px",
-  fontWeight: 600,
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-};
+/** The id of the section titled `title`, which the section bar links to. */
+function sectionId(title: string): string {
+  return `stat-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function SectionTitle({ children }: { children: string }) {
+  return (
+    <h2 id={sectionId(children)} className="section-label stat-section-title">
+      {children}
+    </h2>
+  );
+}
+
+/** Links to the page's sections, kept at the top while it scrolls, so a chart far down is near. */
+function SectionBar({ titles }: { titles: (string | false | null)[] }) {
+  const shown = titles.filter((t): t is string => !!t);
+  if (shown.length < 2) return null;
+  return (
+    <nav className="stat-nav" aria-label="Sections">
+      {shown.map((title) => (
+        <a
+          key={title}
+          href={`#${sectionId(title)}`}
+          onClick={(e) => {
+            e.preventDefault();
+            document
+              .getElementById(sectionId(title))
+              ?.scrollIntoView({ behavior: "smooth" });
+          }}
+        >
+          {title}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
 const tile: React.CSSProperties = {
+  background: "var(--surface)",
   border: "1px solid var(--border)",
   borderRadius: 6,
   padding: "12px 20px",
@@ -261,7 +291,7 @@ function TodaySection({
   const today = graphs?.today;
   return (
     <>
-      <div style={sectionTitle}>{title}</div>
+      <SectionTitle>{title}</SectionTitle>
       <div style={tiles}>
         {statistics && (
           <>
@@ -778,18 +808,18 @@ function DistributionsSection({
     );
   return (
     <>
-      <h3 style={{ fontSize: 14, margin: "8px 0" }}>Interval</h3>
+      <h3 className="stat-subheading">Interval</h3>
       <Histogram title="Cards by interval" data={d.interval} unit=" days" />
       {average(d.interval.mean, " days")}
-      <h3 style={{ fontSize: 14, margin: "20px 0 8px" }}>Stability</h3>
+      <h3 className="stat-subheading">Stability</h3>
       <Histogram title="Cards by stability" data={d.stability} unit=" days" />
       {average(d.stability.mean, " days")}
-      <h3 style={{ fontSize: 14, margin: "20px 0 8px" }}>Difficulty</h3>
+      <h3 className="stat-subheading">Difficulty</h3>
       <Histogram title="Cards by difficulty" data={d.difficulty} />
       {average(d.difficulty.mean)}
       {d.retrievability && (
         <>
-          <h3 style={{ fontSize: 14, margin: "20px 0 8px" }}>Retrievability</h3>
+          <h3 className="stat-subheading">Retrievability</h3>
           <Histogram
             title="Cards by retrievability"
             data={d.retrievability}
@@ -815,7 +845,7 @@ function DistributionsSection({
           </p>
         </>
       )}
-      <h3 style={{ fontSize: 14, margin: "20px 0 8px" }}>Cards in review</h3>
+      <h3 className="stat-subheading">Cards in review</h3>
       <div style={tiles}>
         <Tile
           value={formatAverage(d.daily_load)}
@@ -1472,6 +1502,25 @@ export default function StatisticsPage() {
         </div>
       )}
 
+      <SectionBar
+        titles={[
+          (statistics || graphs) && todayTitle,
+          statistics && "Due",
+          graphs && "Forecast",
+          graphs && "Reviews",
+          graphs && "True retention",
+          history && "Calendar",
+          graphs && "Card counts",
+          graphs && "Answer buttons",
+          graphs && "Hourly breakdown",
+          graphs && "Added",
+          graphs && "Distributions",
+          (statistics || graphs) && "Learning steps",
+          (statistics || graphs) && "Scheduler",
+          statistics && "Scheduling",
+        ]}
+      />
+
       {(statistics || graphs) && (
         <div style={{ opacity: loading ? 0.5 : 1 }}>
           <TodaySection
@@ -1482,7 +1531,7 @@ export default function StatisticsPage() {
 
           {statistics && (
             <>
-              <div style={sectionTitle}>Due</div>
+              <SectionTitle>Due</SectionTitle>
               <StateCounts
                 counts={statistics.due_count_by_state}
                 empty="Nothing due."
@@ -1492,20 +1541,20 @@ export default function StatisticsPage() {
 
           {graphs && (
             <>
-              <div style={sectionTitle}>Forecast</div>
+              <SectionTitle>Forecast</SectionTitle>
               <ForecastSection graphs={graphs} />
 
-              <div style={sectionTitle}>Reviews</div>
+              <SectionTitle>Reviews</SectionTitle>
               <ReviewsSection graphs={graphs} />
 
-              <div style={sectionTitle}>True retention</div>
+              <SectionTitle>True retention</SectionTitle>
               <RetentionSection graphs={graphs} />
             </>
           )}
 
           {history && (
             <>
-              <div style={sectionTitle}>Calendar</div>
+              <SectionTitle>Calendar</SectionTitle>
               <ReviewHeatmap
                 counts={history.review_count_by_date}
                 cramCounts={history.cram_count_by_date}
@@ -1516,32 +1565,32 @@ export default function StatisticsPage() {
 
           {graphs && (
             <>
-              <div style={sectionTitle}>Card counts</div>
+              <SectionTitle>Card counts</SectionTitle>
               <CardCountsSection graphs={graphs} />
 
-              <div style={sectionTitle}>Answer buttons</div>
+              <SectionTitle>Answer buttons</SectionTitle>
               <AnswerButtonsSection graphs={graphs} />
 
-              <div style={sectionTitle}>Hourly breakdown</div>
+              <SectionTitle>Hourly breakdown</SectionTitle>
               <HourlySection graphs={graphs} />
 
-              <div style={sectionTitle}>Added</div>
+              <SectionTitle>Added</SectionTitle>
               <AddedSection graphs={graphs} />
 
-              <div style={sectionTitle}>Distributions</div>
+              <SectionTitle>Distributions</SectionTitle>
               <DistributionsSection graphs={graphs} />
             </>
           )}
 
-          <div style={sectionTitle}>Learning steps</div>
+          <SectionTitle>Learning steps</SectionTitle>
           <StepsSection periodDays={view.periodDays} enabled={canSchedule} />
 
-          <div style={sectionTitle}>Scheduler</div>
+          <SectionTitle>Scheduler</SectionTitle>
           <SchedulerSection enabled={online} onChanged={reload} />
 
           {statistics && (
             <>
-              <div style={sectionTitle}>Scheduling</div>
+              <SectionTitle>Scheduling</SectionTitle>
               <div style={tiles}>
                 <Tile
                   value={statistics.advance_safe_count}

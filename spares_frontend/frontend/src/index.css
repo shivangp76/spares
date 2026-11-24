@@ -996,6 +996,59 @@ input[type="checkbox"] {
   text-transform: uppercase;
 }
 
+/* The Statistics page's sections, below its section bar */
+.stat-section-title {
+  margin: 32px 0 12px;
+  scroll-margin-top: 88px;
+}
+
+.stat-subheading {
+  margin: 20px 0 8px;
+  font-size: 14px;
+}
+
+.stat-subheading:first-child {
+  margin-top: 8px;
+}
+
+/* Links to the Statistics page's sections, kept at the top while it scrolls */
+.stat-nav {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  margin: 16px 0 0;
+  padding: 8px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* On phones it keeps to one row, scrolled sideways */
+@media (max-width: 640px) {
+  .stat-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+}
+
+.stat-nav a {
+  flex: none;
+  padding: 3px 10px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.stat-nav a:hover {
+  background: var(--button-hover-bg);
+  color: var(--text);
+}
+
 /* A titled group of settings, set apart as a panel */
 .settings-section {
   min-width: 0;
