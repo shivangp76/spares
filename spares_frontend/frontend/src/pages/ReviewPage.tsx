@@ -128,8 +128,6 @@ type FilterMode = "query" | "tagName" | "tagId";
 const filterInputStyle: React.CSSProperties = {
   padding: "8px 12px",
   fontSize: 14,
-  border: "1px solid var(--border-strong)",
-  borderRadius: 4,
 };
 
 const FILTER_MODES: { mode: FilterMode; label: string; placeholder: string }[] =
@@ -207,14 +205,6 @@ function toned(
     cursor: "pointer",
   };
 }
-
-const primaryButton: React.CSSProperties = {
-  background: "#175cd3",
-  color: "#fff",
-  border: "1px solid #175cd3",
-  borderRadius: 4,
-  cursor: "pointer",
-};
 
 const RATING_TONES: Record<string, Tone> = {
   again: TONES.red,
@@ -2083,8 +2073,8 @@ export default function ReviewPage() {
             )}
             <button
               onClick={() => startReview(filterMode, filterInput)}
-              className="touch-target"
-              style={{ ...primaryButton, padding: "8px 24px", fontSize: 14 }}
+              className="button-primary touch-target"
+              style={{ padding: "8px 24px", fontSize: 14 }}
             >
               Start Review
             </button>
@@ -2584,9 +2574,8 @@ export default function ReviewPage() {
                   )}
                   <button
                     onClick={showAnswer}
-                    className="touch-target"
+                    className="button-primary touch-target"
                     style={{
-                      ...primaryButton,
                       width: "100%",
                       padding: 12,
                       fontSize: 15,
