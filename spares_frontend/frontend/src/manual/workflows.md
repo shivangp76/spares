@@ -127,6 +127,8 @@ get_notes_before() {
 }
 ```
 
+In the web app, **Notes before this…** by an open note on the Notes page, or under the Note actions while reviewing (`N`), asks for the number of days and searches for those notes on the Notes page, where a tag can be added to the query and the bulk actions act on them.
+
 See "Relative dates" in the search syntax reference (`spares_core/src/search/mod.rs`) for other relative dates, such as `today-1w` and `now-12h`.
 
 ## Visualizations

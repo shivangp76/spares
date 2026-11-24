@@ -107,6 +107,7 @@ import {
 } from "../utils";
 import type { NewNoteStart } from "../components/NewNoteForm";
 import { newNoteDraft } from "../noteDrafts";
+import { askNotesBefore } from "../notesBefore";
 import type { NotePaneHandle } from "../components/NoteDetail";
 import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
@@ -1315,6 +1316,13 @@ export default function ReviewPage() {
     }
   }
 
+  /** Opens the Notes page on the notes created in the days up to the reviewed one (N). */
+  async function notesBefore() {
+    if (!card) return;
+    const q = await askNotesBefore(card.note_id);
+    if (q) navigate(`/notes?q=${encodeURIComponent(q)}`);
+  }
+
   /** Opens a new note beside the card, like the reviewed note, or closes the one open (n). */
   function toggleNewNote() {
     if (!card) return;
@@ -1620,6 +1628,12 @@ export default function ReviewPage() {
       available: cardShown,
     },
     {
+      keys: ["N"],
+      description:
+        "Search for the notes created in the days before this card's note, e.g. what it builds on",
+      available: cardShown,
+    },
+    {
       keys: ["R"],
       description: "Reload card, e.g. after importing its file again",
       available: cardShown,
@@ -1765,6 +1779,7 @@ export default function ReviewPage() {
       s: suspendCard,
       e: toggleCardNote,
       n: toggleNewNote,
+      N: () => void notesBefore(),
       R: reloadCard,
       f: flagNote,
       a: toggleAutoAdvance,
@@ -1837,7 +1852,9 @@ export default function ReviewPage() {
         queuedKeys.current.push(key);
         return;
       }
-      if (runKey(key) && key === "Space") e.preventDefault();
+      // A handled key does nothing else: Space doesn't scroll, and a key that opens a box, as N
+      // does, isn't typed into it
+      if (runKey(key)) e.preventDefault();
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -2869,6 +2886,13 @@ export default function ReviewPage() {
                     title="Shows the card as it is now, e.g. after its file was edited and imported again"
                   >
                     Reload Card <span className="key-hint">(R)</span>
+                  </button>
+                  <button
+                    onClick={() => void notesBefore()}
+                    style={toned(TONES.blue)}
+                    title="Search for the notes created in the days before this card's note, e.g. what it builds on"
+                  >
+                    Notes Before This… <span className="key-hint">(N)</span>
                   </button>
                 </ActionGroup>
                 <ActionGroup label="Queue" tone={TONES.gray}>

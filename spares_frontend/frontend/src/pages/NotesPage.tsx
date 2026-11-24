@@ -79,6 +79,7 @@ import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
 import { askConfirm, askText } from "../ask";
 import { newNoteDraft } from "../noteDrafts";
+import { askNotesBefore } from "../notesBefore";
 
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = {
@@ -1189,6 +1190,16 @@ export default function NotesPage() {
                   title="A new note with this one's parser, tags and keywords"
                 >
                   New note like this
+                </button>
+                <button
+                  onClick={async () => {
+                    const q = await askNotesBefore(selectedNote.id);
+                    if (q) handleSearch(q);
+                  }}
+                  className="touch-target-small"
+                  title="Search for the notes created in the days up to this one, such as those it builds on"
+                >
+                  Notes before this…
                 </button>
                 <button
                   onClick={deleteSelected}
