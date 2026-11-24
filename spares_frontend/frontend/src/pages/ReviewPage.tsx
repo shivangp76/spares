@@ -541,6 +541,10 @@ export default function ReviewPage() {
   const pendingUndo = useRef<Promise<boolean> | null>(null);
   // A rating being sent, while its card is still shown
   const pendingRating = useRef<Promise<void> | null>(null);
+  // Shortcuts pressed meanwhile, to run once it is recorded
+  const queuedKeys = useRef<string[]>([]);
+  // Bumped after a rating, so that the shortcuts pressed meanwhile run
+  const [, setRatingsDone] = useState(0);
   // Bumped by each card load, and by showing a card without one, so that an earlier load still
   // under way doesn't replace the card shown
   const loadGeneration = useRef(0);
@@ -831,6 +835,7 @@ export default function ReviewPage() {
       await rating;
     } finally {
       if (pendingRating.current === rating) pendingRating.current = null;
+      setRatingsDone((n) => n + 1);
     }
   }
 
@@ -1676,6 +1681,65 @@ export default function ReviewPage() {
     );
   }
 
+  /** Runs the shortcut `key` (`Space` for the space bar) on what is shown. False if it does nothing here. */
+  function runKey(key: string): boolean {
+    // Undoing a rating brings its card back without waiting for the next card to show
+    if (
+      key === "u" &&
+      (phase === "loading" ||
+        phase === "waiting" ||
+        phase === "timebox" ||
+        phase === "done") &&
+      lastActionWasRating.current &&
+      ratedCard.current?.eventId === lastEventId.current
+    ) {
+      undo();
+      return true;
+    }
+    if (phase !== "front" && phase !== "back") return false;
+    if (!keybindings.some((b) => b.available && b.keys.includes(key)))
+      return false;
+    const actions: Record<string, () => void> = {
+      Space: showAnswer,
+      u: undo,
+      U: redo,
+      b: buryCard,
+      B: buryNote,
+      l: buryUntilLaterToday,
+      d: buryCardUntilDate,
+      s: suspendCard,
+      e: toggleCardNote,
+      R: reloadCard,
+      f: flagNote,
+      a: toggleAutoAdvance,
+      q: switchQuery,
+      Q: () => setShowFindInQueue((v) => !v),
+      r: replayAudio,
+      w: cyclePageWidth,
+      m: toggleUnmasked,
+      "+": zoomIn,
+      "=": zoomIn,
+      "-": zoomOut,
+    };
+    ratings.forEach((r, i) => {
+      actions[String(i + 1)] = () => rate(r.id);
+    });
+    const action = actions[key];
+    if (!action) return false;
+    action();
+    return true;
+  }
+
+  // Keys pressed while the card was being rated run once the rating is recorded, on what is shown
+  // then, e.g. u then 2 undoes the rating and rates the card again. One per render, so that each
+  // sees what the one before did.
+  useEffect(() => {
+    if (pendingRating.current) return;
+    let key;
+    while ((key = queuedKeys.current.shift()) !== undefined)
+      if (runKey(key)) return;
+  });
+
   // Re-bound on every render so closures are current
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -1694,66 +1758,30 @@ export default function ReviewPage() {
       }
       // The popup covers the card, so nothing should change behind it
       if (showKeybindings) return;
-      // Undoing a rating brings its card back without waiting for the next card to show
-      if (
-        e.key === "u" &&
-        (phase === "loading" ||
-          phase === "waiting" ||
-          phase === "timebox" ||
-          phase === "done") &&
-        lastActionWasRating.current &&
-        ratedCard.current?.eventId === lastEventId.current
-      ) {
-        undo();
-        return;
-      }
+      const key = e.code === "Space" ? "Space" : e.key;
       if (phase === "timebox") {
-        if (e.code === "Space" || e.key === "Enter") {
+        if (key === "Space" || key === "Enter") {
           e.preventDefault();
           continueAfterTimebox();
-        }
+        } else runKey(key);
         return;
       }
-      if (phase !== "front" && phase !== "back") return;
       // Space shows the answer, so it must not also click a button (or toggle a section) left
       // focused by a mouse click, e.g. Bury Card when pressed on the back
       if (
-        e.code === "Space" &&
+        key === "Space" &&
+        (phase === "front" || phase === "back") &&
         target instanceof Element &&
         target.closest("button, summary")
       )
         e.preventDefault();
-      const key = e.code === "Space" ? "Space" : e.key;
-      if (!keybindings.some((b) => b.available && b.keys.includes(key))) return;
-      const actions: Record<string, () => void> = {
-        Space: showAnswer,
-        u: undo,
-        U: redo,
-        b: buryCard,
-        B: buryNote,
-        l: buryUntilLaterToday,
-        d: buryCardUntilDate,
-        s: suspendCard,
-        e: toggleCardNote,
-        R: reloadCard,
-        f: flagNote,
-        a: toggleAutoAdvance,
-        q: switchQuery,
-        Q: () => setShowFindInQueue((v) => !v),
-        r: replayAudio,
-        w: cyclePageWidth,
-        m: toggleUnmasked,
-        "+": zoomIn,
-        "=": zoomIn,
-        "-": zoomOut,
-      };
-      ratings.forEach((r, i) => {
-        actions[String(i + 1)] = () => rate(r.id);
-      });
-      const action = actions[key];
-      if (!action) return;
-      if (key === "Space") e.preventDefault();
-      action();
+      if (pendingRating.current) {
+        // Not on the card being rated, which is still shown
+        if (key === "Space") e.preventDefault();
+        queuedKeys.current.push(key);
+        return;
+      }
+      if (runKey(key) && key === "Space") e.preventDefault();
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
