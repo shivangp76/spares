@@ -941,7 +941,6 @@ pub(crate) async fn review_cards(
                     timebox_cards = 0;
                 }
 
-                // let old_card_rendered_path = review_card_response.card_rendered_path;
                 // Advance to next review card
                 advance_review_card = true;
 

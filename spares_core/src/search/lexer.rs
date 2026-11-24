@@ -15,7 +15,6 @@ pub(crate) struct Lexer<'de> {
     buffered: Vec<Result<Token, miette::Error>>,
     prev: Option<Token>,
     normalize: bool,
-    // peeked: Option<Result<Token, miette::Error>>,
 }
 
 impl<'de> Lexer<'de> {
@@ -25,7 +24,6 @@ impl<'de> Lexer<'de> {
             buffered: Vec::with_capacity(5),
             prev: None,
             normalize: true,
-            // peeked: None,
         }
     }
 }
@@ -479,12 +477,6 @@ impl Lexer<'_> {
 
 impl Lexer<'_> {
     pub(crate) fn peek(&mut self) -> Option<&Result<Token, miette::Error>> {
-        // if self.peeked.is_some() {
-        //     return self.peeked.as_ref();
-        // }
-        //
-        // self.peeked = self.next();
-        // self.peeked.as_ref()
         if !self.buffered.is_empty() {
             return self.buffered.last();
         }

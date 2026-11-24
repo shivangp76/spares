@@ -140,8 +140,6 @@ pub trait Parseable: Send + Sync {
     // to the starting delimiter.
     fn construct_cloze(&self, cloze_settings_string: &str) -> (String, String);
 
-    // fn cloze_settings_side(&self) -> ClozeSettingsSide;
-
     fn construct_cloze_replacement(
         &self,
         cloze_replacement: &ClozeReplacement,
@@ -397,10 +395,6 @@ pub trait Parseable: Send + Sync {
         output_rendered_filepath: &Path,
     ) -> Result<RenderedFile, Error>;
 
-    // fn comment_regex(&self) -> Option<Regex> {
-    //     None
-    // }
-
     fn file_extension(&self) -> &'static str;
 
     fn get_template_data(
@@ -409,8 +403,6 @@ pub trait Parseable: Send + Sync {
     ) -> Result<(String, String), std::io::Error> {
         let body_placeholder = self.construct_comment("spares: body");
         if is_test_mode() {
-            // let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            // path.push("src/parsers/impls/templates/template.tex");
             return Ok((body_placeholder.clone(), body_placeholder));
         }
         let read_template = |template_type| -> Result<Option<String>, std::io::Error> {

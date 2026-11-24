@@ -2816,18 +2816,6 @@ mod tests {
         let review_card_opt = review_res.unwrap();
         assert!(review_card_opt.is_some());
         let review_card = review_card_opt.unwrap();
-        // These assertions can't be made because all notes are created at the same time, so the cards are also created at the same time, so they are due at the same time. Thus, the order of cards being due is not guaranteed to be the same.
-        // assert_eq!(review_card.note_id, note_id);
-        // assert_eq!(review_card.card_id, card_id);
-        // assert_eq!(
-        //     review_card
-        //         .card_rendered_path
-        //         .file_stem()
-        //         .unwrap()
-        //         .to_str()
-        //         .unwrap(),
-        //     format!("{:0>4}-{:0>1}", note_id, 1)
-        // );
         assert_eq!(review_card.parser_name, "markdown".to_string());
 
         // Get old card

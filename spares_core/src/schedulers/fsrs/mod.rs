@@ -348,13 +348,6 @@ impl SrsScheduler for Fsrs {
         _reviewed_at: DateTime<Utc>,
         _recall_duration: Duration,
     ) -> Result<Option<Value>, Error> {
-        // NOTE: This might not work because a state of Review takes too long to achieve for a new card
-        // Show at least once or until state is Review
-        // if card.state == state_to_number(State::Review) {
-        //     return Ok(None);
-        // }
-        // return Ok(Some(Value::Null));
-        //
         // 3 Good ratings or 1 Easy rating
         let good_key = "good";
         let good_threshold = 2;

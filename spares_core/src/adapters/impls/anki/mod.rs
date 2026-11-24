@@ -63,12 +63,6 @@ pub struct AnkiAdapter {
     confirm_bypass: bool,
 }
 
-// impl Default for AnkiAdapter {
-//     fn default() -> Self {
-//         Self::new()
-//     }
-// }
-
 impl AnkiAdapter {
     pub fn new() -> Self {
         Self {
@@ -430,10 +424,6 @@ impl AnkiAdapter {
                 // For this adapter, the id is Anki's (see `NoteImportAction`).
                 NoteImportAction::Update(note_id) => {
                     final_note_id = Some(note_id.packed());
-                    // Workaround for issue that prevents request if note is open in browser
-                    // see <https://github.com/FooSoft/anki-connect/issues/82#issuecomment-1221895385>
-                    // The workaround causes the request to not go through since focus is lost.
-                    // requests.push(AnkiAdapter::get_gui_browse_request("nid:1"));
                     let params = ApiRequestParams::UpdateNote(UpdateNoteApiRequestData {
                         note: UpdateNoteApiRequestNoteData {
                             deck_name: "Default".to_owned(),
@@ -455,8 +445,6 @@ impl AnkiAdapter {
                         version: 6,
                     };
                     requests.push(api_request);
-                    // let note_id_query = format!("nid:{}", local_settings.note_id.unwrap());
-                    // requests.push(AnkiAdapter::get_gui_browse_request(note_id_query.as_str()));
                 }
                 NoteImportAction::Delete(note_id) => {
                     let params = ApiRequestParams::DeleteNote(DeleteNoteApiRequestData {

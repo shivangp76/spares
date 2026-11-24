@@ -295,7 +295,6 @@ fn build_cloze_match(call: &LinkedNode<'_>, call_offset: usize) -> Option<ClozeM
     // end_match  = first-block's `]` start .. second-block's `]` end
     //            = the span `][settings]` (inclusive of both brackets).
     let first_close = &blocks[0].0.close_bracket;
-    // let _second_open = &blocks[1].0.open_bracket;
     let second_close = &blocks[1].0.close_bracket;
     let second_content = &blocks[1].0.content_range;
 

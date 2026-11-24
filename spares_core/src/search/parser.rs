@@ -403,11 +403,6 @@ fn prefix_binding_power(op: Op) -> ((), u8) {
 }
 
 fn postfix_binding_power(_op: Op) -> Option<(u8, ())> {
-    // let res = match op {
-    //     // Op::Call => (13, ()),
-    //     _ => return None,
-    // };
-    // Some(res)
     None
 }
 

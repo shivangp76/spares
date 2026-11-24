@@ -50,7 +50,6 @@ fn test_get_cards_image_occlusion_1() {
     let image_1_file_stem = format!("test-{}-1", seed);
     let image_2_file_stem = format!("test-{}-2", seed);
 
-    // let temp_dir = std::env::temp_dir();
     let temp_dir = get_image_occlusion_directory();
     let mut original_image_filepath_1 = temp_dir.clone();
     original_image_filepath_1.push(format!("{}.svg", image_1_file_stem));

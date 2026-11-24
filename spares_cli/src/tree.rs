@@ -17,16 +17,6 @@ impl TreeNode {
             current = current.children.entry(part).or_default();
         }
     }
-
-    // fn print(&self, indent: usize) {
-    //     let mut keys: Vec<_> = self.children.keys().collect();
-    //     keys.sort();
-    //
-    //     for key in keys {
-    //         println!("{}{}", " ".repeat(indent), key);
-    //         self.children[key].print(indent + 2);
-    //     }
-    // }
 }
 
 pub(crate) fn build_tree(strings: Vec<String>) -> TreeNode {
@@ -52,20 +42,6 @@ pub(crate) fn tree_to_string(node: &TreeNode, indent: usize) -> String {
 
     result
 }
-
-// fn main() {
-//     // Basic example with common parents
-//     let tree = vec![
-//         "root:child1:grandchild1".to_string(),
-//         "root:child1:grandchild2".to_string(),
-//         "root:child2".to_string(),
-//         "root:child2:grandchild3".to_string(),
-//         "another_root:child:grandchild".to_string(),
-//     ];
-//
-//     println!("Collapsed tree:");
-//     build_tree(tree).print(0);
-// }
 
 #[cfg(test)]
 mod tests {

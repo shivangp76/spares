@@ -310,7 +310,6 @@ pub trait SrsScheduler: Send + Sync {
         &self,
         filtered_tag_scheduler_data: Option<&Value>,
         card: &Card,
-        // previous_review_log: Option<ReviewLog>,
         rating: RatingId,
         reviewed_at: DateTime<Utc>,
         recall_duration: Duration,
@@ -740,9 +739,6 @@ pub fn get_scheduler_from_string(scheduler_str: &str) -> Result<Box<dyn SrsSched
             SchedulerErrorKind::NotFound(scheduler_str.to_string()),
         )));
     }
-    // Not possible. See `test_schedulers_validation`
-    // if matching_schedulers.len() > 1 {
-    // }
     Ok(matching_schedulers[0]())
 }
 
@@ -766,7 +762,6 @@ mod tests {
         for scheduler_fn in all_schedulers {
             let scheduler = scheduler_fn();
             all_scheduler_names.push(scheduler.get_scheduler_name());
-            // assert!(validate_scheduler(scheduler.as_ref()).is_none());
         }
         assert_eq!(
             all_scheduler_names.len(),

@@ -335,19 +335,6 @@ fn construct_file_data(
                     custom_data_str_content.as_str(),
                 );
                 parser.construct_setting(custom_data_string.as_str())
-                // let delim_with_space = format!("{} ", settings_delim);
-                // let custom_data_str_content = custom_data
-                //     .iter()
-                //     // `v.as_str()` removes the extra quotes around the value. See <https://stackoverflow.com/questions/72345657/how-do-i-get-the-string-value-of-a-json-value-without-quotes>.
-                //     .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
-                //     .map(|(k, v)| format!("{}{} {}", k, settings_key_value_delim, v))
-                //     .collect::<Vec<_>>()
-                //     .join(delim_with_space.as_str());
-                // format!(
-                //     "{}{}",
-                //     parser.construct_comment("Custom data"),
-                //     parser.construct_setting(custom_data_str_content.as_str()),
-                // )
             };
             let action_string = if matches!(note_import_action, NoteImportAction::Update(_)) {
                 String::new()
@@ -364,8 +351,6 @@ fn construct_file_data(
                 ))
             };
             let mut lines = vec![
-                // parser.construct_setting("spares: start"),
-                // "\n".to_string(),
                 "\n".to_string(),
                 action_string,
                 // A note to add has no id yet: importing one with an id is an error.
@@ -385,8 +370,6 @@ fn construct_file_data(
                 linked_notes_str,
                 "\n".to_string(),
                 "\n".to_string(),
-                // "\n".to_string(),
-                // parser.construct_setting("spares: end"),
             ];
             if include_separator {
                 lines.push(r"\noindent\rule{\textwidth}{0.4pt}".to_string());
@@ -411,8 +394,6 @@ fn construct_file_data(
                 // linked_notes_str,
                 "\n".to_string(),
                 "\n".to_string(),
-                // "\n".to_string(),
-                // parser.construct_setting("spares: end"),
             ];
             let card_file_data = lines.into_iter().collect::<String>();
             card_file_data
@@ -466,11 +447,6 @@ fn get_linked_notes_string(
         String::new()
     }
 }
-
-// fn start_end_regex() -> Regex {
-//     Regex::new(r"(?s)% spares: start\n(.*)\n% spares: end").unwrap()
-//     // Regex::new(r"(?s)\\se\{spares: start}\n(.*)\n\\se\{spares: end}").unwrap()
-// }
 
 fn file_extension(_: &impl Parseable) -> &'static str {
     "tex"
@@ -561,19 +537,6 @@ fn render_file(
     output_text_filepath: &Path,
     output_rendered_dir: &Path,
 ) -> Result<RenderedFile, Error> {
-    // This is currently the same `pdflatex` command that `latexmk` ends up running.
-    // let output = Command::new("pdflatex")
-    //     .arg("-shell-escape") // for svg package
-    //     .arg("-file-line-error")
-    //     .arg("-synctex=1")
-    //     .arg("-recorder")
-    //     .arg("-interaction=nonstopmode")
-    //     .arg("-output-directory")
-    //     .arg(&output_rendered_dir)
-    //     .arg(&output_text_filepath)
-    //     .output()
-    //     .map_err(|e| SrsError::Io(e, "Failed to run latex command".to_string()))?;
-
     // Command is from <https://github.com/lervag/vimtex/blob/8ca74380935beb4ed5d213bb55b2380cc1a83bd6/doc/vimtex.txt#L1019>.
     let mut auxdir_arg: OsString = "-auxdir=".to_owned().into();
     auxdir_arg.push(aux_dir);

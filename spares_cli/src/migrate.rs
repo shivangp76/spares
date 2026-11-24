@@ -35,8 +35,6 @@ fn migration_func(
         is_suspended,
     }: MigrationData,
 ) -> (String, String) {
-    // let new_front = parse_side(&front);
-    // let new_back = parse_side(&back);
     let new_front = front;
     let new_back = back;
 

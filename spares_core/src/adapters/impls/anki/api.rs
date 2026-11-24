@@ -20,7 +20,6 @@ pub async fn execute_request(request: &ApiRequest, client: &Client) -> Result<Va
             error: e.to_string(),
         }))
     })?;
-    // println!("{}", serde_json::to_string_pretty(&request).unwrap());
     let response = client.post(api_url).body(body).send().await.map_err(|e| {
         Error::Library(LibraryError::Adapter(AdapterErrorKind::Custom {
             adapter_name: ANKI_ADAPTER_NAME.to_string(),

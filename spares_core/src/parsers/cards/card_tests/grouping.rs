@@ -515,7 +515,6 @@ fn test_get_cards_grouping_all_3() {
 fn test_get_cards_grouping_all_4() {
     // Ensures that settings passed to all groupings persist. In other words, we cannot replace `g:*;hide:` with `g:*; g:1;hide:` since we also want all future groupings to have the setting `hide:`. This test highlights the need for the struct `ClozeGroupingSettings` when `g:*` is present. It is *not* sufficient to only duplicate the settings from `g:*` into settings for each grouping since this does not handle future changes.
     let data_1 = r"a{{[g:1]b}}c{{[g:*;hide:]f}}";
-    // let data_1 = r"a{{[g:1]b}}c{{a}}{{[g:*;r:]f}}";
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let (new_data, _) = add_order_to_note_data(parser.as_ref(), data_1, None).unwrap();
     assert!(new_data.contains("{{[g:*;hide:]f}}"), "{new_data}");

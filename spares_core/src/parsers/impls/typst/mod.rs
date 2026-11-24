@@ -209,19 +209,6 @@ impl Parseable for TypstParser {
                         custom_data_str_content.as_str(),
                     );
                     self.construct_setting(custom_data_string.as_str())
-                    // let delim_with_space = format!("{} ", settings_delim);
-                    // let custom_data_str_content = custom_data
-                    //     .iter()
-                    //     // `v.as_str()` removes the extra quotes around the value. See <https://stackoverflow.com/questions/72345657/how-do-i-get-the-string-value-of-a-json-value-without-quotes>.
-                    //     .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
-                    //     .map(|(k, v)| format!("{}{} {}", k, settings_key_value_delim, v))
-                    //     .collect::<Vec<_>>()
-                    //     .join(delim_with_space.as_str());
-                    // format!(
-                    //     "{}{}",
-                    //     self.construct_comment("Custom data"),
-                    //     self.construct_setting(custom_data_str_content.as_str()),
-                    // )
                 };
                 let action_string = if matches!(note_import_action, NoteImportAction::Update(_)) {
                     String::new()
@@ -247,8 +234,6 @@ impl Parseable for TypstParser {
                     format!("keywords{} {}", settings_key_value_delim, keywords_str);
                 let tags_string = format!("tags{} {}", settings_key_value_delim, tags_str);
                 let mut lines = vec![
-                    // self.construct_comment("spares: start"),
-                    // "\n".to_string(),
                     "\n".to_string(),
                     action_string,
                     // A note to add has no id yet: importing one with an id is an error.
@@ -267,8 +252,6 @@ impl Parseable for TypstParser {
                     self.construct_comment("spares: note end"),
                     linked_notes_string,
                     "\n".to_string(),
-                    // "\n".to_string(),
-                    // self.construct_comment("spares: end"),
                 ];
                 if include_separator {
                     lines.push(SEPARATOR.to_string());
@@ -712,7 +695,6 @@ pub mod tests {
     fn test_typst_linked_notes() {
         let parser: Box<dyn Parseable> = Box::new(TypstParser::new());
         let note_data = "Third #cl[Cloze here, linking to #lin[keyword 1], #lin[keyword 1.5], and #lin[keyword 2]][o:1]";
-        // let note_data = "Third #cl[Cloze here, linking to #lin([keyword 1]), #lin([keyword 1.5]), and #lin([keyword 2])][o:1]";
         let linked_notes_res = parser.get_linked_notes(note_data);
         assert!(linked_notes_res.is_ok());
         assert_eq!(linked_notes_res.unwrap().len(), 3);
@@ -722,7 +704,6 @@ pub mod tests {
     fn test_typst_get_linked_notes_string() {
         let parser: Box<dyn Parseable> = Box::new(TypstParser::new());
         let original_note_data = "Third #cl[Cloze here, linking to #lin[keyword 1], #lin[keyword 1.5], and #lin[keyword 2]][o:1]";
-        // let original_note_data = "Third #cl[Cloze here, linking to #lin([keyword 1]), #lin([keyword 1.5]), and #lin([keyword 2])][o:1]";
         let linked_notes_opt = Some(vec![
             LinkedNote {
                 searched_keyword: "keyword 1".to_string(),
@@ -749,7 +730,6 @@ pub mod tests {
         assert_eq!(new_note_data, expected_new_note_data);
         let expected_linked_notes_string = "+ keyword 1 $->$ #link(\"/tmp/spares/data/notes/typst/aaa.typ\")[keyword 1]\n+ keyword 1.5 $->$ #link(\"/tmp/spares/data/notes/typst/aaa.typ\")[keyword 1]\n+ keyword 2 $->$ #link(\"/tmp/spares/data/notes/typst/aab.typ\")[keyword 2]";
         assert_eq!(linked_notes_string, expected_linked_notes_string);
-        // let expected_new_note_data = "#let li1 = /tmp/spares/data/notes/typst/aaa.typ // \"keyword 1 -> keyword 1\"\n#let li2 = /tmp/spares/data/notes/typst/aaa.typ // \"keyword 1.5 -> keyword 1\"\n#let li3 = /tmp/spares/data/notes/typst/aab.typ // \"keyword 2 -> keyword 2\"\n\nThird #cl[Cloze here, linking to #lin([keyword 1], note_link: li1), #lin([keyword 1.5], note_link: li2), and #lin([keyword 2], note_link: li3)][o:1]";
     }
 
     #[test]

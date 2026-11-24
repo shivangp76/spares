@@ -82,9 +82,6 @@ pub fn get_adapter_from_string(adapter_str: &str) -> Result<Box<dyn SrsAdapter>,
             AdapterErrorKind::NotFound(adapter_str.to_string()),
         )));
     }
-    // Not possible. See `test_adapters_validation`
-    // if matching_adapters.len() > 1 {
-    // }
     Ok(matching_adapters[0]())
 }
 
@@ -115,7 +112,6 @@ mod tests {
         for adapter_fn in all_adapters {
             let adapter = adapter_fn();
             all_adapter_names.push(adapter.get_adapter_name());
-            // assert!(validate_adapter(adapter.as_ref()).is_none());
         }
         assert_eq!(
             all_adapter_names.len(),

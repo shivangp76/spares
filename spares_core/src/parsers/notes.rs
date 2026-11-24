@@ -148,12 +148,6 @@ pub fn get_notes(
     move_files: bool,
     overlapper: Option<&OverlapperConfig>,
 ) -> Result<Vec<(NoteSettings, Option<String>)>, Error> {
-    // Remove comments
-    // let data = if let Some(comment_regex) = parser.comment_regex() {
-    //     comment_regex.replace_all(data, "").to_string()
-    // } else {
-    //     data.to_string()
-    // };
     let data = data.to_string();
 
     let notes_raw_data = parser.get_notes_data(data.as_str())?;
@@ -540,7 +534,6 @@ mod tests {
         let image_1_file_stem = format!("test-{}-1", seed);
         let image_2_file_stem = format!("test-{}-2", seed);
 
-        // let temp_dir = std::env::temp_dir();
         let temp_dir = get_image_occlusion_directory();
         let mut original_image_filepath_1 = temp_dir.clone();
         original_image_filepath_1.push(format!("{}.svg", image_1_file_stem));

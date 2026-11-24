@@ -617,7 +617,6 @@ fn hide_cloze_mask(cloze: &mut Element) {
     cloze
         .attributes
         .insert("opacity".to_string(), "0".to_string());
-    // .insert("visibility".to_string(), "hidden".to_string());
 }
 
 fn set_cloze_fill_opacity(cloze: &mut Element, cloze_emphasis_fill_opacity: f64) {

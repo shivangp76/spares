@@ -1062,7 +1062,6 @@ impl Field {
                 | CardField::DesiredRetention
                 | CardField::Interval
                 | CardField::Retrievability => FieldType::Float,
-                // CardField::SpecialState => {
                 CardField::Suspended
                 | CardField::UserBuried
                 | CardField::SchedulerBuried
@@ -1150,7 +1149,6 @@ impl Field {
 #[allow(clippy::struct_excessive_bools)]
 struct TableRequirements {
     needs_parser: bool,
-    // needs_tag: bool,
     needs_card: bool,
     needs_review_log: bool,
     needs_note_link: bool,
@@ -1187,7 +1185,6 @@ impl TableRequirements {
 
     fn merge(&mut self, other: &TableRequirements) {
         self.needs_parser |= other.needs_parser;
-        // self.needs_tag |= other.needs_tag;
         self.needs_card |= other.needs_card;
         self.needs_review_log |= other.needs_review_log;
         self.needs_note_link |= other.needs_note_link;
@@ -1356,11 +1353,6 @@ impl EvaluationContext {
             self.query_builder
                 .push(" LEFT JOIN parser p ON n.parser_id = p.id");
         }
-        // if self.table_requirements.needs_tag {
-        //     self.query_builder
-        //         .push(" LEFT JOIN note_tag nt ON n.id = nt.note_id")
-        //         .push(" LEFT JOIN tag t ON nt.tag_id = t.id");
-        // }
         if self.table_requirements.needs_note_link {
             self.query_builder
                 .push(" LEFT JOIN note_link nl ON n.id = nl.parent_note_id");
@@ -1587,8 +1579,6 @@ fn evaluate_minus(trees: &[TokenTree], context: &mut EvaluationContext) -> Resul
     if let Some(clause) = inner_context.where_clauses.first() {
         context.add_where_clause(format!("NOT ({})", clause));
     }
-    // Merge order_by clauses (should be empty due to check above, but merge anyway)
-    // context.order_by.extend(inner_context.order_by);
     context
         .table_requirements
         .merge(&inner_context.table_requirements);

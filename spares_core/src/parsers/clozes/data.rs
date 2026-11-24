@@ -471,44 +471,8 @@ pub enum ClozeGrouping {
     Custom(String),
 }
 
-// impl Serialize for ClozeGrouping {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: Serializer,
-//     {
-//         match self {
-//             ClozeGrouping::All => serializer.serialize_str("All"),
-//             ClozeGrouping::Auto(num) => serializer.serialize_str(&format!("Auto({})", num)),
-//             ClozeGrouping::Custom(s) => serializer.serialize_str(&format!("Custom({})", s)),
-//         }
-//     }
-// }
-//
-// impl<'de> Deserialize<'de> for ClozeGrouping {
-//     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-//     where
-//         D: Deserializer<'de>,
-//     {
-//         let s = String::deserialize(deserializer)?;
-//         if s == "All" {
-//             Ok(ClozeGrouping::All)
-//         } else if s.starts_with("Auto(") {
-//             let num = s[5..s.len() - 1]
-//                 .parse::<i64>()
-//                 .map_err(serde::de::Error::custom)?;
-//             Ok(ClozeGrouping::Auto(num))
-//         } else if s.starts_with("Custom(") {
-//             let custom_str = &s[7..s.len() - 1];
-//             Ok(ClozeGrouping::Custom(custom_str.to_string()))
-//         } else {
-//             Err(serde::de::Error::custom("Unknown variant"))
-//         }
-//     }
-// }
-
 impl ClozeGrouping {
     fn default(current_grouping_number: &mut u32) -> Self {
-        // ClozeGrouping::Auto(Uuid::new_v4())
         let result = ClozeGrouping::Auto(*current_grouping_number);
         *current_grouping_number += 1;
         result

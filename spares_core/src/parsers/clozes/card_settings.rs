@@ -619,21 +619,6 @@ fn parse_grouping_settings(
         current_grouping_settings.include_forward_card = false;
         current_grouping_settings.include_backward_card = true;
     }
-    // NOTE: This is not always true if a note changed from "o:1" to "o:1;r:" when it is being updated. In this case, a new order needs to be added.
-    // if let Some(ref orders) = current_grouping_settings.orders {
-    //     if current_grouping_settings.include_forward_card
-    //         && current_grouping_settings.include_backward_card
-    //         && orders.len() != 2
-    //     {
-    //         return Err(format!("Expected 2 orders, but found {}", orders.len()));
-    //     }
-    //     if (current_grouping_settings.include_forward_card
-    //         ^ current_grouping_settings.include_backward_card)
-    //         && orders.len() != 1
-    //     {
-    //         return Err(format!("Expected 1 order, but found {}", orders.len()));
-    //     }
-    // }
     Ok(current_grouping_settings)
 }
 
@@ -745,15 +730,6 @@ pub fn parse_card_settings(
         )?;
 
         // Update groupings
-        // let groupings = parse_grouping(grouping_value, current_grouping_number);
-        // let groupings_parsed = groupings
-        //     .iter()
-        //     .map(|grouping| {
-        //         let mut grouping_settings = current_grouping_settings.clone();
-        //         grouping_settings.grouping = grouping.clone();
-        //         grouping_settings
-        //     })
-        //     .collect::<Vec<_>>();
         current_grouping_settings.grouping = grouping;
         all_grouping_settings.push(current_grouping_settings);
     }

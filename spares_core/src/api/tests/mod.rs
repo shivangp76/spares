@@ -65,7 +65,6 @@ const START_DATE_KEY: &str = "start_date";
 #[derive(Debug)]
 struct ClozeEntry {
     pub card_number: u32,
-    // pub cloze_number: u32,
     pub parent: RefCell<Weak<ClozeEntry>>,
     pub children: RefCell<Vec<Rc<ClozeEntry>>>,
 }

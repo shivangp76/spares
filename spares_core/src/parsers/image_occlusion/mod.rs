@@ -191,9 +191,6 @@ pub enum ImageOcclusionClozeIndex {
 pub struct ImageOcclusionData {
     #[serde(deserialize_with = "deserialize_path_buf")]
     pub original_image_filepath: PathBuf,
-    // /// Annotations to the original image that will be shown behind the clozes
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    // pub markup_filepath: Option<PathBuf>,
     /// A file that is the same height and width as `original_image_filepath` and contains 2
     /// layers: "Markup" and "Clozes". The markup layer allows annotations to the original
     /// image that will be shown behind the clozes.

@@ -472,18 +472,6 @@ pub(crate) mod tests {
             assert!(note_keywords_res.is_ok());
             let db_keywords: Vec<String> = note_keywords_res.unwrap();
             assert_eq!(db_keywords, last_note.keywords);
-
-            // let cards_res: Result<Vec<Card>, sqlx::Error> =
-            //     sqlx::query_as(r"SELECT * FROM card WHERE note_id = ?")
-            //         .bind(note.id)
-            //         .fetch_all(&pool)
-            //         .await;
-            // assert!(cards_res.is_ok());
-            // if let Ok(cards) = cards_res {
-            //     assert!(cards
-            //         .iter()
-            //         .all(|card| card.special_state == Some(SpecialState::Suspended)));
-            // }
         }
     }
 

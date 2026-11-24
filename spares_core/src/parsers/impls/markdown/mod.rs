@@ -117,7 +117,6 @@ impl Parseable for MarkdownParser {
     }
 
     fn get_settings(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {
-        // let settings_regex = Regex::new(r"(?m)<!--- # (.*) --->").unwrap();
         let settings_regex = get_or_compile_regex(r"(?s)<!--- # ([^\n]*) --->").unwrap();
         let settings_data = settings_regex
             .captures_iter(data)
@@ -243,19 +242,6 @@ impl Parseable for MarkdownParser {
                         custom_data_str_content.as_str(),
                     );
                     self.construct_setting(custom_data_string.as_str())
-                    // let delim_with_space = format!("{} ", settings_delim);
-                    // let custom_data_str_content = custom_data
-                    //     .iter()
-                    //     // `v.as_str()` removes the extra quotes around the value. See <https://stackoverflow.com/questions/72345657/how-do-i-get-the-string-value-of-a-json-value-without-quotes>.
-                    //     .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
-                    //     .map(|(k, v)| format!("{}{} {}", k, settings_key_value_delim, v))
-                    //     .collect::<Vec<_>>()
-                    //     .join(delim_with_space.as_str());
-                    // format!(
-                    //     "{}{}",
-                    //     self.construct_comment("Custom data"),
-                    //     self.construct_setting(custom_data_str_content.as_str()),
-                    // )
                 };
                 let action_string = if matches!(note_import_action, NoteImportAction::Update(_)) {
                     String::new()
@@ -281,8 +267,6 @@ impl Parseable for MarkdownParser {
                     format!("keywords{} {}", settings_key_value_delim, keywords_str);
                 let tags_string = format!("tags{} {}", settings_key_value_delim, tags_str);
                 let mut lines = vec![
-                    // self.construct_comment("spares: start"),
-                    // "\n".to_string(),
                     "\n".to_string(),
                     action_string,
                     // A note to add has no id yet: importing one with an id is an error.
@@ -300,8 +284,6 @@ impl Parseable for MarkdownParser {
                     self.construct_comment("spares: note end"),
                     linked_notes_string,
                     "\n".to_string(),
-                    // "\n".to_string(),
-                    // self.construct_comment("spares: end"),
                 ];
                 if include_separator {
                     lines.push("---".to_string());

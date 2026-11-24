@@ -104,74 +104,8 @@ fn test_unsorted() {
     assert_eq!(generate_next_cloze_options(input), expected);
 }
 
-// #[derive(Debug, PartialEq)]
-// struct ClozeEntry {
-//     pub card_number: u32,
-//     pub cloze_number: u32,
-//     pub nesting_level: u32,
-// }
-//
-// fn generate_note(clozes_count: u32, max_nesting_level: u32) -> Vec<ClozeEntry> {
-//     let mut clozes: Vec<ClozeEntry> = Vec::new();
-//     for _ in 1..=clozes_count {
-//         // Nesting level
-//         let previous_nesting_level = clozes.last().map(|x| x.nesting_level).unwrap_or(0);
-//         let nesting_options = (0..(previous_nesting_level + 1).min(max_nesting_level))
-//             .into_iter()
-//             .collect::<Vec<_>>();
-//         let nesting_level = nesting_options.choose(&mut rand::rng()).unwrap();
-//
-//         // Card and cloze number
-//         let current_clozes = clozes
-//             .iter()
-//             .map(
-//                 |ClozeEntry {
-//                      card_number,
-//                      cloze_number,
-//                      ..
-//                  }| (*card_number, *cloze_number),
-//             )
-//             .collect::<Vec<_>>();
-//         let mut card_cloze_options = generate_next_cloze_options(&current_clozes);
-//
-//         // Clozes part of the same card cannot be nested, so remove those
-//         let count = if *nesting_level == 0 {
-//             0
-//         } else {
-//             nesting_level - 1
-//         };
-//         let ancestors = (0..=count)
-//             .into_iter()
-//             .rev()
-//             .map(|nl_search| {
-//                 clozes
-//                     .iter()
-//                     .rev()
-//                     .find(|cloze| cloze.nesting_level == nl_search)
-//             })
-//             .flatten()
-//             .map(|c| (c.card_number, c.cloze_number))
-//             .collect::<Vec<_>>();
-//         card_cloze_options.retain(|x| !ancestors.contains(&x));
-//         let card_cloze = card_cloze_options.choose(&mut rand::rng()).unwrap();
-//
-//         clozes.push(ClozeEntry {
-//             card_number: card_cloze.0,
-//             cloze_number: card_cloze.1,
-//             nesting_level: *nesting_level,
-//         });
-//     }
-//     clozes
-// }
-
 fn get_last_children(current: &Rc<ClozeEntry>) -> Vec<Rc<ClozeEntry>> {
     let mut result = Vec::new();
-    // let mut current_node = Some(current);
-    // while let Some(cur_node) = current_node {
-    //     result.push(cur_node);
-    //     let a = cur_node.children.borrow();
-    //     current_node = cur_node.children.borrow().last();
-    // }
     let children = current.children.borrow();
     if children.is_empty() {
         return vec![Rc::clone(current)];
@@ -214,7 +148,6 @@ fn generate_note_structure(
 
         let new_cloze = Rc::new(ClozeEntry {
             card_number: card_cloze.0,
-            // cloze_number: card_cloze.1,
             parent: RefCell::new(Weak::new()),
             children: RefCell::new(Vec::new()),
         });

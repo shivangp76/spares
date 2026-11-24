@@ -86,10 +86,8 @@ pub struct Card {
     pub difficulty: f64, // changes after every review
     /// Values between 70% and 97% are considered reasonable. See <https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS>.
     pub desired_retention: f64,
-    // pub elapsed_days: i64, // Equivalent to: DateTime::Now - `SELECT time FROM review_log WHERE card_id = ? ORDER BY reviewed_date`
-    // pub scheduled_days: i64, // Equivalent to: `SELECT scheduled_days FROM review_log WHERE card_id = ? ORDER BY reviewed_date`
-    // pub reps: i64, // Equivalent to: `SELECT COUNT(*) FROM review_log WHERE card_id = ?`
-    // pub lapses: u32, // Equivalent to: `SrsScheduler::lapses`
+    // FSRS's `elapsed_days`, `scheduled_days`, `reps`, `lapses` and `last_review` aren't stored:
+    // they follow from the card's `review_log` rows (`lapses` from `SrsScheduler::lapses`).
     // NOTE: This field is _not_ recoverable from the note data. In other words, this is not serialized in the cloze settings string (even though it is *de*serialized). This is because otherwise, sending a request to update a card and suspend it would require modifying the note's data. Instead, this field now only *de*serialized, not serialized.
     pub special_state: Option<SpecialState>,
     /// One of the states [`get_states`](crate::schedulers::SrsScheduler::get_states) lists for the
@@ -97,9 +95,6 @@ pub struct Card {
     /// this card, then it is `NEW_CARD_STATE` to represent the first state, which every scheduler
     /// has.
     pub state: StateId,
-    // pub last_review: i64, // DateTime. Equivalent to: `SELECT reviewed_at FROM review_log WHERE card_id = ? ORDER BY reviewed_at LIMIT 1`
-    // pub previous_state: i64, // Not needed.
-    // pub review_log_id: Option<i64>, // Equivalent to: `SELECT id FROM review_log WHERE card_id = ? ORDER BY reviewed_at ASC LIMIT 1`
     /// JSON data for custom schedulers.
     /// This is guaranteed to be of type `Value::Object(Map<String, Value>)`.
     pub custom_data: Value,
@@ -284,7 +279,6 @@ impl ReviewLogKind {
 
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct NoteLink {
-    // pub id: Option<i64>,
     pub parent_note_id: NoteId,
     /// Note that unmatched linked notes are still inserted to make it clear that no linked note was found.
     pub linked_note_id: Option<NoteId>,
@@ -351,12 +345,6 @@ pub struct Parser {
     pub name: String, // NOTE: name matches that in `src/parsers/mod.rs::get_parser()`
 }
 
-// #[derive(Debug, Serialize, Deserialize, FromRow, Clone)]
-// pub struct Scheduler {
-//     pub id: i64,
-//     pub name: String, // NOTE: name matches that in `src/schedulers/mod.rs::get_scheduler()`
-// }
-
 /// This contains a row for every review ever done, plus a marker row for each action that changes
 /// a card's memory state without being a review, and a row for each cram (see [`ReviewLogKind`]).
 /// Thus, each card has multiple entries in this table.
@@ -376,7 +364,7 @@ pub struct ReviewLog {
     /// What the card was recorded as, if this row is a review or a cram. `None` for every other
     /// [`ReviewLogKind`].
     ///
-    /// The integer value is in relation to the scheduler specified by `scheduler_id`.
+    /// The integer value is in relation to the scheduler named by `scheduler_name`.
     /// It is comparable to Anki's `revlog.ease` column.
     pub rating: Option<RatingId>,
     /// Why this row exists. See [`ReviewLogKind`].
@@ -386,7 +374,6 @@ pub struct ReviewLog {
     /// Set to `None` rather than deleted when the tag is deleted, for the same reason `card_id`
     /// is: the review still happened.
     pub tag_id: Option<TagId>,
-    // pub scheduler_id: i64,
     pub scheduler_name: String,
     /// Duration, stored in seconds.
     /// It is comparable to Anki's `revlog.ivl` column.
@@ -399,10 +386,8 @@ pub struct ReviewLog {
     /// How long it took the rate the card. Useful to provide time estimates for reviews.
     // Cannot use 'chrono::Duration` since its not supported by `sqlx`. See <https://docs.rs/sqlx/latest/sqlx/sqlite/types/index.html>.
     pub rate_duration: Option<i64>,
-    // It is comparable to Anki's `revlog.lastIvl` column.
-    // pub elapsed_time: i64, // Unix Time. Equivalent to `self.reviewed_at - previous_review.reviewed_at` or 0 if card is new.
     /// To see how many reviews were done for each state on a given day.
-    /// The integer value is in relation to the scheduler specified by `scheduler_id`.
+    /// The integer value is in relation to the scheduler named by `scheduler_name`.
     /// It is comparable to Anki's `revlog.type` column.
     pub previous_state: StateId,
     /// JSON data for custom schedulers.

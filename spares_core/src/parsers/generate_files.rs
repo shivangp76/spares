@@ -249,8 +249,6 @@ pub fn create_note_files_bulk(
                 source: e,
             })?;
 
-    // let total_notes = request.requests.len();
-    // let counter = Arc::new(AtomicUsize::new(0));
     info!(
         "Generating note files for the `{}` parser",
         parser.get_parser_name()
@@ -622,32 +620,6 @@ fn create_raw_and_rendered_file(
     output_text_filepath.set_extension(parser.file_extension());
     create_dir_all(output_text_filepath.parent().unwrap()).unwrap();
 
-    // Note we cannot warn before overwriting the file since the new file may just be the current file with linked notes. In this case, we are not overwriting.
-    // let output_text_filepath_current_data_opt = read_to_string(&output_text_filepath).ok();
-    // if let Some(current_file_contents) = output_text_filepath_current_data_opt {
-    //     if current_file_contents != file_contents {
-    //         let prompt = format!(
-    //             "Are you sure you want to overwrite {}?",
-    //             output_text_filepath.display()
-    //         );
-    //         let ans = Confirm::new(&prompt).with_default(false).prompt();
-    //         match ans {
-    //             Ok(true) => {}
-    //             Ok(false) | Err(_) => {
-    //                 return Err(Error::Io {
-    //                     description: format!(
-    //                         "Aborting since the file {} already contains data.",
-    //                         output_text_filepath.display()
-    //                     ),
-    //                     source: std::io::Error::new(
-    //                         std::io::ErrorKind::AlreadyExists,
-    //                         output_text_filepath.to_str().unwrap(),
-    //                     ),
-    //                 });
-    //             }
-    //         }
-    //     }
-    // }
     // A raw file that would be written with what it holds keeps its modification time
     let raw_changed =
         write_if_changed(&output_text_filepath, file_contents).map_err(|e| Error::Io {

@@ -69,8 +69,6 @@ pub enum Error {
     /// [`sync::devices`]). Its number may belong to another device by now.
     #[error("Replica {0} is not enrolled with the sync server. Set up this device's copy again.")]
     NotEnrolled(u8),
-    // #[error("{0}")]
-    // Other(String),
 }
 
 // Note that `LibraryError` is `Clone` while `Error` is not.

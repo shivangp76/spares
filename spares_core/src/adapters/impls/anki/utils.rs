@@ -34,16 +34,6 @@ pub fn note_action_to_anki(note_action: NoteImportAction) -> ApiAction {
     }
 }
 
-// fn get_gui_browse_request(query: &str) -> ApiRequest {
-//     ApiRequest {
-//         action: ApiAction::GuiBrowse,
-//         params: ApiRequestParams::GuiBrowse(GuiBrowseApiRequestData {
-//             query: query.to_owned(),
-//         }),
-//         version: 6,
-//     }
-// }
-
 impl AnkiAdapter {
     pub fn verify_anki_is_open(&mut self) -> Result<(), Error> {
         if self.confirm_bypass {

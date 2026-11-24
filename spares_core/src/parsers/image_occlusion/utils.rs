@@ -158,9 +158,6 @@ pub fn render_svg_to_rgba(
     target_w: Option<u32>,
     target_h: Option<u32>,
 ) -> Result<RgbaImage, String> {
-    // let svg_data = std::fs::read(svg_path)
-    //     .map_err(|e| format!("Failed to read SVG {}: {}", svg_path.display(), e))?;
-
     let opt = super::hint::usvg_options();
 
     let tree = resvg::usvg::Tree::from_data(svg_data, &opt)

@@ -96,19 +96,6 @@ pub fn parse_anki_revlog_rows(
             if rating.is_none() {
                 return Ok(None);
             }
-            // let scheduled_time = if review_log_row.ivl < 0 {
-            //     // Negative = seconds, positive = days
-            //     Duration::try_seconds(-review_log_row.ivl)
-            // } else {
-            //     Duration::try_days(-review_log_row.ivl)
-            // };
-            // if scheduled_time.is_none() {
-            //     info!(
-            //         "[Card {}] Skipping the {}th review log because scheduled time is none.",
-            //         card_id, i
-            //     );
-            //     return Ok(None);
-            // }
             Ok(Some((RatingSubmission {
                 card_id,
                 rating: rating.unwrap(),
@@ -117,56 +104,6 @@ pub fn parse_anki_revlog_rows(
                 rate_duration: Duration::zero(),
                 tag_id: None,
             }, reviewed_at.unwrap())))
-            // let previous_state: Option<StateId> = if i > 0 {
-            //     let prev_review_log_row = review_log_rows.get(i - 1).unwrap();
-            //     match prev_review_log_row.r#type {
-            //         // Learn
-            //         0 => Ok(Some(1)),
-            //         // Review
-            //         1 => Ok(Some(2)),
-            //         // Relearn
-            //         2 => Ok(Some(3)),
-            //         // Filtered
-            //         3 => {
-            //             info!(
-            //                 "[Card {}] Skipping the {}th review log because filtered, so the previous state cannot be determined.",
-            //                 card_id, i
-            //             );
-            //             Ok(None)
-            //         },
-            //         // Manual
-            //         // "When cards are manually rescheduled using the "reset" or "set due date" actions, the type will be listed as Manual and the rating as 0." <https://docs.ankiweb.net/stats.html>
-            //         4 => {
-            //             info!(
-            //                 "[Card {}] Skipping the {}th review log because manually rescheduled, so previous state cannot be determined.",
-            //                 card_id, i
-            //             );
-            //             Ok(None)
-            //         },
-            //         x => Err(format!("Got an invalid previous state of: {}", x)),
-            //     }
-            // } else {
-            //     // The first review, so the previous state is new
-            //     Ok(Some(NEW_CARD_STATE))
-            // }?;
-            // if previous_state.is_none() {
-            //     return Ok(None);
-            // }
-            // let custom_data = Value::Null;
-            // Ok(Some(ReviewLog {
-            //     // Unused
-            //     id: i64::default(),
-            //     card_id,
-            //     reviewed_at: reviewed_at.unwrap(),
-            //     rating: rating.unwrap(),
-            //     scheduler_name: "fsrs".to_string(),
-            //     scheduled_time: scheduled_time.unwrap().num_seconds(),
-            //     duration: Duration::try_milliseconds(review_log_row.time)
-            //         .unwrap_or(Duration::zero())
-            //         .num_seconds(),
-            //     previous_state: previous_state.unwrap(),
-            //     custom_data,
-            // }))
         })
         .collect::<Result<Vec<Option<_>>, String>>()?;
     Ok(review_logs.into_iter().flatten().collect::<Vec<_>>())
@@ -209,36 +146,6 @@ pub async fn populate_reviews(
             let mut zipped_cards = card_rows.into_iter().zip(cards);
             // Count Anki notes with more than 1 card: `SELECT *, COUNT(*) c FROM cards GROUP BY nid HAVING c > 1;`
             for (anki_card, card) in &mut zipped_cards {
-                // State
-                // See <https://github.com/ankidroid/Anki-Android/wiki/Database-Structure> and <https://github.com/open-spaced-repetition/rs-fsrs/blob/master/src/models.rs>.
-                // let state = anki_card.r#type;
-                // Skip if card is new
-                // let anki_new_card_state = 0;
-                // if state == anki_new_card_state {
-                //     info!(
-                //         "[Note {}, Card {}, Anki Card {}] Skipping because new.",
-                //         card.note_id, card.id, anki_card.id
-                //     );
-                //     continue;
-                // }
-
-                // FSRS
-                // let stability = anki_card.data.get("s").and_then(|val| val.as_f64());
-                // if stability.is_none() {
-                //     info!(
-                //         "[Note {}, Card {}, Anki Card {}] Skipping because stability is missing.",
-                //         card.note_id, card.id, anki_card.id
-                //     );
-                //     continue;
-                // }
-                // let difficulty = anki_card.data.get("d").and_then(|val| val.as_f64());
-                // if difficulty.is_none() {
-                //     info!(
-                //         "[Note {}, Card {}, Anki Card {}] Skipping because difficulty is missing.",
-                //         card.note_id, card.id, anki_card.id
-                //     );
-                //     continue;
-                // }
                 let desired_retention = anki_card
                     .data
                     .get("dr")
@@ -286,34 +193,6 @@ pub async fn populate_reviews(
                     };
                     submit_study_action(spares_pool, body, reviewed_at).await?;
                 }
-                // for review_log in review_logs {
-                //     let _insert_result =
-                //     sqlx::query(r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name, scheduled_time, duration, previous_state, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-                //         .bind(review_log.card_id)
-                //         .bind(review_log.reviewed_at.timestamp())
-                //         .bind(review_log.rating)
-                //         .bind(review_log.scheduler_name)
-                //         .bind(review_log.scheduled_time)
-                //         .bind(review_log.duration)
-                //         .bind(review_log.previous_state)
-                //         .bind(review_log.custom_data)
-                //         .execute(&spares_pool)
-                //         .await
-                //         .map_err(|e| format!("{}", e))?;
-                // }
-
-                // Update database
-                // let _update_card_result = sqlx::query(
-                //         r"UPDATE card SET stability = ?, difficulty = ?, desired_retention = ?, state = ?, updated_at = strftime('%s', 'now') WHERE id = ?",
-                //     )
-                //     .bind(card.stability)
-                //     .bind(card.difficulty)
-                //     .bind(card.desired_retention)
-                //     .bind(card.state)
-                //     .bind(card.id)
-                //     .execute(&spares_pool)
-                //     .await
-                //     .map_err(|e| format!("{}", e))?;
             }
         }
     }

@@ -356,11 +356,6 @@ pub(super) fn update_first_cloze_with_order(
                     (current_card_order..(current_card_order + num_cards)).collect::<Vec<_>>(),
                 );
                 // The orders may be overriden if an earlier card was changed to also include the reverse direction. In this case, all the future orders must be incremented by 1. Thus, it is fine to override here.
-                // if grouping_settings.orders.is_some()
-                //     && grouping_settings.orders != new_cloze_orders
-                // {
-                //     return Err(format!("Specified `cloze.settings.orders` as {:?} when it should be {:?} when calling `get_cards()` with `add_order = true`.", grouping_settings.orders, new_cloze_orders));
-                // }
                 grouping_settings.orders = new_cloze_orders;
                 current_card_order += num_cards;
             }
@@ -672,8 +667,6 @@ pub(super) fn apply_conceal_and_reveal(
         // NOTE: The value of `is_image_occlusion` doesn't matter here since that property won't be read.
         let mut new_grouping_settings = ClozeGroupingSettings::default(&mut 0, None);
         new_grouping_settings.grouping = clozes.first().unwrap().1.grouping.clone();
-        // new_grouping_settings.front_conceal = clozes.first().unwrap().1.front_conceal;
-        // new_grouping_settings.back_reveal = clozes.first().unwrap().1.back_reveal;
         new_grouping_settings.hidden_no_answer = true;
         new_grouping_settings.skip_serialization = true;
         clozes.extend(
