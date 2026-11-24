@@ -682,25 +682,61 @@ input[type="checkbox"] {
 .login {
   max-width: 400px;
   margin: 80px auto;
-  padding: 24px;
+  padding: 28px 28px 24px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px light-dark(rgb(0 0 0 / 0.06), rgb(0 0 0 / 0.4));
 }
 
 .login h2 {
-  margin-bottom: 24px;
+  margin: 0 0 24px;
+  font-size: 24px;
 }
 
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+}
+
+.login-form label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* A hint inside a label is read with it, but quieter than its name */
+.login-form label .field-hint {
+  font-weight: normal;
 }
 
 .login-form input:not([type="checkbox"]) {
   display: block;
   width: 100%;
-  margin-top: 4px;
-  padding: 6px 8px;
+  margin-top: 6px;
+  padding: 8px 10px;
   box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-weight: normal;
+}
+
+.login-form input:not([type="checkbox"])::placeholder {
+  color: var(--text-faint);
+}
+
+.login-form input:not([type="checkbox"]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+/* A field the browser found wrong once it was left or submitted */
+.login-form input:not([type="checkbox"]):user-invalid {
+  border-color: var(--error);
 }
 
 .login-form .field-hint {
@@ -712,13 +748,31 @@ input[type="checkbox"] {
   display: flex;
   gap: 6px;
   align-items: stretch;
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
 .login-form .password-field input {
   flex: 1;
   min-width: 0;
   margin-top: 0;
+}
+
+/* Shown or not, the password's button keeps the fields' look */
+.password-field button,
+.password-field button[aria-pressed="true"] {
+  padding: 0 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.password-field button:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 .login-advanced summary {
@@ -1186,8 +1240,13 @@ html:has(.review-answer-bar) {
     padding: 10px 12px !important;
   }
 
+  /* The screen is the page, so a card's frame would only take width */
   .login {
     margin-top: 24px !important;
+    padding: 16px;
+    background: none;
+    border: none;
+    box-shadow: none;
   }
 }
 
