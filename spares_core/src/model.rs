@@ -476,15 +476,11 @@ pub struct Event {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use sqlx::SqlitePool;
-    use sqlx::migrate::Migrate;
-    use sqlx::migrate::Migrator;
 
-    fn migrator_path() -> &'static Path {
-        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
-    }
+    /// The last migration the baseline replaced
+    const LAST_OLD_MIGRATION: i64 = 20_261_104_130_000;
 
     /// Rows of `_sqlx_migrations` as the migrations before the baseline left them, by version.
     async fn pretend_old_migrations_ran(pool: &SqlitePool, versions: &[i64]) {
@@ -531,18 +527,12 @@ mod tests {
                 .unwrap();
         assert_eq!(
             applied,
-            [
-                20_240_326_145_400,
-                20_261_104_130_000,
-                20_261_124_110_000,
-                20_261_124_120_000,
-                20_261_124_130_000
-            ]
+            [20_240_326_145_400, 20_261_104_130_000, 20_261_124_110_000]
         );
     }
 
-    /// `20261124130000_tag_link_unique` gives the tag links of a collection made before they were
-    /// unique their unique indexes, dropping repeated links first.
+    /// The baseline gives the tag links of a collection made before they were unique their unique
+    /// indexes, dropping repeated links first.
     #[sqlx::test(migrations = false)]
     async fn migration_tag_link_unique_drops_repeated_links(pool: SqlitePool) {
         let migrator = crate::collection::migrator();
@@ -555,11 +545,11 @@ mod tests {
             "PRAGMA foreign_keys = OFF",
             "INSERT INTO note_tag (id, note_id, tag_id) VALUES (1, 1, 1), (2, 1, 1), (3, 1, 2)",
             "INSERT INTO card_tag (id, card_id, tag_id) VALUES (1, 1, 1), (2, 1, 1)",
-            "DELETE FROM _sqlx_migrations WHERE version = 20261124130000",
         ] {
             sqlx::query(statement).execute(&mut *conn).await.unwrap();
         }
         drop(conn);
+        pretend_old_migrations_ran(&pool, &[LAST_OLD_MIGRATION]).await;
 
         migrator.run(&pool).await.unwrap();
 
@@ -609,7 +599,7 @@ mod tests {
         assert!(!super::ReviewLogKind::Reschedule.is_replayed());
     }
 
-    /// `20261124120000_backfill_old_payloads` writes the fields older rows and undo events left
+    /// The baseline writes the fields older rows and undo events left
     /// out, so that they read without defaults: a reschedule's origin, told by the direction of
     /// the move, and a tag's `reschedule`, wherever an event keeps them.
     #[sqlx::test(migrations = false)]
@@ -621,18 +611,9 @@ mod tests {
         use super::RescheduleOrigin;
         use super::Tag;
 
-        const MIGRATION: i64 = 20_261_124_120_000;
-        let migrator = Migrator::new(migrator_path()).await.unwrap();
+        let migrator = crate::collection::migrator();
+        migrator.run(&pool).await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table(&migrator.table_name)
-            .await
-            .unwrap();
-        for migration in migrator
-            .iter()
-            .filter(|m| m.migration_type.is_up_migration() && m.version < MIGRATION)
-        {
-            conn.apply(&migrator.table_name, migration).await.unwrap();
-        }
         sqlx::query(
             r#"INSERT INTO review_log (id, card_id, reviewed_at, kind, scheduler_name,
                previous_state, custom_data)
@@ -669,6 +650,7 @@ mod tests {
                 .unwrap();
         }
         drop(conn);
+        pretend_old_migrations_ran(&pool, &[LAST_OLD_MIGRATION]).await;
 
         migrator.run(&pool).await.unwrap();
 
