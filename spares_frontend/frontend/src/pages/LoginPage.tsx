@@ -229,7 +229,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={checking}
-          className="touch-target login-submit"
+          className="button-primary touch-target login-submit"
         >
           {checking ? "Logging in…" : "Log in"}
         </button>

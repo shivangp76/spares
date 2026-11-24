@@ -119,7 +119,7 @@ export default function SignupPage() {
           <button
             type="submit"
             disabled={busy}
-            className="touch-target login-submit"
+            className="button-primary touch-target login-submit"
           >
             {busy ? "Creating…" : "Create account"}
           </button>

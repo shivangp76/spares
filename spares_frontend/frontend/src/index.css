@@ -792,8 +792,17 @@ input[type="checkbox"] {
 }
 
 .login-submit {
-  padding: 8px 0;
+  padding: 10px 0;
   margin-top: 4px;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.login-submit:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  outline-offset: 2px;
 }
 
 .login-error {

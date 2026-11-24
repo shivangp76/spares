@@ -69,7 +69,7 @@ export default function ResetPasswordPage() {
           <button
             type="submit"
             disabled={busy}
-            className="touch-target login-submit"
+            className="button-primary touch-target login-submit"
           >
             {token ? "Set password" : "Email me a link"}
           </button>
