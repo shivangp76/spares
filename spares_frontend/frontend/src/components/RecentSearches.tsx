@@ -1,5 +1,3 @@
-const chipButton: React.CSSProperties = { padding: '6px 10px', fontSize: 13 };
-
 interface RecentSearchesProps<T> {
   recent: T[];
   /** What the row is called, like "Recent". */
@@ -22,9 +20,9 @@ export default function RecentSearches<T>({
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8, fontSize: 13, ...style }}>
       <span style={{ color: 'var(--text-muted)' }}>{heading}:</span>
       {recent.map(item => (
-        <span key={label(item)} style={{ display: 'inline-flex' }}>
-          <button onClick={() => onSelect(item)} title={itemTitle?.(item) ?? selectTitle} style={chipButton}>{label(item)}</button>
-          <button onClick={() => onRemove(item)} title={`Remove from ${heading.toLowerCase()}`} aria-label={`Remove ${label(item)} from ${heading.toLowerCase()}`} style={{ ...chipButton, color: 'var(--text-faint)' }}>×</button>
+        <span key={label(item)} className="search-chip">
+          <button onClick={() => onSelect(item)} title={itemTitle?.(item) ?? selectTitle}>{label(item)}</button>
+          <button onClick={() => onRemove(item)} title={`Remove from ${heading.toLowerCase()}`} aria-label={`Remove ${label(item)} from ${heading.toLowerCase()}`} className="search-chip-remove">×</button>
         </span>
       ))}
     </div>

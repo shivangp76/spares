@@ -503,6 +503,43 @@ button.navbar-link-current {
   font-size: var(--font-sm);
 }
 
+/* A recent or saved search (`RecentSearches`): one button-like chip, its × inside it on the right */
+.search-chip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--button-bg);
+  border: 1px solid var(--button-border);
+  border-radius: var(--radius);
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+
+.search-chip:hover {
+  background: var(--button-hover-bg);
+  border-color: var(--button-hover-border);
+}
+
+.search-chip button {
+  background: none;
+  border: none;
+  font-size: var(--font-sm);
+}
+
+.search-chip button:first-child {
+  padding: 6px 4px 6px 10px;
+}
+
+.search-chip .search-chip-remove {
+  padding: 6px 8px 6px 2px;
+  color: var(--text-faint);
+  line-height: 1;
+}
+
+.search-chip .search-chip-remove:hover {
+  color: var(--text);
+}
+
 /* What the navbar's last undo, redo or sync did, in a `status-line` of its own */
 .navbar-status {
   flex-basis: 100%;
