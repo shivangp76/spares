@@ -7,6 +7,7 @@ export interface Credentials {
   csrfToken: string;
   /** The account's name */
   user: string;
+  /** Picked with the host on logging in, and changed on the Settings page (`chooseScheduler`). */
   schedulerName: string;
 }
 

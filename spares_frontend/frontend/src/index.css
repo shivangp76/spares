@@ -1003,40 +1003,12 @@ input[type="checkbox"] {
   padding-bottom: 4px;
 }
 
-.login-advanced > label,
-.login-advanced > .scheduler-choices {
-  margin-left: 5px;
-  padding-left: 14px;
-  border-left: 2px solid var(--border-subtle);
-}
-
 .login-advanced > label {
   display: block;
+  margin-left: 5px;
   padding-top: 12px;
-}
-
-.scheduler-choices {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding-top: 8px;
-}
-
-.scheduler-choices button {
-  padding: 4px 12px;
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--font-sm);
-  cursor: pointer;
-}
-
-.scheduler-choices button[aria-pressed="true"] {
-  background: var(--selected);
-  border-color: var(--accent);
-  color: var(--accent);
+  padding-left: 14px;
+  border-left: 2px solid var(--border-subtle);
 }
 
 .login-submit {

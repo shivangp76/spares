@@ -118,14 +118,50 @@ export async function logout(): Promise<void> {
 }
 
 /**
- * The schedulers of the host at `serverUrl`, asked for in the session just started, to check the
- * scheduler before it is saved. Throws `NetworkError` if the host can't be reached.
+ * The schedulers of the host at `serverUrl`, its default first, asked for in the session just
+ * started, to pick the scheduler before it is saved (`schedulerToUse`). Throws `NetworkError` if
+ * the host can't be reached.
  */
 export async function getSchedulerNames(serverUrl: string): Promise<string[]> {
   const label = "Log in";
   const res = await send(label, `${serverUrl}/api/schedulers`);
   await throwIfNotOk(res, label);
   return res.json() as Promise<string[]>;
+}
+
+// The scheduler chosen on this device's Settings page, kept across logging out. Unset for the
+// host's default.
+const SCHEDULER_KEY = "spares_scheduler";
+
+/**
+ * The scheduler to log in with, of the host's `schedulers` (its default first): the one this
+ * device chose, if the host has it, else the host's default.
+ */
+export function schedulerToUse(schedulers: string[]): string {
+  const chosen = localStorage.getItem(SCHEDULER_KEY);
+  return chosen !== null && schedulers.includes(chosen)
+    ? chosen
+    : schedulers[0];
+}
+
+/** The schedulers of the host logged in to, its default first. */
+export async function listSchedulers(): Promise<string[]> {
+  return apiFetch<string[]>("Schedulers fetch", "/api/schedulers");
+}
+
+/**
+ * Makes this device use the scheduler `name`, one of the host's `schedulers` (its default first),
+ * now and on later logins. Choosing the default follows the host's default if it changes.
+ */
+export function chooseScheduler(name: string, schedulers: string[]): void {
+  if (name === schedulers[0]) localStorage.removeItem(SCHEDULER_KEY);
+  else localStorage.setItem(SCHEDULER_KEY, name);
+  // Not `saveCredentials`: the session is the same, so the local copy carries on
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ ...getCredentials(), schedulerName: name }),
+  );
+  clearCaches();
 }
 
 export function saveCredentials(creds: Credentials): void {

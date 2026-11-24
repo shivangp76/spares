@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { loginPath } from "../login";
 import AccountSettings from "../components/AccountSettings";
 import LocalCopySettings from "../components/LocalCopySettings";
+import SchedulerSettings from "../components/SchedulerSettings";
 import VersionSettings from "../components/VersionSettings";
 import { useAuth } from "../hooks/useAuth";
 import {
@@ -205,7 +206,8 @@ export default function SettingsPage() {
 
       <fieldset className="settings-section">
         <legend className="section-label">Review</legend>
-        <label className="checkbox-label">
+        <SchedulerSettings />
+        <label className="checkbox-label settings-row">
           <input
             type="checkbox"
             checked={showReviewTimer}

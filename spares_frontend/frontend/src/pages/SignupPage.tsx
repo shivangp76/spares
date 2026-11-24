@@ -4,6 +4,7 @@ import {
   getSchedulerNames,
   getSignupPolicy,
   saveCredentials,
+  schedulerToUse,
   signUp,
   type SignupPolicy,
 } from "../api/client";
@@ -50,7 +51,7 @@ export default function SignupPage() {
           serverUrl,
           csrfToken: result.csrfToken,
           user: result.user,
-          schedulerName: schedulers[0],
+          schedulerName: schedulerToUse(schedulers),
         });
         navigate("/review");
       }

@@ -7,6 +7,7 @@ import {
   getSignupPolicy,
   login,
   saveCredentials,
+  schedulerToUse,
   type SignupPolicy,
 } from "../api/client";
 import AuthLayout from "../components/AuthLayout";
@@ -21,8 +22,6 @@ export default function LoginPage() {
   const [serverUrl, setServerUrl] = useState(window.location.origin);
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
-  // Empty for the server's default scheduler
-  const [schedulerName, setSchedulerName] = useState("");
   const [checking, setChecking] = useState(false);
   const [policy, setPolicy] = useState<SignupPolicy | null>(null);
   const verified = new URLSearchParams(window.location.search).has("verified");
@@ -50,48 +49,33 @@ export default function LoginPage() {
   const passwordId = useId();
   const [showPassword, setShowPassword] = useState(false);
   const hostDetails = useRef<HTMLDetailsElement>(null);
-  // The host's schedulers, after logging in named one it doesn't have
-  const [schedulerChoices, setSchedulerChoices] = useState<string[] | null>(
-    null,
-  );
   // Set on the element at once, not through state, so the browser can focus an invalid field in it
   // in the same submit
   function openHostDetails() {
     if (hostDetails.current) hostDetails.current.open = true;
   }
 
-  /** Logs in, then checks the scheduler with the host before saving the session. */
+  /** Logs in, then picks the scheduler with the host before saving the session. */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!serverUrl || !user || !password) return;
     const url = serverUrl.replace(/\/$/, "");
     setChecking(true);
     setError(null);
-    setSchedulerChoices(null);
     try {
       const session = await login(url, user.trim(), password);
-      // The host lists its default first
       const schedulers = await getSchedulerNames(url);
-      const name = schedulerName.trim() || schedulers[0];
-      if (schedulers.includes(name)) {
-        saveCredentials({
-          serverUrl: url,
-          csrfToken: session.csrfToken,
-          user: session.user,
-          schedulerName: name,
-        });
-        navigate(next, { replace: true });
-      } else {
-        setError(
-          `The host has no scheduler named “${name}”. Choose one of its own under Host and scheduler.`,
-        );
-        setSchedulerChoices(schedulers);
-        openHostDetails();
-      }
+      saveCredentials({
+        serverUrl: url,
+        csrfToken: session.csrfToken,
+        user: session.user,
+        schedulerName: schedulerToUse(schedulers),
+      });
+      navigate(next, { replace: true });
     } catch (e) {
       if (e instanceof NetworkError) {
         setError(
-          "The host could not be reached. Check its URL under Host and scheduler. A device that keeps a copy of the collection works offline once logged in.",
+          "The host could not be reached. Check its URL under Host. A device that keeps a copy of the collection works offline once logged in.",
         );
         openHostDetails();
       } else {
@@ -163,13 +147,10 @@ export default function LoginPage() {
             </button>
           </div>
         </div>
-        {/* Rarely changed, so closed until a value or an error needs them */}
+        {/* Rarely changed, so closed until an error needs it */}
         <details ref={hostDetails} className="login-advanced">
           <summary>
-            Host and scheduler{" "}
-            <span className="hint">
-              ({hostLabel}, {schedulerName.trim() || "its default scheduler"})
-            </span>
+            Host <span className="hint">({hostLabel})</span>
           </summary>
           <label>
             Server URL
@@ -187,44 +168,6 @@ export default function LoginPage() {
               serves the page.
             </span>
           </label>
-          <label>
-            Scheduler
-            <input
-              type="text"
-              value={schedulerName}
-              onChange={(e) => setSchedulerName(e.target.value)}
-              placeholder="The server's default"
-            />
-            <span className="field-hint">
-              What schedules the cards you rate. The server's are checked when
-              you log in.
-            </span>
-          </label>
-          {schedulerChoices && (
-            <div
-              className="scheduler-choices"
-              role="group"
-              aria-label="The host's schedulers"
-            >
-              {schedulerChoices.map((name, i) => (
-                <button
-                  key={name}
-                  type="button"
-                  className="touch-target-small"
-                  aria-pressed={
-                    (schedulerName.trim() || schedulerChoices[0]) === name
-                  }
-                  onClick={() => {
-                    setSchedulerName(i === 0 ? "" : name);
-                    setError(null);
-                  }}
-                >
-                  {name}
-                  {i === 0 && " (default)"}
-                </button>
-              ))}
-            </div>
-          )}
         </details>
         <button
           type="submit"
