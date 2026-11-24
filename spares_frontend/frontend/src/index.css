@@ -775,20 +775,61 @@ input[type="checkbox"] {
   color: var(--text);
 }
 
+/* Rarely changed, so its summary is a step quieter than the fields above it */
 .login-advanced summary {
+  width: fit-content;
+  font-size: 13px;
+  color: var(--text-secondary);
   cursor: pointer;
+}
+
+.login-advanced summary:hover {
+  color: var(--text);
+}
+
+.login-advanced summary .hint {
+  font-size: 12px;
+}
+
+/* Its fields hang under the summary, so they read as part of it */
+.login-advanced[open] {
+  padding-bottom: 4px;
+}
+
+.login-advanced > label,
+.login-advanced > .scheduler-choices {
+  margin-left: 5px;
+  padding-left: 14px;
+  border-left: 2px solid var(--border-subtle);
 }
 
 .login-advanced > label {
   display: block;
-  margin-top: 12px;
+  padding-top: 12px;
 }
 
 .scheduler-choices {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.scheduler-choices button {
+  padding: 4px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.scheduler-choices button[aria-pressed="true"] {
+  background: var(--selected);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .login-submit {
