@@ -50,6 +50,10 @@ export default function LoginPage() {
   const passwordId = useId();
   const [showPassword, setShowPassword] = useState(false);
   const hostDetails = useRef<HTMLDetailsElement>(null);
+  // The host's schedulers, after logging in named one it doesn't have
+  const [schedulerChoices, setSchedulerChoices] = useState<string[] | null>(
+    null,
+  );
   // Set on the element at once, not through state, so the browser can focus an invalid field in it
   // in the same submit
   function openHostDetails() {
@@ -63,6 +67,7 @@ export default function LoginPage() {
     const url = serverUrl.replace(/\/$/, "");
     setChecking(true);
     setError(null);
+    setSchedulerChoices(null);
     try {
       const session = await login(url, user.trim(), password);
       // The host lists its default first
@@ -78,15 +83,20 @@ export default function LoginPage() {
         navigate(next, { replace: true });
       } else {
         setError(
-          `The host has no scheduler named “${name}”. Its schedulers are ${schedulers.join(", ")}.`,
+          `The host has no scheduler named “${name}”. Choose one of its own under Host and scheduler.`,
         );
+        setSchedulerChoices(schedulers);
+        openHostDetails();
       }
     } catch (e) {
-      setError(
-        e instanceof NetworkError
-          ? "The host could not be reached. Check its URL. A device that keeps a copy of the collection works offline once logged in."
-          : errorMessage(e),
-      );
+      if (e instanceof NetworkError) {
+        setError(
+          "The host could not be reached. Check its URL under Host and scheduler. A device that keeps a copy of the collection works offline once logged in.",
+        );
+        openHostDetails();
+      } else {
+        setError(errorMessage(e));
+      }
     } finally {
       setChecking(false);
     }
@@ -110,7 +120,12 @@ export default function LoginPage() {
         </>
       }
     >
-      <form onSubmit={handleSubmit} className="login-form">
+      <form
+        onSubmit={handleSubmit}
+        // An error is about what was typed before, so editing any field clears it
+        onChange={() => setError(null)}
+        className="login-form"
+      >
         <label>
           Name
           <input
@@ -185,6 +200,31 @@ export default function LoginPage() {
               you log in.
             </span>
           </label>
+          {schedulerChoices && (
+            <div
+              className="scheduler-choices"
+              role="group"
+              aria-label="The host's schedulers"
+            >
+              {schedulerChoices.map((name, i) => (
+                <button
+                  key={name}
+                  type="button"
+                  className="touch-target-small"
+                  aria-pressed={
+                    (schedulerName.trim() || schedulerChoices[0]) === name
+                  }
+                  onClick={() => {
+                    setSchedulerName(i === 0 ? "" : name);
+                    setError(null);
+                  }}
+                >
+                  {name}
+                  {i === 0 && " (default)"}
+                </button>
+              ))}
+            </div>
+          )}
         </details>
         <button
           type="submit"
