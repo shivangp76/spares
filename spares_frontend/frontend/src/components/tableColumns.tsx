@@ -126,7 +126,7 @@ export function ColumnPicker<Id extends string>({ columns, shown, onChange }: {
       </summary>
       <div style={{
         position: 'absolute', right: 0, zIndex: 10, marginTop: 4, padding: '6px 10px', minWidth: 160,
-        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, boxShadow: 'var(--shadow-popover)',
       }}>
         {columns.map(column => {
           const checked = shown.includes(column.id);

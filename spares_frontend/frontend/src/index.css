@@ -25,6 +25,8 @@
   --button-border: color-mix(in srgb, var(--accent) 30%, var(--border));
   --button-hover-bg: color-mix(in srgb, var(--accent) 14%, var(--bg));
   --button-hover-border: color-mix(in srgb, var(--accent) 60%, var(--border));
+  /* Menus, suggestion lists and tooltips over the page; darker in dark mode to show at all */
+  --shadow-popover: 0 6px 20px light-dark(rgb(0 0 0 / 0.15), rgb(0 0 0 / 0.5));
   --link-visited: light-dark(#551a8b, #c58af9);
   --error: light-dark(red, #ff6b6b);
   --danger: light-dark(#b00, #ff7b72);
@@ -417,7 +419,7 @@ button.navbar-link-current {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
-  box-shadow: 0 6px 20px rgb(0 0 0 / 0.15);
+  box-shadow: var(--shadow-popover);
 }
 
 .nav-menu-item,

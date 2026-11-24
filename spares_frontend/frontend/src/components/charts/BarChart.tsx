@@ -239,7 +239,7 @@ export default function BarChart({ title, labels: allLabels, series: allSeries, 
           </svg>
         )}
         {active !== null && labels[active] !== undefined && (
-          <div role="status" style={{ position: 'absolute', top: 0, left: tooltipLeft, width: 180, pointerEvents: 'none', background: 'var(--bg)', border: '1px solid var(--border-strong)', borderRadius: 6, padding: '6px 8px', fontSize: 12, boxShadow: '0 2px 6px rgb(0 0 0 / 0.15)', fontVariantNumeric: 'tabular-nums' }}>
+          <div role="status" style={{ position: 'absolute', top: 0, left: tooltipLeft, width: 180, pointerEvents: 'none', background: 'var(--bg)', border: '1px solid var(--border-strong)', borderRadius: 6, padding: '6px 8px', fontSize: 12, boxShadow: 'var(--shadow-popover)', fontVariantNumeric: 'tabular-nums' }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>{labels[active]}</div>
             {series.map(s => (
               <div key={s.key} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, color: 'var(--text-secondary)' }}>

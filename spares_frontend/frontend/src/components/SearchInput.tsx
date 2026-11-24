@@ -325,7 +325,7 @@ const popupStyle: React.CSSProperties = {
   background: "var(--bg)",
   border: "1px solid var(--border-strong)",
   borderRadius: 4,
-  boxShadow: "0 4px 12px rgb(0 0 0 / 0.15)",
+  boxShadow: "var(--shadow-popover)",
   fontSize: 13,
   maxHeight: 280,
   overflowY: "auto",
