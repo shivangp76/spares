@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useDataVersion } from "../dataVersion";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { loginPath } from "../login";
@@ -67,6 +67,7 @@ import {
   formatNoteId,
   highlightPreview,
   keepShown,
+  parseNoteId,
   tagList,
   td,
   th,
@@ -560,6 +561,29 @@ export default function NotesPage() {
       setPaneStatus(errorMessage(e));
     }
   }
+
+  // `?note=aaa` opens that note and `?new` the new note form, as the command palette links them;
+  // each is taken out of the URL once done, so going back doesn't do it again
+  const noteParam = searchParams.get("note");
+  const newParam = searchParams.has("new");
+  const followUrl = useEffectEvent(() => {
+    const noteId = noteParam === null ? null : parseNoteId(noteParam);
+    if (noteId !== null) void openLinkedNote(noteId);
+    else if (newParam) void startNewNote();
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("note");
+        next.delete("new");
+        return next;
+      },
+      { replace: true },
+    );
+  });
+  useEffect(() => {
+    // After this render, as following it changes the page's state
+    if (noteParam !== null || newParam) queueMicrotask(followUrl);
+  }, [noteParam, newParam]);
 
   async function deleteSelected() {
     if (!selectedNote) return;

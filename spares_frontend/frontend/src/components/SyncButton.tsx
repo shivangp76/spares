@@ -129,6 +129,7 @@ function ServerSyncButton({ onStatus }: { onStatus: OnStatus }) {
         onClick={sync}
         disabled={syncing}
         className="navbar-button"
+        data-sync-button
         title={title}
       >
         {syncing ? "Syncing…" : "Sync"}
@@ -178,6 +179,7 @@ function LocalSyncButton({ onStatus }: { onStatus: OnStatus }) {
         onClick={() => sync("normal")}
         disabled={local.syncing}
         className="navbar-button"
+        data-sync-button
         title={title}
       >
         {local.syncing ? "Syncing…" : "Sync"}

@@ -3,6 +3,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -371,7 +372,8 @@ function initialFilter(params: URLSearchParams): {
 /** How long after a session ends its summary stays on the page before fading out. */
 const SUMMARY_FADE_AFTER_MS = 60 * 60 * 1000;
 
-/** Inverse of `initialFilter`, so a session's URL can be bookmarked to prefill the same filter. */
+/** Inverse of `initialFilter`, so a session's URL can be bookmarked to prefill the same filter.
+    `start` in the URL as well starts reviewing it at once, as the command palette links it. */
 function filterParams(mode: FilterMode, input: string): URLSearchParams {
   return input ? new URLSearchParams({ [mode]: input }) : new URLSearchParams();
 }
@@ -737,6 +739,19 @@ export default function ReviewPage() {
       }),
     [refreshStatistics, loadCard],
   );
+
+  // `&start` starts the filter in the URL, then is dropped so a reload doesn't start it again
+  const startParam = searchParams.has("start");
+  const startFromUrl = useEffectEvent(() => {
+    const { mode, input } = initialFilter(searchParams);
+    setFilterMode(mode);
+    setFilterInput(input);
+    void startReview(mode, input);
+  });
+  useEffect(() => {
+    // After this render, as starting changes the page's state
+    if (startParam) queueMicrotask(startFromUrl);
+  }, [startParam]);
 
   async function startReview(mode: FilterMode, rawInput: string) {
     setError(null);

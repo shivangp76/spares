@@ -683,6 +683,62 @@ input[type="checkbox"] {
   background: rgb(0 0 0 / 0.4);
 }
 
+/* Ctrl+K's command palette (`CommandPalette`), near the top like a search box */
+.command-palette {
+  width: min(560px, calc(100% - 32px));
+  margin-top: 12vh;
+  box-shadow: var(--shadow-popover);
+}
+
+.command-palette-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+  font-size: 16px;
+}
+
+.command-palette-input:focus-visible {
+  outline: none;
+}
+
+.command-palette-list {
+  max-height: min(400px, 60vh);
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.command-palette-list li {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-size: var(--font-md);
+  cursor: pointer;
+}
+
+.command-palette-list li.active {
+  background: var(--selected);
+}
+
+.command-palette-list li .key-hint {
+  flex: none;
+  font-size: var(--font-xs);
+}
+
+.command-palette-empty {
+  color: var(--text-muted);
+  cursor: default;
+}
+
 /* The app's confirm and prompt (`AskDialog`) */
 .ask-dialog {
   width: min(420px, calc(100% - 32px));

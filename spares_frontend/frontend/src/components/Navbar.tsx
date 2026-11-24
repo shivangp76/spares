@@ -5,6 +5,7 @@ import { PAGE_HELP } from "../help/pages";
 import type { Keybinding } from "../help/shortcuts";
 import { dialogOpen, keyName, takesKeys } from "../keys";
 import { NAV_LINKS, isOnPage, type NavPlace } from "../navLinks";
+import CommandPalette from "./CommandPalette";
 import NavMenu from "./NavMenu";
 import { RedoIcon, UndoIcon } from "./Icons";
 import OfflineIndicator from "./OfflineIndicator";
@@ -87,6 +88,19 @@ export default function Navbar({
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [handlesHelpKey, pathname]);
+  // Ctrl+K (Cmd+K on a Mac) opens the command palette from anywhere, even a text box
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (keyName(e) !== "Ctrl+k") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPaletteOpen(true);
+    }
+    window.addEventListener("keydown", handleKey, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", handleKey, { capture: true });
+  }, []);
   // `g` and then a page's key in `NAV_LINKS` goes to it, as in Gmail, listed as `GO_TO_SHORTCUTS`.
   // They are listened to before the page's own keys, so that the second does nothing else, as `s`
   // would suspend the card being reviewed.
@@ -234,6 +248,13 @@ export default function Navbar({
             <UpdateIndicator />
             <OfflineIndicator />
             <SavedCopiesNotice />
+            <button
+              onClick={() => setPaletteOpen(true)}
+              className="navbar-button"
+              title="Open a note by its id, search, review, or go to a page or action"
+            >
+              Go to… <span className="key-hint">(Ctrl+K)</span>
+            </button>
             <SyncButton onStatus={showStatus} />
             <span className="navbar-split">
               <button
@@ -297,6 +318,20 @@ export default function Navbar({
               </button>
             </NavMenu>
           </div>
+          {paletteOpen && (
+            <CommandPalette
+              onClose={() => setPaletteOpen(false)}
+              onUndo={() => void undoLatest()}
+              onHelp={
+                pageHelp
+                  ? () =>
+                      pageHelpOpener
+                        ? pageHelpOpener.setOpen(true)
+                        : setHelpOpenOn(pathname)
+                  : undefined
+              }
+            />
+          )}
           {helpOpenOn === pathname && !pageHelpOpener && pageHelp && (
             <PageHelp help={pageHelp} onClose={() => setHelpOpenOn(null)} />
           )}

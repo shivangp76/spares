@@ -17,6 +17,12 @@ export interface Keybinding extends Shortcut {
 /** Opens the help popup, from the navbar (`Navbar`). */
 export const HELP_SHORTCUT: Shortcut = { keys: ['?'], description: 'Show or hide this help' };
 
+/** Opens the command palette, from the navbar (`Navbar`). */
+export const PALETTE_SHORTCUT: Shortcut = {
+  keys: ['Ctrl+K'],
+  description: 'Open a note by its id, search, review, or go to a page or action (Cmd+K on a Mac)',
+};
+
 /** Go to another page, from the navbar (`Navbar`). */
 export const GO_TO_SHORTCUTS: Shortcut[] = NAV_LINKS.map(({ label, key }) => ({ keys: [`g ${key}`], description: `Go to ${label}` }));
 

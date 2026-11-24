@@ -1,6 +1,7 @@
 import {
   GO_TO_SHORTCUTS,
   HELP_SHORTCUT,
+  PALETTE_SHORTCUT,
   NOTE_EDITOR_SHORTCUTS,
   SEARCH_BOX_SHORTCUTS,
   type Shortcut,
@@ -275,4 +276,8 @@ export const LOGIN_DOCS: DocLink = {
 };
 
 /** The shortcuts every page has, after the page's own. */
-export const GLOBAL_SHORTCUTS: Shortcut[] = [HELP_SHORTCUT, ...GO_TO_SHORTCUTS];
+export const GLOBAL_SHORTCUTS: Shortcut[] = [
+  HELP_SHORTCUT,
+  PALETTE_SHORTCUT,
+  ...GO_TO_SHORTCUTS,
+];
