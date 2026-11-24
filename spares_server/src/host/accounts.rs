@@ -38,7 +38,11 @@ pub async fn open(path: &std::path::Path) -> Result<SqlitePool, Error> {
         .connect_with(options)
         .await
         .map_err(sqlx_error)?;
-    sqlx::migrate!("./accounts_migrations")
+    // They start from a baseline that replaced the migrations before it, which an older
+    // `accounts.sqlite` lists in `_sqlx_migrations`, and which sqlx refuses by default
+    let mut migrator = sqlx::migrate!("./accounts_migrations");
+    migrator.set_ignore_missing(true);
+    migrator
         .run(&pool)
         .await
         .map_err(|e| Error::Sync(format!("Failed to migrate {}: {e}", path.display())))?;
@@ -265,6 +269,68 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("spares-accounts-{}", random_string(8)));
         std::fs::create_dir_all(&dir).unwrap();
         open(&dir.join(ACCOUNTS_FILE_NAME)).await.unwrap()
+    }
+
+    /// Rows of `_sqlx_migrations` as the migrations before the baseline left them
+    async fn pretend_old_migrations_ran(db: &SqlitePool, versions: &[i64]) {
+        sqlx::query("DELETE FROM _sqlx_migrations")
+            .execute(db)
+            .await
+            .unwrap();
+        for version in versions {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                 (version, description, success, checksum, execution_time)
+                 VALUES (?, 'old', 1, x'00', 0)",
+            )
+            .bind(version)
+            .execute(db)
+            .await
+            .unwrap();
+        }
+    }
+
+    /// An `accounts.sqlite` the migrations before the baseline made is opened as it is, and one
+    /// that stopped partway through them is refused.
+    #[tokio::test]
+    async fn accounts_baseline_accepts_only_a_database_the_old_migrations_finished() {
+        let dir = std::env::temp_dir().join(format!("spares-accounts-{}", random_string(8)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(ACCOUNTS_FILE_NAME);
+        let db = open(&path).await.unwrap();
+        let user = create_user(
+            &db,
+            NewUser {
+                id: None,
+                name: "kept",
+                email: None,
+                password: "password1",
+                admin: false,
+                email_verified: false,
+            },
+        )
+        .await
+        .unwrap();
+        pretend_old_migrations_ran(&db, &[20_261_101_140_000, 20_261_101_180_000]).await;
+        db.close().await;
+
+        let db = open(&path).await.unwrap();
+        let name: String = sqlx::query_scalar("SELECT name FROM user WHERE id = ?")
+            .bind(&user.id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(name, "kept");
+
+        pretend_old_migrations_ran(&db, &[20_261_101_140_000, 20_261_101_150_000]).await;
+        db.close().await;
+        let err = open(&path).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("open_this_host_with_a_spares_from_before_2026_11_24_first"),
+            "{err}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]
