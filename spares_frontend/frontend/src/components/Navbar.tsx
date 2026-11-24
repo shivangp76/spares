@@ -29,6 +29,9 @@ const PageHelpContext = createContext<
 
 // How long after `g` its second key can be pressed
 const GO_TO_MS = 1500;
+// How long the status of an undo, redo or sync stays, and then takes to fade (see `.status-fading`)
+const STATUS_MS = 8000;
+const STATUS_FADE_MS = 300;
 
 /**
  * A page's help, with its shortcuts, which the navbar's Help button opens. Pages without
@@ -111,11 +114,32 @@ export default function Navbar({
 
   // What the last undo, redo or sync did
   const [status, setStatus] = useState<string | null>(null);
+  // Counts the statuses shown, so the same message again waits its own time before fading
+  const [statusSeq, setStatusSeq] = useState(0);
+  // Kept while the pointer or focus is on it, to read or reach its Redo
+  const [statusHeld, setStatusHeld] = useState(false);
+  const [statusFading, setStatusFading] = useState(false);
   /** Shows `message`, and if the action `changed` what pages show, has them fetch it again. */
   const showStatus = (message: string, changed = false) => {
     setStatus(message);
+    setStatusSeq((n) => n + 1);
+    setStatusFading(false);
     if (changed) dataChanged();
   };
+  // The status fades out after `STATUS_MS`, unless held, as Redo stays in the Undo menu
+  useEffect(() => {
+    if (status === null || statusHeld) return;
+    const fade = setTimeout(() => setStatusFading(true), STATUS_MS);
+    const hide = setTimeout(() => {
+      setStatus(null);
+      setStatusFading(false);
+    }, STATUS_MS + STATUS_FADE_MS);
+    return () => {
+      clearTimeout(fade);
+      clearTimeout(hide);
+      setStatusFading(false);
+    };
+  }, [status, statusSeq, statusHeld]);
   // The undo event made by this navbar's Undo, so Redo only reverses an undo the user knows about
   const [lastUndoId, setLastUndoId] = useState<number | null>(null);
   const currentLinkRef = useRef<HTMLSpanElement>(null);
@@ -277,7 +301,14 @@ export default function Navbar({
             <PageHelp help={pageHelp} onClose={() => setHelpOpenOn(null)} />
           )}
           {status && (
-            <div className="navbar-status status-line">
+            <div
+              className={`navbar-status status-line${statusFading ? " status-fading" : ""}`}
+              role="status"
+              onMouseEnter={() => setStatusHeld(true)}
+              onMouseLeave={() => setStatusHeld(false)}
+              onFocus={() => setStatusHeld(true)}
+              onBlur={() => setStatusHeld(false)}
+            >
               <span>{status}</span>
               {lastUndoId !== null && (
                 <button onClick={redoLast} className="button-small">

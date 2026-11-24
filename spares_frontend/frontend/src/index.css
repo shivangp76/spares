@@ -477,6 +477,12 @@ button.navbar-link-current {
 .navbar-status {
   flex-basis: 100%;
   margin-top: 4px;
+  transition: opacity 0.3s;
+}
+
+/* Leaving, `STATUS_FADE_MS` before it is gone */
+.status-fading {
+  opacity: 0;
 }
 
 /* Notes a sync could not merge (`sync-conflict`) */
