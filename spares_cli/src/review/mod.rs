@@ -90,7 +90,7 @@ pub(crate) struct ReviewArgs {
     // Using `Option<FilterArgs>` here instead won't work since they `query` becomes a required parameter.
     #[command(flatten)]
     pub(crate) filter_args: FilterArgs,
-    #[arg(short, long, default_value = get_default_scheduler_name())]
+    #[arg(short, long, env = "SPARES_SCHEDULER", default_value = get_default_scheduler_name())]
     pub(crate) scheduler_name: String,
     #[arg(long, env = "SPARES_RENDERED_FILE_OPEN_COMMAND")]
     pub(crate) open_command: Option<String>,

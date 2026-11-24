@@ -540,7 +540,7 @@ pub(crate) enum CardCommands {
     },
     /// Get leeches (cards that are frequently forgotten)
     Leeches {
-        #[arg(short, long, default_value = get_default_scheduler_name())]
+        #[arg(short, long, env = "SPARES_SCHEDULER", default_value = get_default_scheduler_name())]
         scheduler_name: String,
     },
     /// Studying statistics
@@ -629,7 +629,7 @@ pub(crate) struct GenerateArgs {
 
 #[derive(Args, Debug)]
 pub(crate) struct StatisticsArgs {
-    #[arg(short, long, default_value = get_default_scheduler_name())]
+    #[arg(short, long, env = "SPARES_SCHEDULER", default_value = get_default_scheduler_name())]
     pub(crate) scheduler_name: String,
     #[arg(short, long, default_value_t = get_current_utc_datetime())]
     pub(crate) date: DateTime<Utc>,
@@ -687,7 +687,7 @@ pub(crate) struct ForgetCardArgs {
 pub(crate) struct AdvanceArgs {
     /// Number of cards to advance
     pub(crate) count: u32,
-    #[arg(short, long, default_value = get_default_scheduler_name())]
+    #[arg(short, long, env = "SPARES_SCHEDULER", default_value = get_default_scheduler_name())]
     pub(crate) scheduler_name: String,
     #[arg(short, long)]
     pub(crate) query: Option<String>,
@@ -697,7 +697,7 @@ pub(crate) struct AdvanceArgs {
 pub(crate) struct PostponeArgs {
     /// Number of cards to postpone
     pub(crate) count: u32,
-    #[arg(short, long, default_value = get_default_scheduler_name())]
+    #[arg(short, long, env = "SPARES_SCHEDULER", default_value = get_default_scheduler_name())]
     pub(crate) scheduler_name: String,
     #[arg(short, long)]
     pub(crate) query: Option<String>,
@@ -714,7 +714,7 @@ pub(crate) struct BreakArgs {
     /// How many days after the break to spread the moved cards over
     #[arg(long)]
     pub(crate) spread: u32,
-    #[arg(short, long, default_value = get_default_scheduler_name())]
+    #[arg(short, long, env = "SPARES_SCHEDULER", default_value = get_default_scheduler_name())]
     pub(crate) scheduler_name: String,
     /// Only print what the break would do
     #[arg(long)]
@@ -729,7 +729,7 @@ pub(crate) struct BreakArgs {
 // unbalanced. Settings also apply to all cards, so all cards are rescheduled.
 #[derive(Args, Debug)]
 pub(crate) struct RescheduleArgs {
-    #[arg(short, long, default_value = get_default_scheduler_name())]
+    #[arg(short, long, env = "SPARES_SCHEDULER", default_value = get_default_scheduler_name())]
     pub(crate) scheduler_name: String,
     /// Skip the confirmation prompt
     #[arg(short, long)]
@@ -738,7 +738,7 @@ pub(crate) struct RescheduleArgs {
 
 #[derive(Args, Debug)]
 pub(crate) struct OptimizeArgs {
-    #[arg(short, long, default_value = get_default_scheduler_name())]
+    #[arg(short, long, env = "SPARES_SCHEDULER", default_value = get_default_scheduler_name())]
     pub(crate) scheduler_name: String,
     /// Save the optimized parameters to the config if they predict your reviews better than the
     /// current ones, then reschedule every card

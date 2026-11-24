@@ -613,9 +613,8 @@ pub fn effective_review_logs(review_logs: &[ReviewLog]) -> &[ReviewLog] {
 }
 
 fn get_all_schedulers() -> Vec<fn() -> Box<dyn SrsScheduler>> {
-    // NOTE: Add scheduler here
-    // Also run: `spares scheduler add --name="NAME"`
-    // Schedulers are selected by name via the `--scheduler-name` CLI flag.
+    // NOTE: Add scheduler here. The first is the default. Schedulers are selected by name: the
+    // CLI's `--scheduler-name` (or `SPARES_SCHEDULER`), and the web app's Settings page.
     let all_schedulers: Vec<fn() -> Box<dyn SrsScheduler>> = vec![|| Box::<fsrs::Fsrs>::default()];
     all_schedulers
 }
