@@ -38,7 +38,7 @@ import RecentSearches from "../components/RecentSearches";
 import SavedSearches from "../components/SavedSearches";
 import SearchInput, { type SearchInputError } from "../components/SearchInput";
 import type { IdsOrQuery, RowSelection } from "../selection";
-import NewNoteForm from "../components/NewNoteForm";
+import NewNoteForm, { type NewNoteStart } from "../components/NewNoteForm";
 import NoteDetail, { type NotePaneHandle } from "../components/NoteDetail";
 import Pagination from "../components/Pagination";
 import {
@@ -70,12 +70,14 @@ import {
   tagList,
   td,
   th,
+  topicTags,
   withPage,
   withSearch,
 } from "../utils";
 import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
 import { askConfirm, askText } from "../ask";
+import { newNoteDraft } from "../noteDrafts";
 
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = {
@@ -271,6 +273,11 @@ export default function NotesPage() {
   const widths = useTableWidths("notes");
   const [selectedNote, setSelectedNote] = useState<NoteResponse | null>(null);
   const [creating, setCreating] = useState(false);
+  // What "New note like this" starts the new note with, and a count that opens a fresh form for it
+  const [newNoteStart, setNewNoteStart] = useState<{
+    start?: NewNoteStart;
+    seq: number;
+  }>({ seq: 0 });
   // The new note form stays mounted, hidden, while other notes are viewed, so its unsaved
   // contents are still there when New note is clicked again
   const [hasDraft, setHasDraft] = useState(false);
@@ -489,7 +496,25 @@ export default function NotesPage() {
     if (name) void savedSearches.save(name, q);
   }
 
-  function startNewNote() {
+  /**
+   * Opens the new note form, as it was left if it holds a draft. With `start`, as "New note like
+   * this" gives, it starts afresh with that parser, tags and keywords, after asking to drop a draft.
+   */
+  async function startNewNote(start?: NewNoteStart) {
+    if (start) {
+      if (
+        newNoteDraft.load() !== null &&
+        !(await askConfirm({
+          title: "Discard the new note being written?",
+          message: "A new note like this one replaces it.",
+          confirmLabel: "Discard",
+          danger: true,
+        }))
+      )
+        return;
+      newNoteDraft.save(null);
+      setNewNoteStart((prev) => ({ start, seq: prev.seq + 1 }));
+    }
     setSelectedNote(null);
     setPaneStatus(null);
     setCreating(true);
@@ -731,7 +756,7 @@ export default function NotesPage() {
         codes: ["c"],
         description: "Write a new note",
         available: !creating,
-        run: startNewNote,
+        run: () => void startNewNote(),
       },
       // A Mac's Delete key is Backspace
       {
@@ -832,7 +857,10 @@ export default function NotesPage() {
                 onClose={() => setImportOpen(false)}
               />
             )}
-            <button onClick={startNewNote} className="touch-target-small">
+            <button
+              onClick={() => void startNewNote()}
+              className="touch-target-small"
+            >
               New note
             </button>
           </div>
@@ -993,7 +1021,7 @@ export default function NotesPage() {
                           <>
                             No notes yet.{" "}
                             <button
-                              onClick={startNewNote}
+                              onClick={() => void startNewNote()}
                               className="button-small"
                             >
                               Write one
@@ -1048,14 +1076,24 @@ export default function NotesPage() {
           {hasDraft && (
             <div style={{ display: creating ? undefined : "none" }}>
               <NewNoteForm
+                key={newNoteStart.seq}
                 ref={newNotePane}
-                onCreated={(note) => {
+                start={newNoteStart.start}
+                onCreated={(note, more) => {
+                  if (more) {
+                    setPaneStatus(
+                      `Note ${formatNoteId(note.id)} created. Writing another like it.`,
+                    );
+                    return;
+                  }
                   setHasDraft(false);
+                  setNewNoteStart((prev) => ({ seq: prev.seq + 1 }));
                   selectNote(note);
                   setPaneStatus(`Note ${formatNoteId(note.id)} created.`);
                 }}
                 onCancel={() => {
                   setHasDraft(false);
+                  setNewNoteStart((prev) => ({ seq: prev.seq + 1 }));
                   detail.back();
                 }}
               />
@@ -1115,6 +1153,19 @@ export default function NotesPage() {
                 >
                   Show in graph
                 </Link>
+                <button
+                  onClick={() =>
+                    void startNewNote({
+                      parserId: selectedNote.parser_id,
+                      tags: topicTags(selectedNote.tags),
+                      keywords: selectedNote.keywords,
+                    })
+                  }
+                  className="touch-target-small"
+                  title="A new note with this one's parser, tags and keywords"
+                >
+                  New note like this
+                </button>
                 <button
                   onClick={deleteSelected}
                   className="touch-target-small"

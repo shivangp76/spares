@@ -182,6 +182,8 @@ Everything of a collection is in its directory on the host, `<SPARES_ROOT>/users
 
 Notes can be edited in the web UI, with `spares note edit`, or by editing their files.
 
+In the web UI, Ctrl+Enter (Cmd+Enter on a Mac) saves a note or creates a new one, and Create and New (Ctrl+Shift+Enter) creates it and starts another with the same parser and tags. A new note starts with the parser and tags of the last one created in that browser, and **New note like this**, by an open note, starts one with that note's parser, tags and keywords. What is typed and not yet saved is kept in the browser, so a reload or a closed tab doesn't lose it: the next time the note, or the new note, is opened, it is restored, or offered if the note changed since.
+
 To edit the files, keep them in a git or jj repository: run `spares vcs init` (or `spares vcs init --jj`), edit, commit, and push to import your changes. See [Notes as a git or jj repository](./workflows.md#notes-as-a-git-or-jj-repository).
 
 # Reviewing

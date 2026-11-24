@@ -473,6 +473,21 @@ button.navbar-link-current {
   font-weight: normal;
 }
 
+/* A note's unsaved draft, restored or offered, above its editors (see noteDrafts.ts) */
+.draft-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--tone-blue-border);
+  border-radius: var(--radius);
+  background: var(--tone-blue-bg);
+  color: var(--tone-blue-fg);
+  font-size: var(--font-sm);
+}
+
 /* What the navbar's last undo, redo or sync did, in a `status-line` of its own */
 .navbar-status {
   flex-basis: 100%;

@@ -19,6 +19,8 @@ import {
   updateNoteImageOcclusion,
 } from "../api/client";
 import { EDITOR_TIPS, useEditorSetup } from "../hooks/useEditorSetup";
+import { submitKeymap, useSubmitKeys } from "../hooks/useSubmitKeys";
+import { draftTime, editDraft, useDraftSaver } from "../noteDrafts";
 import { useVimKeybindings } from "../preferences";
 import { useResolvedTheme } from "../theme";
 import type {
@@ -100,7 +102,16 @@ export default function NoteDetail({
   const live = isLiveNote(note);
   const editor = useEditorSetup(note.parser_name, live ? null : note.parser_id);
   const vimEnabled = useVimKeybindings();
-  const [dataContent, setDataContent] = useState(note.data);
+  // Unsaved edits kept in this browser from before: restored at once if the note hasn't changed
+  // since they began, else offered, since restoring them would undo the change
+  const [draft] = useState(() => editDraft.load(note.id));
+  const restoreAtOnce = draft !== null && draft.value.base === note.updated_at;
+  const [draftNotice, setDraftNotice] = useState<
+    "restored" | "offered" | null
+  >(draft === null ? null : restoreAtOnce ? "restored" : "offered");
+  const [dataContent, setDataContent] = useState(
+    restoreAtOnce && !live ? draft.value.data : note.data,
+  );
   // The editor's data as last saved, so edits made since can be told apart
   const [savedData, setSavedData] = useState(note.data);
   const dataEditorRef = useRef<ReactCodeMirrorRef>(null);
@@ -111,6 +122,7 @@ export default function NoteDetail({
       live
         ? [
             ...editor.dataExtensions,
+            submitKeymap,
             EditorView.domEventHandlers({
               beforeinput: () => {
                 setLiveEditTried(true);
@@ -118,8 +130,12 @@ export default function NoteDetail({
               },
             }),
           ]
-        : editor.dataExtensions,
+        : [...editor.dataExtensions, submitKeymap],
     [live, editor.dataExtensions],
+  );
+  const fieldExtensions = useMemo(
+    () => [...editor.extensions, submitKeymap],
+    [editor.extensions],
   );
   const [imageOcclusions, setImageOcclusions] = useState<ImageOcclusionData[]>(
     [],
@@ -131,16 +147,51 @@ export default function NoteDetail({
     index: number;
     occlusion: ImageOcclusionData;
   } | null>(null);
-  const [tagsContent, setTagsContent] = useState(note.tags.join("\n"));
-  const [savedTags, setSavedTags] = useState(tagsContent);
-  const [keywordsContent, setKeywordsContent] = useState(
+  const [savedTags, setSavedTags] = useState(note.tags.join("\n"));
+  const [tagsContent, setTagsContent] = useState(
+    restoreAtOnce ? draft.value.tags : savedTags,
+  );
+  const [savedKeywords, setSavedKeywords] = useState(
     note.keywords.join("\n"),
   );
-  const [savedKeywords, setSavedKeywords] = useState(keywordsContent);
+  const [keywordsContent, setKeywordsContent] = useState(
+    restoreAtOnce ? draft.value.keywords : savedKeywords,
+  );
   const unsaved =
     dataContent !== savedData ||
     tagsContent !== savedTags ||
     keywordsContent !== savedKeywords;
+  useDraftSaver(
+    unsaved
+      ? {
+          data: dataContent,
+          tags: tagsContent,
+          keywords: keywordsContent,
+          base: note.updated_at,
+        }
+      : null,
+    (value) => editDraft.save(note.id, value),
+    // An offered draft is kept until it is restored or discarded
+    draftNotice !== "offered",
+  );
+
+  /** Puts the kept draft's edits in the editors. */
+  function restoreDraft() {
+    if (!draft) return;
+    if (!live) setDataContent(draft.value.data);
+    setTagsContent(draft.value.tags);
+    setKeywordsContent(draft.value.keywords);
+    setDraftNotice("restored");
+  }
+
+  /** Drops the kept draft, and its edits from the editors if they were restored. */
+  function discardDraft() {
+    setDataContent(savedData);
+    setTagsContent(savedTags);
+    setKeywordsContent(savedKeywords);
+    editDraft.save(note.id, null);
+    setDraftNotice(null);
+  }
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
@@ -192,6 +243,12 @@ export default function NoteDetail({
   }, [note.id, savedData]);
 
   const rootRef = useRef<HTMLDivElement>(null);
+  // Ctrl+Enter saves; Ctrl+Shift+Enter is left to the editor, as a note pane has no Save and New
+  useSubmitKeys(rootRef, (more) => {
+    if (more) return false;
+    if (saveStatus !== "saving") void handleSave();
+    return true;
+  });
   useVimCommands(rootRef, ({ command, force, warn }) => {
     if (command === "edit") {
       if (force) {
@@ -337,6 +394,7 @@ export default function NoteDetail({
         )}
         <button
           onClick={handleSave}
+          title="Ctrl+Enter (Cmd+Enter on a Mac)"
           disabled={saveStatus === "saving"}
           className="button-primary touch-target-small"
           style={{
@@ -360,6 +418,32 @@ export default function NoteDetail({
       {saveStatus === "error" && (
         <div style={{ marginBottom: 16, fontSize: 13, color: "var(--error)" }}>
           {saveError}
+        </div>
+      )}
+      {draftNotice !== null && draft && (
+        <div className="draft-notice" role="status">
+          {draftNotice === "restored" ? (
+            <span>
+              Restored unsaved changes from {draftTime(draft.savedAt)}.
+            </span>
+          ) : (
+            <>
+              <span>
+                Unsaved changes from {draftTime(draft.savedAt)} were made
+                before this note last changed.
+              </span>
+              <button
+                type="button"
+                className="button-small"
+                onClick={restoreDraft}
+              >
+                Restore them
+              </button>
+            </>
+          )}
+          <button type="button" className="button-small" onClick={discardDraft}>
+            Discard them
+          </button>
         </div>
       )}
       {note.tags.includes(SYNC_CONFLICT_TAG) && (
@@ -533,7 +617,7 @@ export default function NoteDetail({
             theme={theme}
             value={tagsContent}
             onChange={setTagsContent}
-            extensions={editor.extensions}
+            extensions={fieldExtensions}
             basicSetup={editor.fieldSetup}
             style={cmStyle}
           />
@@ -555,7 +639,7 @@ export default function NoteDetail({
             theme={theme}
             value={keywordsContent}
             onChange={setKeywordsContent}
-            extensions={editor.extensions}
+            extensions={fieldExtensions}
             basicSetup={editor.fieldSetup}
             style={cmStyle}
           />

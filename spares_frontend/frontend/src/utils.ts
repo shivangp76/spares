@@ -29,6 +29,21 @@ export function tagList(tags: string[]): string {
 /** The tag sync puts on notes that need a look (see `spares sync conflicts`). */
 export const SYNC_CONFLICT_TAG = "sync-conflict";
 
+/**
+ * A note's tags that say what it is about, without those that say how it is doing, which a new note
+ * like it shouldn't get: the flagged and leech tags (by their default names), `sync-conflict`, and
+ * the `live:` tags of live notes. As `spares note export --share` leaves out.
+ */
+export function topicTags(tags: string[]): string[] {
+  return tags.filter(
+    (t) =>
+      t !== SYNC_CONFLICT_TAG &&
+      t !== "flagged" &&
+      t !== "leech" &&
+      !t.startsWith("live:"),
+  );
+}
+
 /** Whether a note's text comes from a file on the laptop (`spares import --live`). */
 export function isLiveNote(note: {
   custom_data: Record<string, unknown>;

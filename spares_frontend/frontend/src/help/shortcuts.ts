@@ -28,9 +28,11 @@ export const SEARCH_BOX_SHORTCUTS: Shortcut[] = [
   { keys: ['Esc'], description: 'Hide the completions' },
 ];
 
-/** In the editors of a note or a new note, with Vim keybindings on, as `NoteDetail` and
-    `NewNoteForm` handle the commands of `vimCommands`. */
+/** In the editors of a note or a new note, as `NoteDetail` and `NewNoteForm` handle `submitKeymap`
+    and, with Vim keybindings on, the commands of `vimCommands`. */
 export const NOTE_EDITOR_SHORTCUTS: Shortcut[] = [
+  { keys: ['Ctrl+Enter'], description: 'Save the note (or create the new note); Cmd+Enter on a Mac' },
+  { keys: ['Ctrl+Shift+Enter'], description: 'Create the new note and start another with the same parser and tags' },
   { keys: [':w'], description: 'Save the note (or create the new note), with Vim keybindings on (in Settings)' },
   { keys: [':q'], description: 'Close the note, unless it has unsaved changes' },
   { keys: [':q!'], description: 'Close the note, dropping its unsaved changes' },

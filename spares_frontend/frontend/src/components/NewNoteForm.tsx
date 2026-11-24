@@ -1,8 +1,15 @@
-import { useEffect, useImperativeHandle, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { createNotes, listParsers, renderNote } from "../api/client";
 import { EDITOR_TIPS, useEditorSetup } from "../hooks/useEditorSetup";
 import { useParserSyntax } from "../hooks/useParserSyntax";
+import { submitKeymap, useSubmitKeys } from "../hooks/useSubmitKeys";
+import {
+  draftTime,
+  newNoteDefaults,
+  newNoteDraft,
+  useDraftSaver,
+} from "../noteDrafts";
 import { useVimKeybindings } from "../preferences";
 import { useResolvedTheme } from "../theme";
 import type { NoteResponse, ParserResponse } from "../types/spares";
@@ -46,16 +53,45 @@ function lines(value: string): string[] {
     .filter(Boolean);
 }
 
-/** `spares note add`, followed by rendering the note as the CLI does when syncing it. */
+/** What a new note starts with, as "New note like this" gives it from another note. */
+export interface NewNoteStart {
+  parserId?: number;
+  tags?: string[];
+  keywords?: string[];
+}
+
+/**
+ * `spares note add`, followed by rendering the note as the CLI does when syncing it. What is typed
+ * is kept in this browser until the note is created or discarded, and restored if the page is
+ * reloaded. Without `start`, a note starts with the parser and tags of the last one created here.
+ */
 export default function NewNoteForm({
   onCreated,
   onCancel,
+  start,
   ref,
 }: {
-  onCreated: (note: NoteResponse) => void;
+  /** `more` when Create and New was used, which keeps the form open for another note. */
+  onCreated: (note: NoteResponse, more: boolean) => void;
   onCancel: () => void;
+  start?: NewNoteStart;
   ref?: React.Ref<NotePaneHandle>;
 }) {
+  // Read once: a draft left from before, else `start`, else the last note's parser and tags
+  const [initial] = useState(() => {
+    const draft = start ? null : newNoteDraft.load();
+    const defaults = newNoteDefaults.load();
+    const tags = start?.tags?.join("\n") ?? defaults?.tags ?? "";
+    const keywords = start?.keywords?.join("\n") ?? "";
+    return {
+      parserId: draft?.value.parserId ?? start?.parserId ?? defaults?.parserId,
+      // What the fields start as when nothing has been typed, to tell typed text apart
+      tags,
+      keywords,
+      draft,
+    };
+  });
+  const [restoredAt, setRestoredAt] = useState(initial.draft?.savedAt ?? null);
   const theme = useResolvedTheme();
   const [parsers, setParsers] = useState<ParserResponse[] | null>(null);
   const [parserId, setParserId] = useState<number | null>(null);
@@ -64,14 +100,30 @@ export default function NewNoteForm({
     parserId,
   );
   const vimEnabled = useVimKeybindings();
-  const [data, setData] = useState("");
+  const [data, setData] = useState(initial.draft?.value.data ?? "");
   const dataEditorRef = useRef<ReactCodeMirrorRef>(null);
-  const [tags, setTags] = useState("");
-  const [keywords, setKeywords] = useState("");
-  const [isSuspended, setIsSuspended] = useState(false);
+  const [tags, setTags] = useState(initial.draft?.value.tags ?? initial.tags);
+  const [keywords, setKeywords] = useState(
+    initial.draft?.value.keywords ?? initial.keywords,
+  );
+  const [isSuspended, setIsSuspended] = useState(
+    initial.draft?.value.isSuspended ?? false,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const unsaved = [data, tags, keywords].some((s) => s.trim() !== "");
+  // What the tags and keywords hold before anything is typed: prefilled ones are nothing to lose
+  const [baseline, setBaseline] = useState({
+    tags: initial.tags,
+    keywords: initial.keywords,
+  });
+  const unsaved =
+    data.trim() !== "" ||
+    tags.trim() !== baseline.tags.trim() ||
+    keywords.trim() !== baseline.keywords.trim();
+  useDraftSaver(
+    unsaved ? { parserId, data, tags, keywords, isSuspended } : null,
+    newNoteDraft.save,
+  );
   // The first example shows what to write while the data is empty
   const firstExample = useParserSyntax(parserId).examples?.[0]?.source;
 
@@ -79,10 +131,24 @@ export default function NewNoteForm({
     listParsers(1, PARSERS_LIMIT)
       .then((list) => {
         setParsers(list);
-        setParserId(list[0]?.id ?? null);
+        // The remembered parser, unless it was deleted since
+        const remembered = list.find((p) => p.id === initial.parserId);
+        setParserId(remembered?.id ?? list[0]?.id ?? null);
       })
       .catch((e) => setError(errorMessage(e)));
+    // Once, with the parser remembered when the form opened
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Empties the note's text for another note, keeping its parser and `keptTags`. */
+  function clearText(keptTags: string) {
+    setData("");
+    setTags(keptTags);
+    setKeywords(initial.keywords);
+    setBaseline({ tags: keptTags, keywords: initial.keywords });
+    setRestoredAt(null);
+    setError(null);
+  }
 
   async function cancel() {
     if (
@@ -92,9 +158,20 @@ export default function NewNoteForm({
         confirmLabel: "Discard",
         danger: true,
       }))
-    )
+    ) {
+      newNoteDraft.save(null);
       onCancel();
+    }
   }
+
+  const dataExtensions = useMemo(
+    () => [...editor.dataExtensions, submitKeymap],
+    [editor.dataExtensions],
+  );
+  const fieldExtensions = useMemo(
+    () => [...editor.extensions, submitKeymap],
+    [editor.extensions],
+  );
 
   useImperativeHandle(ref, () => ({
     focus: () => dataEditorRef.current?.view?.focus(),
@@ -102,15 +179,16 @@ export default function NewNoteForm({
   }));
 
   const rootRef = useRef<HTMLDivElement>(null);
+  useSubmitKeys(rootRef, (more) => {
+    if (!saving) void create(more);
+    return true;
+  });
   // Creating the note closes the form, so each way of writing it also quits
   useVimCommands(rootRef, ({ command, force, warn }) => {
     if (command === "edit") {
       if (force) {
-        setData("");
-        setTags("");
-        setKeywords("");
         setIsSuspended(false);
-        setError(null);
+        clearText(baseline.tags);
       } else if (unsaved) {
         warn(NO_WRITE_WARNING);
       }
@@ -118,11 +196,12 @@ export default function NewNoteForm({
       if (force || !unsaved) onCancel();
       else warn(NO_WRITE_WARNING);
     } else if (!saving) {
-      void create();
+      void create(false);
     }
   });
 
-  async function create() {
+  /** Creates the note; with `more`, keeps the form open, emptied, for another like it. */
+  async function create(more: boolean) {
     if (parserId === null) {
       setError("Select a parser");
       return;
@@ -143,6 +222,8 @@ export default function NewNoteForm({
           custom_data: {},
         },
       ]);
+      newNoteDraft.save(null);
+      newNoteDefaults.save({ parserId, tags });
       try {
         await renderNote(note.id);
       } catch (e) {
@@ -152,7 +233,11 @@ export default function NewNoteForm({
           message: `But ${errorMessage(e)}`,
         });
       }
-      onCreated(note);
+      if (more) {
+        clearText(tags);
+        dataEditorRef.current?.view?.focus();
+      }
+      onCreated(note, more);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -171,6 +256,21 @@ export default function NewNoteForm({
       }}
     >
       <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>New Note</h3>
+      {restoredAt !== null && (
+        <div className="draft-notice" role="status">
+          <span>Restored a draft from {draftTime(restoredAt)}.</span>
+          <button
+            type="button"
+            className="button-small"
+            onClick={() => {
+              setIsSuspended(false);
+              clearText(initial.tags);
+            }}
+          >
+            Discard it
+          </button>
+        </div>
+      )}
 
       <div style={{ marginBottom: 16 }}>
         <div style={fieldLabel}>Parser</div>
@@ -241,7 +341,7 @@ export default function NewNoteForm({
           value={data}
           onChange={setData}
           placeholder={firstExample && `e.g. ${firstExample}`}
-          extensions={editor.dataExtensions}
+          extensions={dataExtensions}
           basicSetup={editor.dataSetup}
           minHeight="120px"
           style={cmStyle}
@@ -266,7 +366,7 @@ export default function NewNoteForm({
             theme={theme}
             value={tags}
             onChange={setTags}
-            extensions={editor.extensions}
+            extensions={fieldExtensions}
             basicSetup={editor.fieldSetup}
             style={cmStyle}
           />
@@ -288,7 +388,7 @@ export default function NewNoteForm({
             theme={theme}
             value={keywords}
             onChange={setKeywords}
-            extensions={editor.extensions}
+            extensions={fieldExtensions}
             basicSetup={editor.fieldSetup}
             style={cmStyle}
           />
@@ -307,12 +407,22 @@ export default function NewNoteForm({
 
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <button
-          onClick={create}
+          onClick={() => create(false)}
           disabled={saving || parserId === null}
           className="button-primary touch-target-small"
           style={{ padding: "5px 14px", fontSize: 13 }}
+          title="Ctrl+Enter (Cmd+Enter on a Mac)"
         >
           {saving ? "Creating…" : "Create"}
+        </button>
+        <button
+          onClick={() => create(true)}
+          disabled={saving || parserId === null}
+          className="touch-target-small"
+          style={{ padding: "5px 14px", fontSize: 13 }}
+          title="Creates the note and starts another with the same parser and tags. Ctrl+Shift+Enter (Cmd+Shift+Enter on a Mac)"
+        >
+          Create and New
         </button>
         <button
           onClick={cancel}
