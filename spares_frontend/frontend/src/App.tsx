@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { AskDialogHost } from "./components/AskDialog";
 import Navbar from "./components/Navbar";
 import { useAuth } from "./hooks/useAuth";
 
@@ -35,6 +36,7 @@ function NavbarLayout() {
 export default function App() {
   return (
     <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+      <AskDialogHost />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />

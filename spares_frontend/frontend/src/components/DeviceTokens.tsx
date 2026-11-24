@@ -5,6 +5,7 @@ import {
   type DeviceToken,
 } from "../api/client";
 import { errorMessage, td, th } from "../utils";
+import { askConfirm } from "../ask";
 
 const formatTime = (at: number | null) =>
   at === null ? "never" : new Date(at * 1000).toLocaleString();
@@ -40,9 +41,12 @@ export default function DeviceTokens() {
         ? ""
         : ` Its copy of the collection (replica ${device.replica}) can no longer sync, so changes it has not synced are lost.`;
     if (
-      !window.confirm(
-        `Log out "${device.name}"? It needs \`spares login\` to reach this host again.${copy}`,
-      )
+      !(await askConfirm({
+        title: `Log out "${device.name}"?`,
+        message: `It needs \`spares login\` to reach this host again.${copy}`,
+        confirmLabel: "Log out",
+        danger: true,
+      }))
     )
       return;
     setBusy(device.id);

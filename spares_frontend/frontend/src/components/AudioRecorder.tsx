@@ -6,6 +6,7 @@ import {
   recordingMimeType,
 } from "../audioRecording";
 import { errorMessage } from "../utils";
+import { askConfirm } from "../ask";
 
 type State = "idle" | "starting" | "recording" | "recorded" | "uploading";
 
@@ -131,10 +132,14 @@ export default function AudioRecorder({
   }
 
   /** Asks before throwing a recording away. */
-  function confirmDiscard(): boolean {
+  async function confirmDiscard(): Promise<boolean> {
     return (
       (state !== "recording" && !recording) ||
-      window.confirm("Discard the recording?")
+      askConfirm({
+        title: "Discard the recording?",
+        confirmLabel: "Discard",
+        danger: true,
+      })
     );
   }
 
@@ -145,7 +150,12 @@ export default function AudioRecorder({
       aria-labelledby="audio-recorder-title"
       onClose={onClose}
       onCancel={(e) => {
-        if (state === "uploading" || !confirmDiscard()) e.preventDefault();
+        // Asked after the dialog is kept open, and closed once the answer is yes
+        if (state === "uploading") e.preventDefault();
+        else if (state === "recording" || recording) {
+          e.preventDefault();
+          void confirmDiscard().then((ok) => ok && dialogRef.current?.close());
+        }
       }}
     >
       <div className="audio-recorder-content">
@@ -179,7 +189,9 @@ export default function AudioRecorder({
               ) : (
                 <button
                   onClick={() => {
-                    if (!recording || confirmDiscard()) void start();
+                    if (!recording) void start();
+                    else
+                      void confirmDiscard().then((ok) => ok && void start());
                   }}
                   disabled={state === "starting" || state === "uploading"}
                   autoFocus
@@ -238,7 +250,9 @@ export default function AudioRecorder({
         >
           <button
             onClick={() => {
-              if (confirmDiscard()) dialogRef.current?.close();
+              void confirmDiscard().then(
+                (ok) => ok && dialogRef.current?.close(),
+              );
             }}
             disabled={state === "uploading"}
             className="touch-target-small"

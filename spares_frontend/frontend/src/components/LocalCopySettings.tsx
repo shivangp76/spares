@@ -16,6 +16,7 @@ import {
 } from "../local/copy";
 import { canKeepCopy, getLocalCopy } from "../local/transport";
 import { errorMessage } from "../utils";
+import { askConfirm, showNotice } from "../ask";
 
 /** What the device is called in the server's list of devices, e.g. `iPhone (Firefox)`. */
 function defaultDeviceName(): string {
@@ -103,9 +104,13 @@ function DeviceList({ active, own }: { active: boolean; own: number | null }) {
 
   async function remove(device: SyncDevice) {
     if (
-      !window.confirm(
-        `Remove ${device.name} (replica ${device.replica})? It can no longer sync, and its changes not synced yet never reach the server. Its copy has to be set up again.`,
-      )
+      !(await askConfirm({
+        title: `Remove ${device.name} (replica ${device.replica})?`,
+        message:
+          "It can no longer sync, and its changes not synced yet never reach the server. Its copy has to be set up again.",
+        confirmLabel: "Remove",
+        danger: true,
+      }))
     )
       return;
     try {
@@ -221,9 +226,12 @@ export default function LocalCopySettings() {
         ? ` Its ${local.dirty} changes are sent to the server first.`
         : "";
     if (
-      !window.confirm(
-        `Stop keeping a copy on this device?${unsynced} Afterwards, this device works only while it can reach the server.`,
-      )
+      !(await askConfirm({
+        title: "Stop keeping a copy on this device?",
+        message:
+          `${unsynced} Afterwards, this device works only while it can reach the server.`.trim(),
+        confirmLabel: "Stop keeping a copy",
+      }))
     )
       return;
     let warning: string | null;
@@ -233,9 +241,12 @@ export default function LocalCopySettings() {
       // The copy's sync errors already start with it
       const reason = errorMessage(e).replace(/^Sync failed: /, "");
       if (
-        !window.confirm(
-          `Syncing failed: ${reason}\n\nDelete the copy anyway, with the changes not yet sent?`,
-        )
+        !(await askConfirm({
+          title: "Delete the copy anyway?",
+          message: `Syncing failed: ${reason}\n\nThe changes not yet sent are lost.`,
+          confirmLabel: "Delete the copy",
+          danger: true,
+        }))
       )
         return;
       try {
@@ -245,16 +256,20 @@ export default function LocalCopySettings() {
         return;
       }
     }
-    if (warning) window.alert(`The copy is deleted. ${warning}`);
+    if (warning)
+      await showNotice({ title: "The copy is deleted", message: warning });
     // Pages fetched from the copy fetch from the server again
     window.location.reload();
   }
 
   async function setUpAgain() {
     if (
-      !window.confirm(
-        "Set up the copy again? Changes made here since the last sync are lost.",
-      )
+      !(await askConfirm({
+        title: "Set up the copy again?",
+        message: "Changes made here since the last sync are lost.",
+        confirmLabel: "Set up again",
+        danger: true,
+      }))
     )
       return;
     try {

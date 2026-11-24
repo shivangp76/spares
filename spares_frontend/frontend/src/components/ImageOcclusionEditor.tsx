@@ -9,6 +9,7 @@ import type {
   ImageOcclusionEditorConfig,
 } from "../types/spares";
 import { errorMessage } from "../utils";
+import { askConfirm } from "../ask";
 
 /** Set on the editor's window by the `ext-spares` svgedit extension when it is embedded. */
 interface SparesBridge {
@@ -167,9 +168,12 @@ export default function ImageOcclusionEditor(props: Props) {
     if (
       loaded &&
       bridge.isDirty() &&
-      !window.confirm(
-        "Replace the image? The clozes drawn so far are discarded.",
-      )
+      !(await askConfirm({
+        title: "Replace the image?",
+        message: "The clozes drawn so far are discarded.",
+        confirmLabel: "Replace",
+        danger: true,
+      }))
     )
       return;
     setError(null);
@@ -228,11 +232,15 @@ export default function ImageOcclusionEditor(props: Props) {
     }
   }
 
-  function close() {
+  async function close() {
     if (
       loaded &&
       bridge?.isDirty() &&
-      !window.confirm("Discard the changes to this image occlusion?")
+      !(await askConfirm({
+        title: "Discard the changes to this image occlusion?",
+        confirmLabel: "Discard",
+        danger: true,
+      }))
     )
       return;
     onClose();

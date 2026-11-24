@@ -4,6 +4,7 @@ import { getNotesVcsStatus, removeSavedCopies, type NotesVcsStatus } from '../ap
 import { docUrl } from '../help/pages';
 import { errorMessage } from '../utils';
 import HelpDialog from './HelpDialog';
+import { askConfirm } from '../ask';
 
 const MANUAL = { label: 'Files spares overwrote', file: 'workflows.md', heading: 'Files spares overwrote' };
 
@@ -32,10 +33,15 @@ export default function SavedCopiesNotice() {
   const differing = copies.filter(c => !c.matches_current).length;
 
   async function remove() {
-    const question = differing > 0
-      ? `Delete all ${copies.length} saved copies? ${differing} differ from the current file, so may hold edits that are nowhere else.`
-      : `Delete all ${copies.length} saved copies? Each matches the current file.`;
-    if (!window.confirm(question)) return;
+    const message = differing > 0
+      ? `${differing} differ from the current file, so may hold edits that are nowhere else.`
+      : 'Each matches the current file.';
+    if (!(await askConfirm({
+      title: `Delete all ${copies.length} saved copies?`,
+      message,
+      confirmLabel: 'Delete',
+      danger: true,
+    }))) return;
     try {
       await removeSavedCopies(copies.map(c => c.path));
       setOpen(false);

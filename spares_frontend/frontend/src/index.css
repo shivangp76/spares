@@ -647,6 +647,58 @@ input[type="checkbox"] {
   background: rgb(0 0 0 / 0.4);
 }
 
+/* The app's confirm and prompt (`AskDialog`) */
+.ask-dialog {
+  width: min(420px, calc(100% - 32px));
+  box-shadow: var(--shadow-popover);
+}
+
+.ask-dialog-message {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-md);
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.ask-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: var(--font-md);
+  font-weight: 500;
+}
+
+.ask-dialog-field input {
+  padding: 8px 10px;
+  font-weight: normal;
+}
+
+.ask-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.ask-dialog-buttons button {
+  padding: 6px 16px;
+}
+
+/* An action that destroys something, e.g. deleting an account */
+.button-danger {
+  background: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  color: light-dark(#fff, #1a0d0c);
+  font-weight: 600;
+}
+
+.button-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 85%, var(--text));
+}
+
 /* For tables of examples */
 .help-dialog.wide {
   width: min(640px, calc(100% - 32px));

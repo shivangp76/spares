@@ -72,6 +72,7 @@ import {
 } from "../utils";
 import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
+import { askText } from "../ask";
 
 const checkTd: React.CSSProperties = { ...td, width: 1, paddingRight: 0 };
 
@@ -649,14 +650,19 @@ export default function CardsPage() {
 
   const savedSearches = useSavedSearches();
 
-  function handleSaveSearch() {
+  async function handleSaveSearch() {
     const q = query.trim();
     if (!q) return;
-    const name = window.prompt(
-      "Save this search as:",
-      savedSearches.saved.find((s) => s.query === q)?.name ?? "",
-    );
-    if (name?.trim()) void savedSearches.save(name.trim(), q);
+    const name = await askText({
+      title: "Save this search",
+      message: q,
+      confirmLabel: "Save",
+      input: {
+        label: "Name",
+        initial: savedSearches.saved.find((s) => s.query === q)?.name ?? "",
+      },
+    });
+    if (name) void savedSearches.save(name, q);
   }
 
   function handleClear() {

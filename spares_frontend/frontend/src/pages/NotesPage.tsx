@@ -75,6 +75,7 @@ import {
 } from "../utils";
 import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
+import { askConfirm, askText } from "../ask";
 
 const DATA_PREVIEW_LEN = 100;
 const dataTd: React.CSSProperties = {
@@ -473,14 +474,19 @@ export default function NotesPage() {
 
   const savedSearches = useSavedSearches();
 
-  function handleSaveSearch() {
+  async function handleSaveSearch() {
     const q = query.trim();
     if (!q) return;
-    const name = window.prompt(
-      "Save this search as:",
-      savedSearches.saved.find((s) => s.query === q)?.name ?? "",
-    );
-    if (name?.trim()) void savedSearches.save(name.trim(), q);
+    const name = await askText({
+      title: "Save this search",
+      message: q,
+      confirmLabel: "Save",
+      input: {
+        label: "Name",
+        initial: savedSearches.saved.find((s) => s.query === q)?.name ?? "",
+      },
+    });
+    if (name) void savedSearches.save(name, q);
   }
 
   function startNewNote() {
@@ -644,7 +650,13 @@ export default function NotesPage() {
           };
         }
         const summary = shareSummary(await fetchShareSummary(query), count);
-        if (!window.confirm(`${summary}\n\nDownload shared.zip?`))
+        if (
+          !(await askConfirm({
+            title: "Download shared.zip?",
+            message: summary,
+            confirmLabel: "Download",
+          }))
+        )
           return { message: "Not exported.", eventIds: [] };
         downloadBlob("shared.zip", await shareBundle(query));
         return { message: `Exported to shared.zip. ${summary}`, eventIds: [] };

@@ -1,6 +1,7 @@
 import { Decoration, type DecorationSet, EditorView, type Extension, StateEffect, StateField, ViewPlugin, WidgetType } from '@uiw/react-codemirror';
 import { uploadImage, uploadImageUrl } from './api/client';
 import { draggedImageUrl, errorMessage, imageUploadName } from './utils';
+import { showNotice } from './ask';
 
 class UploadingWidget extends WidgetType {
   constructor(readonly count: number) { super(); }
@@ -89,7 +90,8 @@ async function insertImages(view: EditorView, images: ImageUpload[], pos: number
   // Follow the images with the cursor if it is still where they were added
   const selection = main.empty && main.head === at ? { anchor: at + insert.length } : undefined;
   view.dispatch({ changes: { from: at, insert }, selection, effects: removeUpload.of(id) });
-  if (errors.length > 0) window.alert(errors.join('\n'));
+  if (errors.length > 0)
+    void showNotice({ title: "Some images weren't added", message: errors.join('\n') });
 }
 
 function imageFiles(data: DataTransfer | null): File[] {

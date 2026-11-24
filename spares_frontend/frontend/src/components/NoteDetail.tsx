@@ -45,6 +45,7 @@ import InsertImageOcclusionButton from "./InsertImageOcclusionButton";
 import LocalGraph from "./LocalGraph";
 import NoteSyntaxButton from "./NoteSyntaxHelp";
 import Skeleton from "./Skeleton";
+import { askConfirm } from "../ask";
 
 const fieldLabel: React.CSSProperties = {
   fontSize: 12,
@@ -292,8 +293,15 @@ export default function NoteDetail({
     setTimeout(() => setCopyStatus("idle"), 2000);
   }
 
-  function close() {
-    if (!unsaved || window.confirm("Discard the unsaved changes to this note?"))
+  async function close() {
+    if (
+      !unsaved ||
+      (await askConfirm({
+        title: "Discard the unsaved changes to this note?",
+        confirmLabel: "Discard",
+        danger: true,
+      }))
+    )
       onClose();
   }
 

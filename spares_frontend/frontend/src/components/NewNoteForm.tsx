@@ -19,6 +19,7 @@ import InsertImageButton from "./InsertImageButton";
 import InsertImageOcclusionButton from "./InsertImageOcclusionButton";
 import type { NotePaneHandle } from "./NoteDetail";
 import NoteSyntaxButton from "./NoteSyntaxHelp";
+import { askConfirm, showNotice } from "../ask";
 
 const fieldLabel: React.CSSProperties = {
   fontSize: 12,
@@ -83,8 +84,16 @@ export default function NewNoteForm({
       .catch((e) => setError(errorMessage(e)));
   }, []);
 
-  function cancel() {
-    if (!unsaved || window.confirm("Discard this new note?")) onCancel();
+  async function cancel() {
+    if (
+      !unsaved ||
+      (await askConfirm({
+        title: "Discard this new note?",
+        confirmLabel: "Discard",
+        danger: true,
+      }))
+    )
+      onCancel();
   }
 
   useImperativeHandle(ref, () => ({
@@ -138,9 +147,10 @@ export default function NewNoteForm({
         await renderNote(note.id);
       } catch (e) {
         // The note exists, so still hand it over
-        window.alert(
-          `Note ${formatNoteId(note.id)} created, but ${errorMessage(e)}`,
-        );
+        void showNotice({
+          title: `Note ${formatNoteId(note.id)} created`,
+          message: `But ${errorMessage(e)}`,
+        });
       }
       onCreated(note);
     } catch (e) {

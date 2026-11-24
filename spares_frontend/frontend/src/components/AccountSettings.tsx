@@ -8,6 +8,7 @@ import {
 } from "../api/client";
 import { errorMessage } from "../utils";
 import DeviceTokens from "./DeviceTokens";
+import { askText } from "../ask";
 
 /** The account on the host: its password, its logged-in devices, exporting its collection, and deleting it. */
 export default function AccountSettings() {
@@ -100,10 +101,15 @@ export default function AccountSettings() {
         <button
           disabled={busy}
           className="error-text"
-          onClick={() => {
-            const password = window.prompt(
-              "This deletes your account and your whole collection on this host. Type your password to delete it.",
-            );
+          onClick={async () => {
+            const password = await askText({
+              title: "Delete your account?",
+              message:
+                "This deletes your account and your whole collection on this host.",
+              confirmLabel: "Delete my account",
+              danger: true,
+              input: { label: "Password", type: "password" },
+            });
             if (!password) return;
             void run(async () => {
               await deleteAccount(password);

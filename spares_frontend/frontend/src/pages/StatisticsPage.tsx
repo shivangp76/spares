@@ -45,6 +45,7 @@ import {
 } from "../types/spares";
 import { errorMessage, formatDuration, td, th } from "../utils";
 import PageTitle from "../components/PageTitle";
+import { askConfirm } from "../ask";
 
 /** The id of the section titled `title`, which the section bar links to. */
 function sectionId(title: string): string {
@@ -1113,9 +1114,12 @@ function SchedulerSection({
   async function apply() {
     if (!credentials) return;
     if (
-      !window.confirm(
-        "Optimize again, and if the parameters still predict your reviews better, save them to config.toml and recompute the memory state and due date of every card, suspended and buried ones included?\n\nUndo restores the cards, but not the parameters.",
-      )
+      !(await askConfirm({
+        title: "Apply optimized parameters?",
+        message:
+          "Optimize again, and if the parameters still predict your reviews better, save them to config.toml and recompute the memory state and due date of every card, suspended and buried ones included.\n\nUndo restores the cards, but not the parameters.",
+        confirmLabel: "Optimize and apply",
+      }))
     )
       return;
     const res = await run("apply", () =>
@@ -1143,9 +1147,12 @@ function SchedulerSection({
   async function reschedule() {
     if (!credentials) return;
     if (
-      !window.confirm(
-        "Recompute the memory state and due date of every card from its review history, suspended and buried ones included?\n\nUndo restores the cards' previous schedule.",
-      )
+      !(await askConfirm({
+        title: "Reschedule every card?",
+        message:
+          "Recompute the memory state and due date of every card from its review history, suspended and buried ones included.\n\nUndo restores the cards' previous schedule.",
+        confirmLabel: "Reschedule",
+      }))
     )
       return;
     const res = await run("reschedule", () =>
