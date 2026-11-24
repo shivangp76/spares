@@ -206,7 +206,6 @@ pub enum ReviewLogKind {
 /// What a [`ReviewLogKind::Reschedule`] row keeps in its `custom_data`: the card's due date
 /// before and after it was moved, and what moved it.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(from = "StoredRescheduleData")]
 pub struct RescheduleData {
     #[serde(with = "ts_seconds")]
     pub previous_due: DateTime<Utc>,
@@ -227,34 +226,6 @@ pub enum RescheduleOrigin {
     Advance,
     /// `spares card break`, which moves the cards due during a break to the days after it.
     Break,
-}
-
-/// [`RescheduleData`] as stored. Rows written before moves recorded their origin have none, and
-/// were all postponements or advances, which the direction of the move tells apart.
-#[derive(Deserialize)]
-struct StoredRescheduleData {
-    #[serde(with = "ts_seconds")]
-    previous_due: DateTime<Utc>,
-    #[serde(with = "ts_seconds")]
-    due: DateTime<Utc>,
-    origin: Option<RescheduleOrigin>,
-}
-
-impl From<StoredRescheduleData> for RescheduleData {
-    fn from(stored: StoredRescheduleData) -> Self {
-        let origin = stored
-            .origin
-            .unwrap_or(if stored.due >= stored.previous_due {
-                RescheduleOrigin::Postpone
-            } else {
-                RescheduleOrigin::Advance
-            });
-        Self {
-            previous_due: stored.previous_due,
-            due: stored.due,
-            origin,
-        }
-    }
 }
 
 impl ReviewLogKind {
@@ -305,8 +276,6 @@ pub struct Tag {
     /// [`ReviewLogKind::Cram`], which counts in statistics and the heatmap as a cram, but not
     /// toward the daily limits, and which no replay of the card's history sees. Undo still takes a
     /// rating back.
-    // Tags kept in undo events from before this field read as rescheduling, as they all did.
-    #[serde(default = "reschedule_default")]
     pub reschedule: bool,
     #[serde(with = "ts_seconds")]
     pub created_at: DateTime<Utc>,
@@ -315,10 +284,6 @@ pub struct Tag {
     /// tag was built today.
     #[serde(with = "ts_seconds")]
     pub updated_at: DateTime<Utc>,
-}
-
-fn reschedule_default() -> bool {
-    true
 }
 
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
@@ -770,31 +735,111 @@ mod tests {
         assert!(!super::ReviewLogKind::Reschedule.is_replayed());
     }
 
-    #[test]
-    fn reschedule_data_without_an_origin_is_told_by_its_direction() {
+    /// `20261124120000_backfill_old_payloads` writes the fields older rows and undo events left
+    /// out, so that they read without defaults: a reschedule's origin, told by the direction of
+    /// the move, and a tag's `reschedule`, wherever an event keeps them.
+    #[sqlx::test(migrations = false)]
+    async fn migration_backfill_old_payloads_writes_what_they_left_out(pool: SqlitePool) {
+        use serde_json::Value;
+        use serde_json::json;
+
         use super::RescheduleData;
         use super::RescheduleOrigin;
-        let read = |value| {
-            serde_json::from_value::<RescheduleData>(value)
+        use super::Tag;
+
+        const MIGRATION: i64 = 20_261_124_120_000;
+        let migrator = Migrator::new(migrator_path()).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table(&migrator.table_name)
+            .await
+            .unwrap();
+        for migration in migrator
+            .iter()
+            .filter(|m| m.migration_type.is_up_migration() && m.version < MIGRATION)
+        {
+            conn.apply(&migrator.table_name, migration).await.unwrap();
+        }
+        sqlx::query(
+            r#"INSERT INTO review_log (id, card_id, reviewed_at, kind, scheduler_name,
+               previous_state, custom_data)
+               VALUES (1, NULL, 1000, 17, 'fsrs', 2, '{"previous_due": 100, "due": 200}'),
+                      (2, NULL, 1000, 17, 'fsrs', 2, '{"previous_due": 200, "due": 100}'),
+                      (3, NULL, 1000, 17, 'fsrs', 2,
+                       '{"previous_due": 200, "due": 100, "origin": "manual"}')"#,
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let tag = |id: i64| {
+            json!({"id": id, "name": format!("t{id}"), "description": "", "query": null,
+                   "auto_delete": true, "created_at": 1, "updated_at": 1})
+        };
+        let mut create_tag = tag(1);
+        create_tag["note_ids"] = json!([]);
+        let events = [
+            create_tag,
+            json!({"notes": [], "deleted_tags": [{"tag": tag(2)}, {"tag": tag(3)}]}),
+            // A tag's changes, which aren't a tag
+            json!({"id": 4, "auto_delete": {"b": true, "a": false}}),
+            json!({"cards": [], "review_logs": [
+                {"kind": "Reschedule", "custom_data": {"previous_due": 100, "due": 200}},
+                {"kind": "Reschedule", "custom_data": {"previous_due": 200, "due": 100}},
+            ]}),
+        ];
+        for (i, payload) in events.iter().enumerate() {
+            sqlx::query("INSERT INTO event (id, kind, payload) VALUES (?, 0, ?)")
+                .bind(i64::try_from(i).unwrap() + 1)
+                .bind(payload.to_string())
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+        }
+        drop(conn);
+
+        migrator.run(&pool).await.unwrap();
+
+        let origins: Vec<RescheduleOrigin> =
+            sqlx::query_scalar::<_, String>("SELECT custom_data FROM review_log ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .map(|data| serde_json::from_str::<RescheduleData>(data).unwrap().origin)
+                .collect();
+        assert_eq!(
+            origins,
+            [
+                RescheduleOrigin::Postpone,
+                RescheduleOrigin::Advance,
+                RescheduleOrigin::Manual
+            ]
+        );
+
+        let payloads: Vec<Value> =
+            sqlx::query_scalar::<_, String>("SELECT payload FROM event ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .map(|payload| serde_json::from_str(payload).unwrap())
+                .collect();
+        let read_tag = |value: &Value| serde_json::from_value::<Tag>(value.clone()).unwrap();
+        assert!(read_tag(&payloads[0]).reschedule);
+        assert!(read_tag(&payloads[1]["deleted_tags"][0]["tag"]).reschedule);
+        assert!(read_tag(&payloads[1]["deleted_tags"][1]["tag"]).reschedule);
+        assert_eq!(payloads[2], events[2]);
+        let read_origin = |value: &Value| {
+            serde_json::from_value::<RescheduleData>(value["custom_data"].clone())
                 .unwrap()
                 .origin
         };
         assert_eq!(
-            read(serde_json::json!({"previous_due": 100, "due": 200})),
+            read_origin(&payloads[3]["review_logs"][0]),
             RescheduleOrigin::Postpone
         );
         assert_eq!(
-            read(serde_json::json!({"previous_due": 200, "due": 100})),
+            read_origin(&payloads[3]["review_logs"][1]),
             RescheduleOrigin::Advance
-        );
-        let manual = RescheduleData {
-            previous_due: chrono::DateTime::from_timestamp(200, 0).unwrap(),
-            due: chrono::DateTime::from_timestamp(100, 0).unwrap(),
-            origin: RescheduleOrigin::Manual,
-        };
-        assert_eq!(
-            read(serde_json::to_value(manual).unwrap()),
-            RescheduleOrigin::Manual
         );
     }
 }
