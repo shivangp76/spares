@@ -986,6 +986,54 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
+/* The small capitalised name over a group, as `sectionLabel` in utils.ts gives inline */
+.section-label {
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* A titled group of settings, set apart as a panel */
+.settings-section {
+  min-width: 0;
+  margin: 16px 0 0;
+  padding: 14px 20px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+
+/* A legend sits on its fieldset's border; floated, it is the panel's heading instead */
+.settings-section > legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin-bottom: 10px;
+}
+
+.settings-section > legend + * {
+  clear: both;
+}
+
+/* A setting below another in its panel */
+.settings-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+/* A setting's options side by side, its name first */
+.settings-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+}
+
 /* A table of rows, as the Tags or Parsers page lists */
 .data-table {
   width: 100%;

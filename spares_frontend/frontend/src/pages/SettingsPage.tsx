@@ -47,7 +47,6 @@ import {
   type ThemePreference,
   type TypstThemePreference,
 } from "../theme";
-import { sectionLabel } from "../utils";
 import PageTitle from "../components/PageTitle";
 
 const THEMES: { value: ThemePreference; label: string }[] = [
@@ -102,9 +101,9 @@ export default function SettingsPage() {
     <div className="page">
       <PageTitle>Settings</PageTitle>
 
-      <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
-        <legend style={{ ...sectionLabel, padding: 0 }}>Theme</legend>
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+      <fieldset className="settings-section">
+        <legend className="section-label">Theme</legend>
+        <div className="settings-choices">
           {THEMES.map(({ value, label }) => (
             <label key={value} className="checkbox-label">
               <input
@@ -120,16 +119,9 @@ export default function SettingsPage() {
         </div>
       </fieldset>
 
-      <fieldset style={{ border: "none", padding: 0, margin: "24px 0 0" }}>
-        <legend style={{ ...sectionLabel, padding: 0 }}>Layout</legend>
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
+      <fieldset className="settings-section">
+        <legend className="section-label">Layout</legend>
+        <div className="settings-choices">
           <span>Page width:</span>
           {PAGE_WIDTHS.map((width) => (
             <label key={width} className="checkbox-label">
@@ -149,14 +141,7 @@ export default function SettingsPage() {
           that fit the screen get longer lines, and pages of a fixed size get
           larger.
         </p>
-        <label
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            marginTop: 12,
-          }}
-        >
+        <label className="settings-row">
           Card text size:
           <select
             value={cardZoom}
@@ -174,15 +159,7 @@ export default function SettingsPage() {
           Typst pages that fit the screen are laid out narrower and scaled up;
           pages of a fixed size are unchanged.
         </p>
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            flexWrap: "wrap",
-            alignItems: "center",
-            marginTop: 12,
-          }}
-        >
+        <div className="settings-choices settings-row">
           <span>Typst pages per row:</span>
           {PAGES_PER_ROW.map((pages) => (
             <label key={pages} className="checkbox-label">
@@ -204,9 +181,9 @@ export default function SettingsPage() {
         </p>
       </fieldset>
 
-      <fieldset style={{ border: "none", padding: 0, margin: "24px 0 0" }}>
-        <legend style={{ ...sectionLabel, padding: 0 }}>Typst Cards</legend>
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+      <fieldset className="settings-section">
+        <legend className="section-label">Typst Cards</legend>
+        <div className="settings-choices">
           {TYPST_THEMES.map(({ value, label }) => (
             <label key={value} className="checkbox-label">
               <input
@@ -226,8 +203,8 @@ export default function SettingsPage() {
         </p>
       </fieldset>
 
-      <fieldset style={{ border: "none", padding: 0, margin: "24px 0 0" }}>
-        <legend style={{ ...sectionLabel, padding: 0 }}>Review</legend>
+      <fieldset className="settings-section">
+        <legend className="section-label">Review</legend>
         <label className="checkbox-label">
           <input
             type="checkbox"
@@ -239,15 +216,7 @@ export default function SettingsPage() {
         <p className="field-hint">
           Both durations are still recorded, and shown after each card is rated.
         </p>
-        <label
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            cursor: "pointer",
-            marginTop: 12,
-          }}
-        >
+        <label className="checkbox-label settings-row">
           <input
             type="checkbox"
             checked={readAloud}
@@ -295,8 +264,8 @@ export default function SettingsPage() {
         </details>
       </fieldset>
 
-      <fieldset style={{ border: "none", padding: 0, margin: "24px 0 0" }}>
-        <legend style={{ ...sectionLabel, padding: 0 }}>Editor</legend>
+      <fieldset className="settings-section">
+        <legend className="section-label">Editor</legend>
         <label className="checkbox-label">
           <input
             type="checkbox"
@@ -310,14 +279,7 @@ export default function SettingsPage() {
           Off by default on touchscreens, since a phone keyboard can't leave
           Vim's normal mode to type.
         </p>
-        <label
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            marginTop: 12,
-          }}
-        >
+        <label className="settings-row">
           Text size:
           <select
             value={editorFontSize}
@@ -332,15 +294,7 @@ export default function SettingsPage() {
             ))}
           </select>
         </label>
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            flexWrap: "wrap",
-            alignItems: "center",
-            marginTop: 12,
-          }}
-        >
+        <div className="settings-choices settings-row">
           <span>Font:</span>
           {EDITOR_FONTS.map((font) => (
             <label key={font} className="checkbox-label">
@@ -359,15 +313,7 @@ export default function SettingsPage() {
           For the note editor&apos;s text, tags and keywords. The typed answer
           box while reviewing is unchanged.
         </p>
-        <label
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            cursor: "pointer",
-            marginTop: 12,
-          }}
-        >
+        <label className="checkbox-label settings-row">
           <input
             type="checkbox"
             checked={editorLineNumbers}
@@ -378,15 +324,7 @@ export default function SettingsPage() {
         <p className="field-hint">
           Never on phones, to give the text the width.
         </p>
-        <label
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            cursor: "pointer",
-            marginTop: 12,
-          }}
-        >
+        <label className="checkbox-label settings-row">
           <input
             type="checkbox"
             checked={editorSpellcheck}
@@ -398,15 +336,7 @@ export default function SettingsPage() {
           With the browser&apos;s spellchecker, in the languages it is set to
           check.
         </p>
-        <label
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            cursor: "pointer",
-            marginTop: 12,
-          }}
-        >
+        <label className="checkbox-label settings-row">
           <input
             type="checkbox"
             checked={closeBrackets}

@@ -6,7 +6,7 @@ import {
   exportAccount,
   getCredentials,
 } from "../api/client";
-import { errorMessage, sectionLabel } from "../utils";
+import { errorMessage } from "../utils";
 import DeviceTokens from "./DeviceTokens";
 
 /** The account on the host: its password, its logged-in devices, exporting its collection, and deleting it. */
@@ -38,8 +38,8 @@ export default function AccountSettings() {
   }
 
   return (
-    <fieldset style={{ border: "none", padding: 0, margin: "24px 0 0" }}>
-      <legend style={{ ...sectionLabel, padding: 0 }}>
+    <fieldset className="settings-section">
+      <legend className="section-label">
         Account{user ? ` (${user})` : ""}
       </legend>
       <form

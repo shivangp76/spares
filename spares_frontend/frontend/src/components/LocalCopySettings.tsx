@@ -15,7 +15,7 @@ import {
   type SetupStep,
 } from "../local/copy";
 import { canKeepCopy, getLocalCopy } from "../local/transport";
-import { errorMessage, sectionLabel } from "../utils";
+import { errorMessage } from "../utils";
 
 /** What the device is called in the server's list of devices, e.g. `iPhone (Firefox)`. */
 function defaultDeviceName(): string {
@@ -412,8 +412,8 @@ export default function LocalCopySettings() {
   }
 
   return (
-    <fieldset style={{ border: "none", padding: 0, margin: "24px 0 0" }}>
-      <legend style={{ ...sectionLabel, padding: 0 }}>This Device</legend>
+    <fieldset className="settings-section">
+      <legend className="section-label">This Device</legend>
       {body}
       <DeviceList
         active={local.active}

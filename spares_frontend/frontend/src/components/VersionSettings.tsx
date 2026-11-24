@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { sectionLabel } from "../utils";
 import {
   checkVersion,
   isOutdated,
@@ -24,8 +23,8 @@ export default function VersionSettings() {
   const served = version?.frontend?.build;
 
   return (
-    <section style={{ marginTop: 24 }}>
-      <div style={sectionLabel}>Version</div>
+    <section className="settings-section">
+      <div className="section-label">Version</div>
       <dl
         style={{
           display: "grid",
