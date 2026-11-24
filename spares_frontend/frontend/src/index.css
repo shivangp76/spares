@@ -921,6 +921,17 @@ input[type="checkbox"] {
   font-size: 24px;
 }
 
+/* The title's line about the app sits close under it, quieter than the form */
+.login h2:has(+ .login-intro) {
+  margin-bottom: 8px;
+}
+
+.login-intro {
+  margin: 0 0 24px;
+  font-size: var(--font-md);
+  color: var(--text-muted);
+}
+
 .login-form {
   display: flex;
   flex-direction: column;

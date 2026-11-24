@@ -74,6 +74,7 @@ export default function LoginPage() {
   return (
     <AuthLayout
       title="Spares"
+      intro="A spaced repetition flashcard app. Write notes in Markdown, LaTeX or Typst, and Spares turns them into cards and schedules their reviews."
       error={error}
       links={
         <>
