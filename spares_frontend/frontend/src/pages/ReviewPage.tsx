@@ -101,7 +101,11 @@ import {
   keepShown,
   noteChangedSince,
   sectionLabel,
+  topicTags,
 } from "../utils";
+import type { NewNoteStart } from "../components/NewNoteForm";
+import { newNoteDraft } from "../noteDrafts";
+import type { NotePaneHandle } from "../components/NoteDetail";
 import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
 
@@ -144,6 +148,7 @@ const FILTER_MODES: { mode: FilterMode; label: string; placeholder: string }[] =
 // The note editor (CodeMirror) is only needed once a note is opened, so it is loaded separately
 const loadNoteDetail = () => import("../components/NoteDetail");
 const NoteDetail = lazy(loadNoteDetail);
+const NewNoteForm = lazy(() => import("../components/NewNoteForm"));
 
 const actionButton: React.CSSProperties = { padding: "6px 10px", fontSize: 13 };
 
@@ -454,8 +459,14 @@ export default function ReviewPage() {
 
   // Side panels
   const [panelNote, setPanelNote] = useState<NoteResponse | null>(null);
+  // A new note written beside the card (n), started with the reviewed note's parser and tags, or
+  // the new note left unfinished before. It stays open from card to card.
+  const [newNotePanel, setNewNotePanel] = useState<{
+    start?: NewNoteStart;
+  } | null>(null);
   const [noteLoading, setNoteLoading] = useState(false);
   const notePanelRef = useRef<HTMLDivElement>(null);
+  const newNotePane = useRef<NotePaneHandle>(null);
   const answerBarRef = useRef<HTMLDivElement>(null);
   const [keywordResults, setKeywordResults] = useState<{
     keyword: string;
@@ -797,6 +808,8 @@ export default function ReviewPage() {
     if (sessionEnd === null) setSessionEnd(Date.now());
     setStatus(null);
     setPanelNote(null);
+    // Its text is kept as a draft, restored the next time a new note is opened
+    setNewNotePanel(null);
     setKeywordResults(null);
     setDueDatePicker(null);
     refreshStatistics();
@@ -1278,12 +1291,37 @@ export default function ReviewPage() {
   function toggleCardNote() {
     if (!card) return;
     if (panelNote?.id === card.note_id) setPanelNote(null);
-    else openNote(card.note_id);
+    else {
+      setNewNotePanel(null);
+      openNote(card.note_id);
+    }
+  }
+
+  /** Opens a new note beside the card, like the reviewed note, or closes the one open (n). */
+  function toggleNewNote() {
+    if (!card) return;
+    if (newNotePanel) {
+      newNotePane.current?.close();
+      return;
+    }
+    setPanelNote(null);
+    // A draft of a new note, from here or the Notes page, is carried on rather than replaced
+    setNewNotePanel(
+      newNoteDraft.load()
+        ? {}
+        : {
+            start: {
+              parserName: card.parser_name,
+              tags: topicTags(card.tags),
+            },
+          },
+    );
+    requestAnimationFrame(() => newNotePane.current?.focus());
   }
 
   // The editor opens below a card that can be taller than the viewport, so bring it into view.
   // Beside the card it is already in view.
-  const panelNoteId = panelNote?.id;
+  const panelNoteId = panelNote?.id ?? (newNotePanel ? "new" : undefined);
   useEffect(() => {
     if (panelNoteId !== undefined && !isWide)
       notePanelRef.current?.scrollIntoView({
@@ -1557,6 +1595,13 @@ export default function ReviewPage() {
       available: cardShown,
     },
     {
+      keys: ["n"],
+      description: newNotePanel
+        ? "Close the new note"
+        : "Write a new note beside the card, with its note's parser and tags",
+      available: cardShown,
+    },
+    {
       keys: ["R"],
       description: "Reload card, e.g. after importing its file again",
       available: cardShown,
@@ -1648,6 +1693,7 @@ export default function ReviewPage() {
   const autoAdvanceWaits =
     !pageFocused ||
     panelNote !== null ||
+    newNotePanel !== null ||
     dueDatePicker !== null ||
     buryUntilPicker !== null ||
     showKeybindings;
@@ -1700,6 +1746,7 @@ export default function ReviewPage() {
       d: buryCardUntilDate,
       s: suspendCard,
       e: toggleCardNote,
+      n: toggleNewNote,
       R: reloadCard,
       f: flagNote,
       a: toggleAutoAdvance,
@@ -1881,8 +1928,29 @@ export default function ReviewPage() {
   );
 
   // On wide screens the editor takes the right half of the screen, and the page the left
-  const splitNote = isWide && panelNote !== null;
-  const notePanel = panelNote && (
+  const splitNote = isWide && (panelNote !== null || newNotePanel !== null);
+  const notePanel = newNotePanel ? (
+    <div
+      ref={notePanelRef}
+      className={splitNote ? "review-note-split" : undefined}
+      style={splitNote ? undefined : { marginTop: 16, scrollMarginTop: 16 }}
+    >
+      <Suspense fallback={<div className="hint">Loading the editor…</div>}>
+        <NewNoteForm
+          ref={newNotePane}
+          start={newNotePanel.start}
+          onCreated={(note, more) => {
+            setStatus(
+              `Note ${formatNoteId(note.id)} created.${more ? " Writing another like it." : ""}`,
+            );
+            if (!more) setNewNotePanel(null);
+          }}
+          onCancel={() => setNewNotePanel(null)}
+        />
+      </Suspense>
+    </div>
+  ) : (
+    panelNote && (
     <div
       ref={notePanelRef}
       className={splitNote ? "review-note-split" : undefined}
@@ -1897,6 +1965,7 @@ export default function ReviewPage() {
         />
       </Suspense>
     </div>
+    )
   );
 
   return (
@@ -2663,6 +2732,13 @@ export default function ReviewPage() {
                 >
                   {panelNote?.id === card.note_id ? "Close Note" : "Edit Note"}
                 </button>
+                <button
+                  onClick={toggleNewNote}
+                  className="touch-target"
+                  style={toned(TONES.blue)}
+                >
+                  {newNotePanel ? "Close New Note" : "New Note"}
+                </button>
                 {/* In the answer bar when there is one */}
                 {!hasAnswerBar && (
                   <button
@@ -2734,6 +2810,12 @@ export default function ReviewPage() {
                         ? "Close Note"
                         : "Edit Note"}{" "}
                       <span className="key-hint">(e)</span>
+                    </button>
+                  )}
+                  {!isNarrow && (
+                    <button onClick={toggleNewNote} style={toned(TONES.blue)}>
+                      {newNotePanel ? "Close New Note" : "New Note"}{" "}
+                      <span className="key-hint">(n)</span>
                     </button>
                   )}
                   <button

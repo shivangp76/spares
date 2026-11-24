@@ -56,6 +56,8 @@ function lines(value: string): string[] {
 /** What a new note starts with, as "New note like this" gives it from another note. */
 export interface NewNoteStart {
   parserId?: number;
+  /** The parser by name, where its id isn't known, as on the Review page. */
+  parserName?: string;
   tags?: string[];
   keywords?: string[];
 }
@@ -132,7 +134,9 @@ export default function NewNoteForm({
       .then((list) => {
         setParsers(list);
         // The remembered parser, unless it was deleted since
-        const remembered = list.find((p) => p.id === initial.parserId);
+        const remembered =
+          list.find((p) => p.id === initial.parserId) ??
+          list.find((p) => p.name === start?.parserName);
         setParserId(remembered?.id ?? list[0]?.id ?? null);
       })
       .catch((e) => setError(errorMessage(e)));
