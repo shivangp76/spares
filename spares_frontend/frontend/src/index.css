@@ -20,6 +20,11 @@
   --selected: light-dark(#f0f4ff, #1f2a44);
   --accent: light-dark(#4a7bd0, #6b9bf0);
   --link: light-dark(#0000ee, #8ab4f8);
+  /* Plain buttons, a faint tint of the accent so they read as buttons beside fields */
+  --button-bg: color-mix(in srgb, var(--accent) 7%, var(--bg));
+  --button-border: color-mix(in srgb, var(--accent) 30%, var(--border));
+  --button-hover-bg: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  --button-hover-border: color-mix(in srgb, var(--accent) 60%, var(--border));
   --link-visited: light-dark(#551a8b, #c58af9);
   --error: light-dark(red, #ff6b6b);
   --danger: light-dark(#b00, #ff7b72);
@@ -139,6 +144,71 @@ a:visited {
 .typst-tools button:hover,
 .typst-tools button:focus-visible {
   opacity: 1;
+}
+
+/* Plain buttons and fields, in the app's colours rather than the browser's. `:where` gives these no
+   specificity, so any class or inline style overrides them. CodeMirror's own panels keep theirs. */
+:where(button:not([class*="cm-"])) {
+  padding: 4px 12px;
+  background: var(--button-bg);
+  border: 1px solid var(--button-border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+
+:where(button:not([class*="cm-"]):hover:not(:disabled)) {
+  background: var(--button-hover-bg);
+  border-color: var(--button-hover-border);
+}
+
+:where(
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):not(
+      .cm-panels *
+    ),
+  select,
+  textarea
+) {
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+:where(input:not(.cm-panels *), textarea)::placeholder {
+  color: var(--text-faint);
+}
+
+:where(
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):not(
+      .cm-panels *
+    ),
+  select,
+  textarea
+):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+/* A field the browser found wrong once it was left or submitted */
+:where(input:not(.cm-panels *), select, textarea):user-invalid {
+  border-color: var(--error);
+}
+
+/* Where the keyboard is, on everything it can reach, since much of the app is used by keys */
+:where(button, a, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Button kinds, so each does what it looks like. The inline padding and font size still set the
@@ -716,27 +786,7 @@ input[type="checkbox"] {
   margin-top: 6px;
   padding: 8px 10px;
   box-sizing: border-box;
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  color: var(--text);
-  font: inherit;
   font-weight: normal;
-}
-
-.login-form input:not([type="checkbox"])::placeholder {
-  color: var(--text-faint);
-}
-
-.login-form input:not([type="checkbox"]):focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  outline-offset: 0;
-  border-color: var(--accent);
-}
-
-/* A field the browser found wrong once it was left or submitted */
-.login-form input:not([type="checkbox"]):user-invalid {
-  border-color: var(--error);
 }
 
 .login-form .field-hint {
