@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { dataChanged, useDataVersion } from "../dataVersion";
 import { useNavigate } from "react-router-dom";
+import { loginPath } from "../login";
 import {
   createParser,
   deleteParser,
@@ -52,7 +53,7 @@ export default function ParsersPage() {
 
   useEffect(() => {
     if (!credentials) {
-      navigate("/login");
+      navigate(loginPath());
       return;
     }
     listParsers(1, PARSERS_LIMIT).then(setParsers, (e) =>

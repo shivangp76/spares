@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import {
   NetworkError,
   getCredentials,
@@ -11,7 +11,7 @@ import {
 } from "../api/client";
 import AuthLayout from "../components/AuthLayout";
 import { LOGIN_DOCS, docUrl } from "../help/pages";
-import { isSameHost } from "../login";
+import { isSameHost, nextPath } from "../login";
 import { errorMessage } from "../utils";
 
 export default function LoginPage() {
@@ -27,15 +27,16 @@ export default function LoginPage() {
   const [policy, setPolicy] = useState<SignupPolicy | null>(null);
   const verified = new URLSearchParams(window.location.search).has("verified");
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
+  // Where a page that needed logging in sent us from
+  const next = nextPath(window.location.search);
+  const [loggedIn] = useState(() => {
     try {
       getCredentials();
-      navigate("/review");
+      return true;
     } catch {
-      // not logged in
+      return false;
     }
-  }, [navigate]);
+  });
 
   // This page's host's: the signup and password-reset pages talk to it, not to the typed one
   useEffect(() => {
@@ -64,7 +65,7 @@ export default function LoginPage() {
           user: session.user,
           schedulerName: name,
         });
-        navigate("/review");
+        navigate(next, { replace: true });
       } else {
         setError(
           `The host has no scheduler named “${name}”. Its schedulers are ${schedulers.join(", ")}.`,
@@ -80,6 +81,8 @@ export default function LoginPage() {
       setChecking(false);
     }
   }
+
+  if (loggedIn) return <Navigate to={next} replace />;
 
   return (
     <AuthLayout

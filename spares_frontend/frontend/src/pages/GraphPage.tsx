@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDataVersion } from "../dataVersion";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { loginPath } from "../login";
 import { ApiError, getNote, getNoteGraph } from "../api/client";
 import { NavbarHelp } from "../components/Navbar";
 import NoteDetail from "../components/NoteDetail";
@@ -376,7 +377,7 @@ export default function GraphPage() {
 
   useEffect(() => {
     if (!credentials) {
-      navigate("/login");
+      navigate(loginPath());
       return;
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the input follows the URL, e.g. on back

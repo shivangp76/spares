@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useDataVersion } from "../dataVersion";
 import { useNavigate } from "react-router-dom";
+import { loginPath } from "../login";
 import {
   advanceCards,
   ApiError,
@@ -1292,7 +1293,7 @@ export default function StatisticsPage() {
 
   useEffect(() => {
     if (!credentials) {
-      navigate("/login");
+      navigate(loginPath());
       return;
     }
     if (!date) return;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { loginPath } from "../login";
 import AccountSettings from "../components/AccountSettings";
 import LocalCopySettings from "../components/LocalCopySettings";
 import VersionSettings from "../components/VersionSettings";
@@ -94,7 +95,7 @@ export default function SettingsPage() {
   const pagesPerRow = usePagesPerRow();
 
   useEffect(() => {
-    if (!credentials) navigate("/login");
+    if (!credentials) navigate(loginPath());
   }, [credentials, navigate]);
 
   return (

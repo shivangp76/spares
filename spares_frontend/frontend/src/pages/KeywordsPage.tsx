@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { loginPath } from "../login";
 import {
   getDuplicateKeywords,
   getNote,
@@ -589,7 +590,7 @@ export default function KeywordsPage() {
   const detail = useDetailView(panelNote !== null, () => setPanelNote(null));
 
   useEffect(() => {
-    if (!credentials) navigate("/login");
+    if (!credentials) navigate(loginPath());
   }, [credentials, navigate]);
 
   async function openNote(id: number) {

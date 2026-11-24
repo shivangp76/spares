@@ -63,6 +63,7 @@ import {
   needsServer,
   usesLocalCopy,
 } from "../local/transport";
+import { loginPath } from "../login";
 import { reportServerReachable } from "./reachability";
 
 const STORAGE_KEY = "spares_credentials";
@@ -324,7 +325,7 @@ async function throwIfNotOk(res: Response, label: string): Promise<void> {
         typeof window !== "undefined" &&
         window.location.pathname !== "/login"
       )
-        window.location.assign("/login");
+        window.location.assign(loginPath());
     }
   } catch {
     // Not JSON, e.g. a request the server rejected before reaching a handler

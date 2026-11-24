@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useDataVersion } from "../dataVersion";
 import { Link, useNavigate } from "react-router-dom";
+import { loginPath } from "../login";
 import {
   listSyncConflicts,
   resolveSyncConflict,
@@ -174,7 +175,7 @@ export default function ConflictsPage() {
 
   useEffect(() => {
     if (!credentials) {
-      navigate("/login");
+      navigate(loginPath());
       return;
     }
     load();

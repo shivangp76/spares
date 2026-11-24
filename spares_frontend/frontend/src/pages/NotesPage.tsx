@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useDataVersion } from "../dataVersion";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { loginPath } from "../login";
 import {
   ApiError,
   cachedNotesPage,
@@ -297,7 +298,7 @@ export default function NotesPage() {
 
   useEffect(() => {
     if (!credentials) {
-      navigate("/login");
+      navigate(loginPath());
       return;
     }
     if (searchQuery !== null || !listBySearch) return;
@@ -346,7 +347,7 @@ export default function NotesPage() {
 
   useEffect(() => {
     if (!credentials) {
-      navigate("/login");
+      navigate(loginPath());
       return;
     }
     if (searchQuery !== null || listBySearch) return;

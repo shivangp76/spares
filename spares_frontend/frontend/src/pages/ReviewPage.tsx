@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { loginPath } from "../login";
 import { onDataChanged } from "../dataVersion";
 import {
   ApiError,
@@ -663,7 +664,7 @@ export default function ReviewPage() {
 
   useEffect(() => {
     if (!credentials) {
-      navigate("/login");
+      navigate(loginPath());
       return;
     }
     getSchedulerRatings(credentials.schedulerName)

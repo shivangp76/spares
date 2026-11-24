@@ -1,5 +1,57 @@
 import { describe, expect, test } from "bun:test";
-import { isSameHost } from "./login";
+import { DEFAULT_AFTER_LOGIN, isSameHost, loginPath, nextPath } from "./login";
+
+const place = (pathname: string, search = "", hash = "") => ({
+  pathname,
+  search,
+  hash,
+});
+
+describe("loginPath", () => {
+  test("returns to the page, with its query and hash", () => {
+    expect(loginPath(place("/cards", "?q=tag:a b", "#x"))).toBe(
+      `/login?next=${encodeURIComponent("/cards?q=tag:a b#x")}`,
+    );
+  });
+
+  test("the root and the login pages themselves return nowhere in particular", () => {
+    for (const p of ["/", "/login", "/signup", "/reset-password"])
+      expect(loginPath(place(p, "?next=/cards"))).toBe("/login");
+  });
+
+  test("round-trips through nextPath", () => {
+    const path = loginPath(place("/notes", "?q=a&b=c%20d", "#n1"));
+    expect(nextPath(path.slice("/login".length))).toBe("/notes?q=a&b=c%20d#n1");
+  });
+});
+
+describe("nextPath", () => {
+  const next = (value: string) =>
+    nextPath(`?${new URLSearchParams({ next: value })}`);
+
+  test("a page of the app", () => {
+    expect(next("/statistics")).toBe("/statistics");
+    expect(next("/manual/concepts#cards")).toBe("/manual/concepts#cards");
+  });
+
+  test("none, or a login page, goes to the review page", () => {
+    expect(nextPath("")).toBe(DEFAULT_AFTER_LOGIN);
+    expect(nextPath("?verified")).toBe(DEFAULT_AFTER_LOGIN);
+    expect(next("/login")).toBe(DEFAULT_AFTER_LOGIN);
+    expect(next("/signup?invite=x")).toBe(DEFAULT_AFTER_LOGIN);
+  });
+
+  test("never another site", () => {
+    for (const v of [
+      "https://evil.example.com/",
+      "//evil.example.com/x",
+      "/\\evil.example.com",
+      "javascript:alert(1)",
+      "cards",
+    ])
+      expect(next(v)).toBe(DEFAULT_AFTER_LOGIN);
+  });
+});
 
 describe("isSameHost", () => {
   const origin = "https://spares.example.com";

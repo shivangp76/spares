@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { dataChanged, useDataVersion } from "../dataVersion";
 import { Link, useNavigate } from "react-router-dom";
+import { loginPath } from "../login";
 import {
   ApiError,
   createTag,
@@ -539,7 +540,7 @@ export default function TagsPage() {
   const dataVersion = useDataVersion();
   useEffect(() => {
     if (!credentials) {
-      navigate("/login");
+      navigate(loginPath());
       return;
     }
     load();

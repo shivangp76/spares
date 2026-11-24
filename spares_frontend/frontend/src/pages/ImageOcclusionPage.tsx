@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { loginPath } from "../login";
 import { listParsers } from "../api/client";
 import ImageOcclusionEditor from "../components/ImageOcclusionEditor";
 import { useAuth } from "../hooks/useAuth";
@@ -31,7 +32,7 @@ export default function ImageOcclusionPage() {
 
   useEffect(() => {
     if (!credentials) {
-      navigate("/login");
+      navigate(loginPath());
       return;
     }
     listParsers(1, PARSERS_LIMIT).then(
