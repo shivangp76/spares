@@ -84,7 +84,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     title: "Review",
     about: [
       "Reviews the cards due today, one at a time: recall what is hidden, show the answer, and rate how well you knew it. The rating decides when the card is next due.",
-      "To review only some of them, enter a query, as on the Cards page, or pick a filtered tag.",
+      "To review only some of them, enter a query, as on the Cards page, or pick a filtered tag. The searches saved on the Notes and Cards pages are listed under the box, to review what one finds in a click.",
       "Bury Card Until After puts a card off until after a date, such as an exam, remembered for the query or tag.",
       "Undo (u) after a rating shows the card again with its answer, to rate it again, e.g. u then 2 for a wrong button.",
       "New Note (n) writes a note beside the card, with its note's parser and tags, e.g. for a gap the card shows. It stays open from card to card until it is created or closed.",

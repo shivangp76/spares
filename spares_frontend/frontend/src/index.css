@@ -488,6 +488,21 @@ button.navbar-link-current {
   font-size: var(--font-sm);
 }
 
+/* The saved searches on the Review page, to start reviewing one */
+.saved-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: var(--font-sm);
+}
+
+.saved-filters button {
+  padding: 6px 10px;
+  font-size: var(--font-sm);
+}
+
 /* What the navbar's last undo, redo or sync did, in a `status-line` of its own */
 .navbar-status {
   flex-basis: 100%;

@@ -65,6 +65,7 @@ import {
 } from "../hooks/useBuryUntilDate";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useRecentSearches } from "../hooks/useRecentSearches";
+import { useSavedSearches } from "../hooks/useSavedSearches";
 import { TYPED_ANSWER_SHORTCUTS, type Keybinding } from "../help/shortcuts";
 import {
   CARD_ZOOMS,
@@ -449,6 +450,8 @@ export default function ReviewPage() {
     undefined,
   );
   const [sessionInfo, setSessionInfo] = useState<string | null>(null);
+  // The searches saved on the Notes and Cards pages, to review the cards they find in one click
+  const savedSearches = useSavedSearches();
   const recentFilters = useRecentSearches<RecentFilter>(
     "spares_review_recent_filters",
     sameFilter,
@@ -2180,6 +2183,24 @@ export default function ReviewPage() {
             onRemove={recentFilters.remove}
             selectTitle="Start reviewing this filter"
           />
+          {savedSearches.saved.length > 0 && (
+            <div className="saved-filters">
+              <span style={{ color: "var(--text-muted)" }}>Saved:</span>
+              {savedSearches.saved.map((search) => (
+                <button
+                  key={search.name}
+                  onClick={() => {
+                    setFilterMode("query");
+                    setFilterInput(search.query);
+                    startReview("query", search.query);
+                  }}
+                  title={`Review the cards due today that ${search.query} finds`}
+                >
+                  {search.name}
+                </button>
+              ))}
+            </div>
+          )}
           {filterMode === "query" && (
             <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
               Queries using <code>limit</code> are saved to a filtered tag once
