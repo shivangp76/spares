@@ -71,11 +71,7 @@ const STORAGE_KEY = "spares_credentials";
 export function getCredentials(): Credentials {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) throw new Error("Not authenticated");
-  const credentials = JSON.parse(raw) as Partial<Credentials>;
-  // Saved before accounts, with an API key instead of a session
-  if (!credentials.serverUrl || !credentials.csrfToken)
-    throw new Error("Not authenticated");
-  return credentials as Credentials;
+  return JSON.parse(raw) as Credentials;
 }
 
 /**
