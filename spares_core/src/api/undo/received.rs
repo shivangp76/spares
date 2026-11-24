@@ -3,7 +3,7 @@
 //!
 //! An event can otherwise be undone also after a sync sent it to the other replicas, as the undo is
 //! a change like any other, which the next sync sends them too. Deleting a review an undo takes
-//! back included, through its grave. The triggers of migration `20261101130000_undo_after_sync`
+//! back included, through its grave. The `sync_received_*` triggers (see the migrations)
 //! record in `sync_received` each note, card, tag and parser that sync writes, with the newest
 //! event then. An event can't be reverted once one of the rows it changed has a record from it on.
 

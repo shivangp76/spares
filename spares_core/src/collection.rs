@@ -56,6 +56,17 @@ pub const DATABASE_FILE_NAME: &str = "collection.sqlite";
 /// The notes repository's directory, in a collection's directory.
 pub const NOTES_REPO_DIR_NAME: &str = "notes.git";
 
+/// The migrations of a collection's database, for a host's collections and a device's copy.
+///
+/// They start from a baseline (`20261124110000_baseline`) that replaced the migrations before it.
+/// A database those made lists them in `_sqlx_migrations`, so this ignores applied migrations it
+/// doesn't have, which sqlx refuses by default.
+pub fn migrator() -> sqlx::migrate::Migrator {
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.set_ignore_missing(true);
+    migrator
+}
+
 /// The directories of a collection (see the [module docs](self)).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CollectionPaths {

@@ -486,244 +486,75 @@ mod tests {
         Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
     }
 
-    /// The `review_log` rebuild in `20260918120000_review_log_kind` drops and recreates the one
-    /// table in this schema that cannot be reconstructed from the note files, so the upgrade path
-    /// is tested against a database that already holds rows rather than only against a fresh one
-    /// (which is all `#[sqlx::test]` ever builds).
-    #[sqlx::test(migrations = false)]
-    async fn migration_review_log_kind_preserves_existing_rows(pool: SqlitePool) {
-        let migrator = Migrator::new(migrator_path()).await.unwrap();
-        // `Migrator::iter()` yields both up and down migrations; only the up side applies here.
-        let base = migrator
-            .iter()
-            .find(|m| m.migration_type.is_up_migration())
-            .expect("base migration exists");
-
-        // Bring the database up to the state a user on the previous release would have.
-        let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table(&migrator.table_name)
+    /// Rows of `_sqlx_migrations` as the migrations before the baseline left them, by version.
+    async fn pretend_old_migrations_ran(pool: &SqlitePool, versions: &[i64]) {
+        sqlx::query("DELETE FROM _sqlx_migrations")
+            .execute(pool)
             .await
             .unwrap();
-        conn.apply(&migrator.table_name, base).await.unwrap();
-
-        sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO note (data, custom_data, parser_id) VALUES ('n', '{}', 1)")
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        sqlx::query(
-            r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
-               desired_retention, state, custom_data) VALUES (1, 1, 1, 100, 5.5, 4.2, 0.9, 2, '{}')"#,
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        for (reviewed_at, rating) in [(1000, 3), (2000, 4)] {
+        for version in versions {
             sqlx::query(
-                r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name,
-                   scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-                   VALUES (1, ?, ?, 'fsrs', 86400, 5, 2, 0, '{}')",
+                "INSERT INTO _sqlx_migrations
+                 (version, description, success, checksum, execution_time)
+                 VALUES (?, 'old', 1, x'00', 0)",
             )
-            .bind(reviewed_at)
-            .bind(rating)
-            .execute(&mut *conn)
+            .bind(version)
+            .execute(pool)
             .await
             .unwrap();
         }
-        // An orphan, i.e. a review of a card that has since been deleted. These are deliberately
-        // kept (`ON DELETE SET NULL`) and must survive the rebuild.
-        sqlx::query(
-            r"INSERT INTO review_log (card_id, reviewed_at, rating, scheduler_name,
-               scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-               VALUES (NULL, 3000, 1, 'fsrs', 600, 9, 4, 2, '{}')",
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        drop(conn);
-
-        // Now apply the rest, which is what a user's next `spares serve` does.
-        migrator.run(&pool).await.unwrap();
-
-        let (count, max_id, orphans, non_review): (i64, i64, i64, i64) = sqlx::query_as(
-            r"SELECT COUNT(*), COALESCE(MAX(id), 0), SUM(card_id IS NULL), SUM(kind != 0)
-              FROM review_log",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(count, 3, "every pre-existing review log row must survive");
-        assert_eq!(
-            max_id, 3,
-            "ids must be preserved: undo payloads reference them"
-        );
-        assert_eq!(orphans, 1, "orphaned rows must survive the rebuild");
-        assert_eq!(
-            non_review, 0,
-            "pre-existing rows must all backfill to kind = Review"
-        );
-
-        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(integrity, "ok");
-        let fk_violations: Vec<(String, i64, String, i64)> =
-            sqlx::query_as("PRAGMA foreign_key_check")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-        assert!(fk_violations.is_empty(), "{:?}", fk_violations);
     }
 
-    /// `20261015130000_review_log_cram` rebuilds `review_log` again, now with sync's `usn`, so it
-    /// is tested like the rebuild above: from a database on the previous migration that holds
-    /// reviews, a forget and an orphan.
+    /// A database the migrations before the baseline made has its schema already: the baseline
+    /// changes nothing there, and the migrations after it run.
     #[sqlx::test(migrations = false)]
-    async fn migration_review_log_cram_preserves_existing_rows(pool: SqlitePool) {
-        const CRAM_MIGRATION: i64 = 20_261_015_130_000;
-        let migrator = Migrator::new(migrator_path()).await.unwrap();
-        let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table(&migrator.table_name)
-            .await
-            .unwrap();
-        for migration in migrator
-            .iter()
-            .filter(|m| m.migration_type.is_up_migration() && m.version < CRAM_MIGRATION)
-        {
-            conn.apply(&migrator.table_name, migration).await.unwrap();
-        }
-        // Orphans, so that no card is needed. The forget was synced (usn 7), the reviews not.
-        sqlx::query(
-            r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name,
-               scheduled_time, recall_duration, rate_duration, previous_state, custom_data, usn)
-               VALUES (1, NULL, 1000, 0, 3, 'fsrs', 86400, 5, 2, 0, '{}', -1),
-                      (2, NULL, 2000, 1, NULL, 'fsrs', NULL, NULL, NULL, 2, '{}', 7),
-                      (3, NULL, 3000, 0, 1, 'fsrs', 600, 9, 4, 0, '{}', -1)",
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        // Before the migration, a cram is rejected
-        let cram = r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name,
-               scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-               VALUES (?, NULL, 4000, 16, ?, 'fsrs', NULL, 5, 2, 2, '{}')";
-        assert!(
-            sqlx::query(cram)
-                .bind(4)
-                .bind(3)
-                .execute(&mut *conn)
-                .await
-                .is_err()
-        );
-        drop(conn);
-
+    async fn migration_baseline_accepts_a_database_the_old_migrations_made(pool: SqlitePool) {
+        let migrator = crate::collection::migrator();
         migrator.run(&pool).await.unwrap();
-
-        let rows: Vec<(i64, i64, Option<i64>, i64)> =
-            sqlx::query_as(r"SELECT id, kind, rating, usn FROM review_log ORDER BY id")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            rows,
-            [(1, 0, Some(3), -1), (2, 1, None, 7), (3, 0, Some(1), -1)],
-            "every row survives with its id, kind and usn"
-        );
-        sqlx::query(cram)
-            .bind(4)
-            .bind(3)
+        sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
             .execute(&pool)
             .await
-            .expect("a cram with a rating is allowed");
-        assert!(
-            sqlx::query(cram)
-                .bind(5)
-                .bind(None::<i64>)
-                .execute(&pool)
-                .await
-                .is_err(),
-            "a cram without a rating is not"
-        );
-        // Later migrations add indexes of their own
-        let indexes: i64 = sqlx::query_scalar(
-            r"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'review_log'
-              AND name IN ('idx_review_log_card_id_reviewed_at', 'idx_review_log_reviewed_at',
-                           'idx_review_log_tag_id', 'idx_review_log_usn')",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(indexes, 4, "the indexes are recreated");
-        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
-            .fetch_one(&pool)
-            .await
             .unwrap();
-        assert_eq!(integrity, "ok");
-    }
-
-    /// `20261016120000_review_log_previous_interval` fills each review's previous interval from
-    /// the reviews already there: the previous Review of the same card, by time and then id,
-    /// skipping crams, forgets and other cards.
-    #[sqlx::test(migrations = false)]
-    async fn migration_review_log_previous_interval_fills_existing_rows(pool: SqlitePool) {
-        const MIGRATION: i64 = 20_261_016_120_000;
-        let migrator = Migrator::new(migrator_path()).await.unwrap();
-        let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table(&migrator.table_name)
-            .await
-            .unwrap();
-        for migration in migrator
-            .iter()
-            .filter(|m| m.migration_type.is_up_migration() && m.version < MIGRATION)
-        {
-            conn.apply(&migrator.table_name, migration).await.unwrap();
-        }
-        sqlx::query("PRAGMA foreign_keys = OFF")
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        // Card 1: reviews at 3000, 1000 and 2000 (inserted out of order), a cram at 2500 and two
-        // reviews at the same second, 4000. Card 2: one review. An orphan.
-        sqlx::query(
-            r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name,
-               scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-               VALUES (1, 1, 3000, 0, 3, 'fsrs', 30, 1, 1, 2, '{}'),
-                      (2, 1, 1000, 0, 3, 'fsrs', 10, 1, 1, 0, '{}'),
-                      (3, 1, 2000, 0, 3, 'fsrs', 20, 1, 1, 2, '{}'),
-                      (4, 1, 2500, 16, 3, 'fsrs', NULL, 1, 1, 2, '{}'),
-                      (5, 2, 1500, 0, 3, 'fsrs', 15, 1, 1, 0, '{}'),
-                      (6, NULL, 3500, 0, 3, 'fsrs', 35, 1, 1, 2, '{}'),
-                      (7, 1, 4000, 0, 3, 'fsrs', 40, 1, 1, 2, '{}'),
-                      (8, 1, 4000, 0, 3, 'fsrs', 41, 1, 1, 2, '{}')",
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        drop(conn);
+        pretend_old_migrations_ran(&pool, &[20_240_326_145_400, 20_261_104_130_000]).await;
 
         migrator.run(&pool).await.unwrap();
 
-        let rows: Vec<(i64, Option<i64>)> =
-            sqlx::query_as(r"SELECT id, previous_interval FROM review_log ORDER BY id")
+        let parsers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parser")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(parsers, 1);
+        let applied: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
         assert_eq!(
-            rows,
+            applied,
             [
-                (1, Some(20)),
-                (2, None),
-                (3, Some(10)),
-                (4, None),
-                (5, None),
-                (6, None),
-                (7, Some(30)),
-                (8, Some(40)),
+                20_240_326_145_400,
+                20_261_104_130_000,
+                20_261_124_110_000,
+                20_261_124_120_000
             ]
+        );
+    }
+
+    /// The baseline refuses a database that stopped partway through the migrations it replaced,
+    /// which it would otherwise leave without their last changes.
+    #[sqlx::test(migrations = false)]
+    async fn migration_baseline_refuses_a_database_partway_through_the_old_migrations(
+        pool: SqlitePool,
+    ) {
+        let migrator = crate::collection::migrator();
+        migrator.run(&pool).await.unwrap();
+        pretend_old_migrations_ran(&pool, &[20_240_326_145_400, 20_261_015_130_000]).await;
+
+        let err = migrator.run(&pool).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("open_this_collection_with_a_spares_from_before_2026_11_24_first"),
+            "{err}"
         );
     }
 

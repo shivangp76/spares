@@ -1,5 +1,5 @@
-//! Tests of the change-tracking triggers in migration `20261014130000_sync` (and
-//! `20261017140000_saved_search_sync` for saved searches).
+//! Tests of the change-tracking triggers (see "Change tracking" in [`super`]), which the baseline
+//! migration creates.
 
 use chrono::Utc;
 use serde_json::Map;

@@ -470,7 +470,7 @@ pub async fn open_collection(
                 paths.database().display()
             ))
         })?;
-    sqlx::migrate!("../spares_core/migrations")
+    spares_core::collection::migrator()
         .run(&db)
         .await
         .map_err(|e| {

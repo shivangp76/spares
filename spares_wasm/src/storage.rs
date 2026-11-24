@@ -128,7 +128,7 @@ pub(crate) async fn open() -> Result<Opened, JsValue> {
             .map_err(sqlx_error)?;
     }
     let db = connect(DB_FILE).await?;
-    sqlx::migrate!("../spares_core/migrations")
+    spares_core::collection::migrator()
         .run(&db)
         .await
         .map_err(|e| js_error(&format!("failed to migrate the copy: {e}")))?;

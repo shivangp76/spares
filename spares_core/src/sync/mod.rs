@@ -44,17 +44,16 @@
 //!
 //! # Change tracking
 //!
-//! Migration `20261014130000_sync` adds:
+//! The migrations (`spares_core/migrations`) add:
 //!
-//! - **`usn`** on `parser`, `tag`, `note`, `card`, `review_log` and (since
-//!   `20261017140000_saved_search_sync`) `saved_search`, defaulting to `-1` (changed and not yet
-//!   synced), so new rows are dirty without a trigger. A client marks the rows it is pushing `-2`
+//! - **`usn`** on `parser`, `tag`, `note`, `card`, `review_log` and `saved_search`, defaulting to
+//!   `-1` (changed and not yet synced), so new rows are dirty without a trigger. A client marks the rows it is pushing `-2`
 //!   (see [`run`]); they count as dirty too.
 //! - **`grave(oid, kind, usn)`**: ids deleted here and not synced yet. Without it, "deleted over
 //!   there" looks the same as "never synced", and the deleted row would come back. Soft deletes
 //!   would mean `deleted_at IS NULL` in every query. Inserting a row under an id with a grave (undo
-//!   of a delete) removes the grave. Since `20261101130000_undo_after_sync`, review logs have
-//!   graves too, as an undo deletes the review it takes back; nothing else deletes one.
+//!   of a delete) removes the grave. Review logs have graves too, as an undo deletes the review it
+//!   takes back; nothing else deletes one.
 //! - **`sync_received(kind, oid, event_id)`**: each note, card, tag and parser sync wrote with
 //!   a change, and the newest event then, which undo checks (see [`crate::api::undo`]).
 //! - **`sync_base(kind, oid, snapshot)`**: a row's last synced version, saved on its first change
