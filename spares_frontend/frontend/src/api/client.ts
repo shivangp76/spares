@@ -1469,10 +1469,6 @@ export async function listTags(
   return apiFetch("Tags fetch", `/api/tags?${pageQuery(page, limit)}`);
 }
 
-export async function getTag(id: number): Promise<TagResponse> {
-  return apiFetch("Tag fetch", `/api/tags/${id}`);
-}
-
 export async function createTag(req: CreateTagRequest): Promise<TagResponse> {
   return apiFetch("Create tag", "/api/tags", {
     method: "POST",
@@ -1594,30 +1590,6 @@ export async function getNoteLinks(
     method: "POST",
     body: JSON.stringify({ score_threshold: scoreThreshold }),
   });
-}
-
-// What browsers without a copy of the collection kept to review offline, before a device's copy
-// replaced it: the downloaded queues, the ratings waiting to be sent and the statistics last
-// shown (IndexedDB), the files those cards showed (Cache Storage), and responses such as the
-// ratings (localStorage). Dropped once.
-const RETIRED_OFFLINE_KEY = "spares_offline_retired";
-if (localStorage.getItem(RETIRED_OFFLINE_KEY) === null) {
-  (async () => {
-    for (const key of Object.keys(localStorage)) {
-      if (
-        key.startsWith("spares_offline_copy:") ||
-        key === "spares_offline_format"
-      )
-        localStorage.removeItem(key);
-    }
-    if (typeof caches !== "undefined") {
-      await caches.delete("spares-offline-files");
-      await caches.delete("spares-offline-render-assets");
-    }
-    if (typeof indexedDB !== "undefined")
-      indexedDB.deleteDatabase("spares-offline");
-    localStorage.setItem(RETIRED_OFFLINE_KEY, "1");
-  })().catch(console.error);
 }
 
 /** Who can create an account on the host, and whether it sends email (for password resets). */

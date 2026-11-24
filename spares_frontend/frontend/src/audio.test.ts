@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { audioItemLabel, audioLinkPath, audioMimeType, clipPaths, isAudioPath, pickVoice, withoutSpeech } from './audio';
+import { audioItemLabel, audioLinkPath, audioMimeType, isAudioPath, pickVoice, withoutSpeech } from './audio';
 
 test('isAudioPath', () => {
   for (const path of ['/a/b.mp3', 'c.M4A', 'd.ogg', 'e.opus', 'f.wav', 'g.flac']) expect(isAudioPath(path)).toBe(true);
@@ -16,7 +16,6 @@ test('audioLinkPath', () => {
 
 test('speech items', () => {
   const speech = { text: 'bonjour', lang: 'fr_FR' };
-  expect(clipPaths(['/m/a.mp3', speech])).toEqual(['/m/a.mp3']);
   expect(audioItemLabel(speech)).toBe('bonjour');
   expect(audioItemLabel('/m/a.mp3')).toBe('a.mp3');
   expect(audioItemLabel({ text: 'x'.repeat(40) })).toBe(`${'x'.repeat(29)}…`);

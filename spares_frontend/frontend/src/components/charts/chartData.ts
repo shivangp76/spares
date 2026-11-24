@@ -95,10 +95,5 @@ export function formatValue(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
 
-/** A histogram bucket's label, e.g. `10–20`. */
-export function bucketLabel(edges: number[], index: number): string {
-  return `${formatValue(edges[index])}–${formatValue(edges[index + 1])}`;
-}
-
 /** The hours of the day as axis labels, `00` to `23`. */
 export const HOUR_LABELS = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0'));

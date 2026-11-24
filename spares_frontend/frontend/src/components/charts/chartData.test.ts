@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { bucketLabel, cumulative, daysBetween, fillDays, mergeColumns, niceMax, percent, toSeries, totals } from './chartData';
+import { cumulative, daysBetween, fillDays, mergeColumns, niceMax, percent, toSeries, totals } from './chartData';
 
 test('daysBetween includes both ends and crosses months', () => {
   expect(daysBetween('2026-10-30', '2026-11-02')).toEqual(['2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02']);
@@ -55,7 +55,3 @@ test('percent rounds, and has a dash for nothing', () => {
   expect(percent(0, 0)).toBe('–');
 });
 
-test('bucketLabel spans the edges', () => {
-  expect(bucketLabel([0, 5, 10], 1)).toBe('5–10');
-  expect(bucketLabel([0, 0.25, 0.5], 0)).toBe('0–0.3');
-});

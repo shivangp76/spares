@@ -52,11 +52,6 @@ export function isSpeech(item: AudioItem): item is SpeechItem {
   return typeof item !== 'string';
 }
 
-/** The audio clips among `items`, e.g. to download them. */
-export function clipPaths(items: AudioItem[]): string[] {
-  return items.filter((item): item is string => !isSpeech(item));
-}
-
 /** Tells items apart, e.g. to show which is playing. */
 export function audioItemKey(item: AudioItem): string {
   return isSpeech(item) ? `speech:${item.lang ?? ''}:${item.text}` : item;
