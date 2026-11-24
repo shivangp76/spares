@@ -11,6 +11,7 @@ import {
 } from "../api/client";
 import AuthLayout from "../components/AuthLayout";
 import { LOGIN_DOCS, docUrl } from "../help/pages";
+import { isSameHost } from "../login";
 import { errorMessage } from "../utils";
 
 export default function LoginPage() {
@@ -36,11 +37,13 @@ export default function LoginPage() {
     }
   }, [navigate]);
 
+  // This page's host's: the signup and password-reset pages talk to it, not to the typed one
   useEffect(() => {
     getSignupPolicy(window.location.origin).then(setPolicy, () =>
       setPolicy(null),
     );
   }, []);
+  const thisHost = isSameHost(serverUrl, window.location.origin);
 
   /** Logs in, then checks the scheduler with the host before saving the session. */
   async function handleSubmit(e: React.FormEvent) {
@@ -84,10 +87,10 @@ export default function LoginPage() {
       error={error}
       links={
         <>
-          {policy && policy.signups !== "closed" && (
+          {thisHost && policy && policy.signups !== "closed" && (
             <Link to="/signup">Create an account</Link>
           )}
-          {policy?.email && (
+          {thisHost && policy?.email && (
             <Link to="/reset-password">Forgot your password?</Link>
           )}
           <Link to={docUrl(LOGIN_DOCS)}>{LOGIN_DOCS.label}</Link>
