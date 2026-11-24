@@ -3,7 +3,7 @@ import { Vim, type CodeMirrorV } from '@replit/codemirror-vim';
 
 /** Ex commands for the note panes (`NoteDetail` and `NewNoteForm`), typed in any of a pane's
     editors with Vim keybindings on. Listed in the help popup as `NOTE_EDITOR_SHORTCUTS`. */
-export type VimPaneCommand = 'write' | 'quit' | 'writeQuit' | 'exit' | 'edit';
+export type VimPaneCommand = 'write' | 'quit' | 'writeQuit' | 'exit' | 'edit' | 'writeNext';
 
 export interface VimPaneCommandEvent {
   command: VimPaneCommand;
@@ -47,6 +47,8 @@ defineCommand('wq', 'wq', 'writeQuit');
 defineCommand('xit', 'x', 'exit');
 // Only as `:e!`, to reload the note as last saved
 defineCommand('edit', 'e', 'edit');
+// As Vim's `:wnext` writes and moves on: creates the new note and starts another (Create and New)
+defineCommand('wnext', 'wn', 'writeNext');
 
 /** Handles the ex commands typed in the editors within `rootRef`. */
 export function useVimCommands(rootRef: RefObject<HTMLElement | null>, handle: (event: VimPaneCommandEvent) => void) {

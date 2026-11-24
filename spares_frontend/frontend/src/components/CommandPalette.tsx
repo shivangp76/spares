@@ -12,7 +12,8 @@ import { NAV_LINKS } from "../navLinks";
 /**
  * Ctrl+K (Cmd+K on a Mac), from any page: what is typed opens a note by its id, searches notes or
  * cards, starts a review or shows the graph, and the list below goes to a page, runs an action or a
- * saved search. ↑ and ↓ pick, Enter runs, Esc closes. Opened by the navbar, which gives it the
+ * saved search. ↑ and ↓ pick, as do Ctrl+J and Ctrl+K or Ctrl+N and Ctrl+P as in Vim, Enter runs,
+ * Esc closes. Opened by the navbar, which gives it the
  * actions only it can do.
  */
 export default function CommandPalette({
@@ -180,10 +181,16 @@ export default function CommandPalette({
           setActive(0);
         }}
         onKeyDown={(e) => {
-          if (e.key === "ArrowDown") {
+          // Vim's keys for a completion list, besides the arrows
+          const ctrl = e.ctrlKey || e.metaKey;
+          const down =
+            e.key === "ArrowDown" || (ctrl && (e.key === "j" || e.key === "n"));
+          const up =
+            e.key === "ArrowUp" || (ctrl && (e.key === "k" || e.key === "p"));
+          if (down) {
             e.preventDefault();
             setActive(Math.min(shown + 1, commands.length - 1));
-          } else if (e.key === "ArrowUp") {
+          } else if (up) {
             e.preventDefault();
             setActive(Math.max(shown - 1, 0));
           } else if (e.key === "Enter") {

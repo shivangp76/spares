@@ -200,7 +200,7 @@ export default function NewNoteForm({
       if (force || !unsaved) onCancel();
       else warn(NO_WRITE_WARNING);
     } else if (!saving) {
-      void create(false);
+      void create(command === "writeNext");
     }
   });
 

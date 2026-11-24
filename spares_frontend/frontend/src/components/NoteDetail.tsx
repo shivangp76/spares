@@ -265,6 +265,10 @@ export default function NoteDetail({
       else warn(NO_WRITE_WARNING);
       return;
     }
+    if (command === "writeNext") {
+      warn("E492: :wn is for a new note, to create it and start another");
+      return;
+    }
     if (saveStatus === "saving") return;
     if (command === "write") void handleSave();
     // `:x` only saves if there is something to save, as in Vim

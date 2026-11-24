@@ -43,6 +43,7 @@ export const NOTE_EDITOR_SHORTCUTS: Shortcut[] = [
   { keys: [':q'], description: 'Close the note, unless it has unsaved changes' },
   { keys: [':q!'], description: 'Close the note, dropping its unsaved changes' },
   { keys: [':wq', ':x'], description: 'Save and close the note' },
+  { keys: [':wn'], description: 'Create the new note and start another with the same parser and tags' },
   { keys: [':e!'], description: 'Undo the changes made since the note was last saved (or clear the new note)' },
 ];
 

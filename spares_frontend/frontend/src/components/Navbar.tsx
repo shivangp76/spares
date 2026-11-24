@@ -92,7 +92,8 @@ export default function Navbar({
   const [paletteOpen, setPaletteOpen] = useState(false);
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (keyName(e) !== "Ctrl+k") return;
+      // Left to the palette once open, where Ctrl+K moves up its list, and to other popups
+      if (keyName(e) !== "Ctrl+k" || dialogOpen()) return;
       e.preventDefault();
       e.stopPropagation();
       setPaletteOpen(true);
