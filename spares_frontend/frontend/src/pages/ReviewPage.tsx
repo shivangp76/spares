@@ -309,6 +309,16 @@ function queryHasLimit(query: string): boolean {
   return /(^|[\s(])limit\s*=/.test(query);
 }
 
+/** A card as it was when it was rated, to show again at once if the rating is undone. */
+interface RatedCard {
+  card: GetReviewCardResponse;
+  /** The rating's event */
+  eventId: number;
+  recallMs: number;
+  rateMs: number;
+  typedAnswers: string[];
+}
+
 /** How long typing in the filter pauses before the next card for it is compiled. */
 const PRECOMPILE_DELAY_MS = 500;
 
@@ -523,6 +533,17 @@ export default function ReviewPage() {
 
   const lastEventId = useRef<number | null>(null);
   const lastActionWasRating = useRef(false);
+  // The card rated last, while its rating is `lastEventId`, so that undoing the rating shows it again
+  // at once
+  const ratedCard = useRef<RatedCard | null>(null);
+  // An undo sent in the background, resolving to whether it went through. Actions wait for it, so
+  // that they don't act on what it hasn't reverted yet.
+  const pendingUndo = useRef<Promise<boolean> | null>(null);
+  // A rating being sent, while its card is still shown
+  const pendingRating = useRef<Promise<void> | null>(null);
+  // Bumped by each card load, and by showing a card without one, so that an earlier load still
+  // under way doesn't replace the card shown
+  const loadGeneration = useRef(0);
   // The filter as entered, so the date to bury cards until is read again for each session
   const [sessionKey, setSessionKey] = useState(() => filterKey("query", ""));
   const [buryUntil, setBuryUntil] = useBuryUntilDate(sessionKey);
@@ -531,6 +552,8 @@ export default function ReviewPage() {
     eventId: number;
     wasRating: boolean;
     ratedCardId: number | null;
+    // The undone rating's card, to undo its redo at once
+    rated: RatedCard | null;
   } | null>(null);
   // The card rated last, for Previous Card Info. `version` is bumped on every rating so the panel
   // refetches even when the same card comes back, e.g. during relearning.
@@ -553,6 +576,7 @@ export default function ReviewPage() {
 
   const loadCard = useCallback(
     async (filter: ReviewFilter | undefined) => {
+      const generation = ++loadGeneration.current;
       setPhase("loading");
       setFrontRendered(false);
       setTypedAnswers([]);
@@ -562,8 +586,10 @@ export default function ReviewPage() {
       setBuryUntilPicker(null);
       try {
         const next = await postReview(filter);
+        if (generation !== loadGeneration.current) return;
         if (!next) {
           const availableAt = await nextReviewAvailableAt(filter);
+          if (generation !== loadGeneration.current) return;
           if (availableAt) {
             setCard(null);
             setWaitingUntil(Date.parse(availableAt));
@@ -585,6 +611,7 @@ export default function ReviewPage() {
         syncStopwatch();
         setPhase("front");
       } catch (e) {
+        if (generation !== loadGeneration.current) return;
         setError(errorMessage(e));
         if (filter && "Query" in filter && e instanceof ApiError && e.span) {
           setQueryError({ query: filter.Query, span: e.span });
@@ -762,6 +789,7 @@ export default function ReviewPage() {
     setSummaryFade("shown");
     lastEventId.current = null;
     lastActionWasRating.current = false;
+    ratedCard.current = null;
     setLastUndo(null);
     loadCard(filter);
   }
@@ -795,10 +823,24 @@ export default function ReviewPage() {
   }
 
   async function rate(ratingId: number) {
+    // One at a time, e.g. if a rating's key is pressed twice
+    if (pendingRating.current) return;
+    const rating = rateNow(ratingId);
+    pendingRating.current = rating;
+    try {
+      await rating;
+    } finally {
+      if (pendingRating.current === rating) pendingRating.current = null;
+    }
+  }
+
+  async function rateNow(ratingId: number) {
     if (!card || !credentials || recallDuration.current === null) return;
     const rateMs = rateDuration.current ?? Date.now() - rateStart.current;
-    const recallSeconds = msToSeconds(recallDuration.current);
+    const recallMs = recallDuration.current;
+    const recallSeconds = msToSeconds(recallMs);
     const rateSeconds = msToSeconds(rateMs);
+    if (!(await undoWentThrough())) return;
     try {
       const res = await submitAction({
         scheduler_name: credentials.schedulerName,
@@ -816,6 +858,16 @@ export default function ReviewPage() {
       setReviewedCount((c) => c + 1);
       lastEventId.current = res.event_id;
       lastActionWasRating.current = true;
+      ratedCard.current =
+        res.event_id === null
+          ? null
+          : {
+              card,
+              eventId: res.event_id,
+              recallMs,
+              rateMs,
+              typedAnswers,
+            };
       setLastUndo(null);
       const ratedCardId = card.card_id;
       setPreviousCard((prev) => ({
@@ -857,6 +909,7 @@ export default function ReviewPage() {
     message?: string,
   ) {
     if (!card) return;
+    if (!(await undoWentThrough())) return;
     try {
       lastEventId.current = await action();
       lastActionWasRating.current = false;
@@ -1009,6 +1062,7 @@ export default function ReviewPage() {
 
   async function flagNote() {
     if (!card || !config) return;
+    if (!(await undoWentThrough())) return;
     try {
       lastEventId.current = await tagNote(
         card.note_id,
@@ -1023,6 +1077,18 @@ export default function ReviewPage() {
   }
 
   async function undo() {
+    if (pendingRating.current) {
+      // Pressed while the card is being rated: undo the rating, not the flip, once it is recorded
+      await pendingRating.current;
+      const rated = ratedCard.current;
+      if (
+        lastActionWasRating.current &&
+        rated &&
+        rated.eventId === lastEventId.current
+      )
+        undoRatingAtOnce(rated);
+      return;
+    }
     if (phase === "back") {
       // Undo the flip: discard the recorded recall duration and restart the recall timer
       if (recallDuration.current !== null) {
@@ -1036,6 +1102,16 @@ export default function ReviewPage() {
       setPhase("front");
       return;
     }
+    const rated = ratedCard.current;
+    if (
+      lastActionWasRating.current &&
+      rated &&
+      rated.eventId === lastEventId.current
+    ) {
+      undoRatingAtOnce(rated);
+      return;
+    }
+    if (!(await undoWentThrough())) return;
     try {
       // Use the tracked event id so syncs from elsewhere don't cause the wrong event to be undone
       const res = await undoEvent(lastEventId.current);
@@ -1056,6 +1132,7 @@ export default function ReviewPage() {
               eventId: undoId,
               wasRating: lastActionWasRating.current,
               ratedCardId,
+              rated: null,
             },
       );
       if (lastActionWasRating.current) {
@@ -1069,6 +1146,78 @@ export default function ReviewPage() {
     } catch (e) {
       setStatus(errorMessage(e));
     }
+  }
+
+  /** Waits for an undo sent in the background. False if it failed, after which the review shows its next card again. */
+  async function undoWentThrough(): Promise<boolean> {
+    return (await pendingUndo.current) ?? true;
+  }
+
+  /**
+   * Undoes the rating of `rated`, the card rated last, showing it again on its back at once with
+   * the recall time it had, to rate it again, while the undo is sent. Without waiting for the
+   * server, or for the next card's load, which this drops.
+   */
+  function undoRatingAtOnce(rated: RatedCard) {
+    loadGeneration.current += 1;
+    ratedCard.current = null;
+    lastEventId.current = null;
+    lastActionWasRating.current = false;
+    setLastUndo(null);
+    setReviewedCount((c) => Math.max(0, c - 1));
+    setSessionRateMs((ms) => Math.max(0, ms - rated.rateMs));
+    // The rated card is back on screen, and the one rated before it isn't tracked
+    setPreviousCard(null);
+    timebox.current.cards = Math.max(0, timebox.current.cards - 1);
+    setTimeboxOver(null);
+    setSessionEnd(null);
+    setPanelNote(null);
+    setKeywordResults(null);
+    setDueDatePicker(null);
+    setBuryUntilPicker(null);
+    setUnmaskedCard(null);
+    setFrontRendered(false);
+    setCard(rated.card);
+    setTypedAnswers(rated.typedAnswers);
+    recallDuration.current = rated.recallMs;
+    rateStart.current = Date.now();
+    rateDuration.current = null;
+    syncStopwatch();
+    setPhase("back");
+    setStatus("Undoing the rating…");
+    const undone = (async () => {
+      try {
+        const res = await undoEvent(rated.eventId);
+        if (res) {
+          setStatus(describeReverted("Undone", res.undone_events));
+          const undoId = res.undo_event_ids[0];
+          if (undoId !== undefined)
+            setLastUndo({
+              eventId: undoId,
+              wasRating: true,
+              ratedCardId: rated.card.card_id,
+              rated,
+            });
+          return true;
+        }
+        setStatus("No event to undo.");
+      } catch (e) {
+        setStatus(errorMessage(e));
+        // The rating stands
+        lastEventId.current = rated.eventId;
+        lastActionWasRating.current = true;
+        ratedCard.current = rated;
+        setReviewedCount((c) => c + 1);
+        setSessionRateMs((ms) => ms + rated.rateMs);
+      }
+      // Show what the review shows next, rather than a card that may not be due any more
+      loadCard(activeFilter);
+      return false;
+    })();
+    pendingUndo.current = undone;
+    undone.then(() => {
+      if (pendingUndo.current === undone) pendingUndo.current = null;
+    });
   }
 
   async function redo() {
@@ -1088,6 +1237,11 @@ export default function ReviewPage() {
       lastEventId.current = res.redo_event_ids[0] ?? null;
       lastActionWasRating.current = lastUndo.wasRating;
       if (lastUndo.wasRating) setReviewedCount((c) => c + 1);
+      const { rated } = lastUndo;
+      const redoId = res.redo_event_ids[0];
+      ratedCard.current =
+        rated && redoId !== undefined ? { ...rated, eventId: redoId } : null;
+      if (rated) setSessionRateMs((ms) => ms + rated.rateMs);
       const redoneCardId = lastUndo.ratedCardId;
       if (redoneCardId !== null)
         setPreviousCard((prev) => ({
@@ -1368,7 +1522,10 @@ export default function ReviewPage() {
     })),
     {
       keys: ["u"],
-      description: phase === "back" ? "Undo (hide the answer)" : "Undo",
+      description:
+        phase === "back"
+          ? "Undo (hide the answer)"
+          : "Undo (a rating shows its card's answer again)",
       available: reviewing,
     },
     {
@@ -1537,6 +1694,19 @@ export default function ReviewPage() {
       }
       // The popup covers the card, so nothing should change behind it
       if (showKeybindings) return;
+      // Undoing a rating brings its card back without waiting for the next card to show
+      if (
+        e.key === "u" &&
+        (phase === "loading" ||
+          phase === "waiting" ||
+          phase === "timebox" ||
+          phase === "done") &&
+        lastActionWasRating.current &&
+        ratedCard.current?.eventId === lastEventId.current
+      ) {
+        undo();
+        return;
+      }
       if (phase === "timebox") {
         if (e.code === "Space" || e.key === "Enter") {
           e.preventDefault();

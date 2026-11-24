@@ -285,9 +285,13 @@ export function warmUpTypst(): Promise<void> {
   });
 }
 
-/** Results compiled ahead of being shown, by source and inputs. Only the latest few are kept. */
+/**
+ * Results compiled ahead of being shown, by source and inputs. Only the latest few are kept: the
+ * sides of the card shown, the next one, and the one rated before, which undoing its rating shows
+ * again.
+ */
 const precompiled = new Map<string, Promise<string>>();
-const MAX_PRECOMPILED = 4;
+const MAX_PRECOMPILED = 6;
 
 const resultKey = (source: string, inputs: Record<string, string>) =>
   JSON.stringify([source, inputs]);
