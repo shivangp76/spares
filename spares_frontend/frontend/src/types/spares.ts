@@ -32,8 +32,8 @@ export interface GetReviewCardResponse {
   keywords: string[];
   // In name order
   tags: string[];
-  // The card's own tags, which its note doesn't have, in name order. Absent from older servers.
-  card_tags?: string[];
+  // The card's own tags, which its note doesn't have, in name order
+  card_tags: string[];
   // Present iff the card is reviewed by running an external command (CLI only)
   cli?: CliReviewInfo;
   // Present iff the parser's sources are compiled in the browser (Typst)
@@ -215,10 +215,10 @@ export interface ReviewSnapshotResponse {
 export interface ReviewConfig {
   flagged_tag_name: string;
   set_card_due_date_duration: number; // seconds
-  // How long a timebox lasts, in seconds (`queue.timebox`). Missing from older servers.
-  timebox?: number | null;
-  // `queue.auto_advance`. Missing from older servers.
-  auto_advance?: AutoAdvance | null;
+  // How long a timebox lasts, in seconds (`queue.timebox`)
+  timebox: number | null;
+  // `queue.auto_advance`
+  auto_advance: AutoAdvance | null;
 }
 
 /** `[queue.auto_advance]`: when review shows the answer and acts on its own. */
@@ -611,8 +611,8 @@ export interface ReviewHistoryResponse {
   // Likewise for crams, which the heatmap adds to the reviews
   cram_count_by_date: Record<string, number>;
   // The day under way as the counts tell days apart, `YYYY-MM-DD`: before the hour days start at
-  // (`day_starts_at`, 4 AM by default), the date before the calendar's. Missing from older servers.
-  today?: string | null;
+  // (`day_starts_at`, 4 AM by default), the date before the calendar's
+  today: string;
 }
 
 export interface NoteResponse {
@@ -825,8 +825,8 @@ export interface CardMatch {
   note_preview: string;
   /** Its note's tags, leaving out filtered tags */
   note_tags: string[];
-  /** Its own tags, which its note doesn't have. Absent from older servers. */
-  card_tags?: string[];
+  /** Its own tags, which its note doesn't have */
+  card_tags: string[];
   stats: CardStats;
 }
 

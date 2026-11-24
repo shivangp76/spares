@@ -207,7 +207,7 @@ pub async fn get_review_history(
     let mut response = ReviewHistoryResponse {
         review_count_by_date: HashMap::new(),
         cram_count_by_date: HashMap::new(),
-        today: Some(zone.date(Utc::now())),
+        today: zone.date(Utc::now()),
     };
     for (day, kind, count) in rows {
         let counts = match kind {

@@ -144,7 +144,7 @@ export default function ReviewHeatmap({
 }: {
   counts: Record<string, number>;
   cramCounts: Record<string, number>;
-  today?: string | null;
+  today: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Cell | null>(null);
@@ -154,7 +154,7 @@ export default function ReviewHeatmap({
   const [viewWidth, setViewWidth] = useState(0);
   // Just enough future weeks to center today, so centered is as far forward as the grid scrolls
   const futureWeeks = Math.ceil(viewWidth / 2 / STEP);
-  const todayKey = serverToday ?? dateKey(new Date());
+  const todayKey = serverToday;
 
   const counts = useMemo(() => addCounts(reviewCounts, cramCounts), [reviewCounts, cramCounts]);
   const cramTotal = useMemo(() => Object.values(cramCounts).reduce((sum, n) => sum + n, 0), [cramCounts]);

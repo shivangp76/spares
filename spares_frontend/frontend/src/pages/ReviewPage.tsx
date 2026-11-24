@@ -2492,7 +2492,7 @@ export default function ReviewPage() {
           {/* Shown here, as the rendered card leaves them out. Each on its own line. */}
           {(card.keywords.length > 0 ||
             card.tags.length > 0 ||
-            (card.card_tags?.length ?? 0) > 0) && (
+            card.card_tags.length > 0) && (
             <div
               style={{
                 marginTop: -4,

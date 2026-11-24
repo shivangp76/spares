@@ -78,7 +78,7 @@ function ServerSyncButton({ onStatus }: { onStatus: OnStatus }) {
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
-    // Older servers and offline clients have no status; the button just stays hidden
+    // Offline, there is no status, and the button stays hidden
     getSyncStatus().then(setStatus, () => setStatus(null));
   }, []);
 

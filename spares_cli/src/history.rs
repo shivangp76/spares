@@ -3,7 +3,6 @@ use std::fmt::Write;
 
 use chrono::Datelike;
 use chrono::Days;
-use chrono::Local;
 use chrono::NaiveDate;
 use colored::Colorize;
 use miette::Error;
@@ -53,7 +52,7 @@ pub(crate) async fn print_history(
     let weeks = weeks.unwrap_or_else(default_weeks).max(1);
     // The host's day under way, which until the hour days start at is the date before the
     // calendar's
-    let today = history.today.unwrap_or_else(|| Local::now().date_naive());
+    let today = history.today;
     print!(
         "{}",
         format_history(

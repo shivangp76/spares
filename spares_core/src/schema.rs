@@ -283,7 +283,6 @@ pub mod note {
         /// The tags of the card's note, leaving out filtered tags.
         pub note_tags: Vec<String>,
         /// The card's own tags, leaving out filtered tags (see [`crate::api::card_tags`]).
-        #[serde(default)]
         pub card_tags: Vec<String>,
         pub stats: CardStats,
     }
@@ -1025,18 +1024,15 @@ pub mod review {
         pub note_raw_path: PathBuf,
         /// When the note was last changed, for clients to tell whether the card shown is out of
         /// date, e.g. after `spares import` of its file. The same as the note's `updated_at`.
-        #[serde(default)]
         pub note_updated_at: DateTime<Utc>,
         pub parser_name: String,
         /// The note's keywords and tags, which clients show beside the card, as its rendered files
         /// leave them out.
         pub keywords: Vec<String>,
-        /// See [`Self::keywords`]. In name order. Empty from a server older than this field.
-        #[serde(default)]
+        /// See [`Self::keywords`]. In name order.
         pub tags: Vec<String>,
         /// The card's own tags, in name order, leaving out filtered tags (see
-        /// [`crate::api::card_tags`]). Empty from a server older than this field.
-        #[serde(default)]
+        /// [`crate::api::card_tags`]).
         pub card_tags: Vec<String>,
         /// Present iff this card is a CLI card.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1408,13 +1404,11 @@ pub mod review {
         /// ([`ReviewLogKind::Cram`](crate::model::ReviewLogKind::Cram)) on each local date that
         /// has any. A heatmap adds them to the reviews, so a day spent cramming counts as a day
         /// studied, and can show them apart.
-        #[serde(default)]
         pub cram_count_by_date: HashMap<NaiveDate, u32>,
         /// The day under way, as the counts tell days apart: before
         /// [`SparesExternalConfig::day_starts_at`](crate::config::SparesExternalConfig::day_starts_at),
-        /// the date before the calendar's. `None` from a server older than it.
-        #[serde(default)]
-        pub today: Option<NaiveDate>,
+        /// the date before the calendar's.
+        pub today: NaiveDate,
     }
 
     /// Config values that review clients need to offer the same actions as the CLI.
@@ -1424,14 +1418,10 @@ pub mod review {
         pub flagged_tag_name: String,
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
         pub set_card_due_date_duration: Duration,
-        /// See [`QueueConfig::timebox`](crate::config::QueueConfig::timebox). `None` from a server
-        /// older than it.
-        #[serde(default)]
+        /// See [`QueueConfig::timebox`](crate::config::QueueConfig::timebox).
         #[serde_as(as = "Option<serde_with::DurationSeconds<i64>>")]
         pub timebox: Option<Duration>,
-        /// See [`QueueConfig::auto_advance`](crate::config::QueueConfig::auto_advance). `None`
-        /// from a server older than it.
-        #[serde(default)]
+        /// See [`QueueConfig::auto_advance`](crate::config::QueueConfig::auto_advance).
         pub auto_advance: Option<crate::config::AutoAdvance>,
     }
 }

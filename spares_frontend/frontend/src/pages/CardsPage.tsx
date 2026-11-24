@@ -285,7 +285,7 @@ function cardColumns(
       id: "card_tags",
       label: "Card tags",
       hideNarrow: true,
-      render: (r) => r.extras?.card_tags?.join(", ") || "—",
+      render: (r) => r.extras?.card_tags.join(", ") || "—",
     },
     {
       id: "order",
