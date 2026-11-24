@@ -846,22 +846,44 @@ input[type="checkbox"] {
   outline-offset: 2px;
 }
 
-.login-error {
-  margin-top: 12px;
+/* `.login` outranks `.error-text-small`'s plain red, which is too bright on the tinted box */
+.login .login-error {
+  margin-top: 16px;
+  padding: 10px 12px;
+  background: var(--tone-red-bg);
+  border: 1px solid var(--tone-red-border);
+  border-radius: 6px;
+  color: var(--tone-red-fg);
+  line-height: 1.4;
 }
 
 /* Kept in the accessibility tree while empty, so its error is announced when it appears */
-.login-error:empty {
+.login .login-error:empty {
   margin: 0;
+  padding: 0;
+  border: none;
 }
 
+/* The other pages before logging in, below a rule so they don't read as part of the form */
 .login-links {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  margin-top: 16px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
   font-size: 13px;
+}
+
+.login-links a,
+.login-links a:visited {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.login-links a:hover {
+  text-decoration: underline;
 }
 
 /* A short note beside or under a control, quieter than the text around it */
