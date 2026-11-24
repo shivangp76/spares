@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { AskDialogHost } from "./components/AskDialog";
 import Navbar from "./components/Navbar";
+import Skeleton from "./components/Skeleton";
 import { useAuth } from "./hooks/useAuth";
 
 // Pages are loaded on demand so a page doesn't wait for the others' code, e.g. the note editor
@@ -22,11 +23,21 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const StatisticsPage = lazy(() => import("./pages/StatisticsPage"));
 const TagsPage = lazy(() => import("./pages/TagsPage"));
 
+/** A page's shape while its code loads: its title, then a block and lines of text. */
+function PageSkeleton() {
+  return (
+    <div className="page">
+      <Skeleton lines={1} style={{ width: 200, marginBottom: 24 }} />
+      <Skeleton block={120} lines={4} />
+    </div>
+  );
+}
+
 /** The navbar above every page but the login, kept between pages so its buttons don't flicker. */
 function NavbarLayout() {
   const { credentials, logout } = useAuth();
   const page = (
-    <Suspense fallback={<div className="page">Loading…</div>}>
+    <Suspense fallback={<PageSkeleton />}>
       <Outlet />
     </Suspense>
   );
@@ -35,7 +46,7 @@ function NavbarLayout() {
 
 export default function App() {
   return (
-    <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+    <Suspense fallback={<PageSkeleton />}>
       <AskDialogHost />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
