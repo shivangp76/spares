@@ -86,8 +86,6 @@ CREATE TABLE IF NOT EXISTS note_tag (
     tag_id INTEGER NOT NULL,
     FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE, -- When note is deleted, delete its corresponding note_tag entry
     FOREIGN KEY (tag_id) REFERENCES tag(id) ON DELETE CASCADE -- When tag is deleted, delete its corresponding note_tag entry
-    UNIQUE (note_id, tag_id)
-    -- PRIMARY KEY (note_id, tag_id)
 );
 
 CREATE TABLE IF NOT EXISTS card_tag (
@@ -96,7 +94,6 @@ CREATE TABLE IF NOT EXISTS card_tag (
     tag_id INTEGER NOT NULL,
     FOREIGN KEY (card_id) REFERENCES card(id) ON DELETE CASCADE, -- When card is deleted, delete its corresponding card_tag entry
     FOREIGN KEY (tag_id) REFERENCES tag(id) ON DELETE CASCADE -- When tag is deleted, delete its corresponding card_tag entry
-    UNIQUE (card_id, tag_id)
 );
 
 CREATE TABLE IF NOT EXISTS app_state (
@@ -294,6 +291,12 @@ CREATE INDEX IF NOT EXISTS idx_note_parser_id ON note(parser_id);
 CREATE INDEX IF NOT EXISTS idx_note_tag_note_id ON note_tag(note_id);
 
 CREATE INDEX IF NOT EXISTS idx_note_tag_tag_id ON note_tag(tag_id);
+
+-- A note or card has a tag once. Collections made before these constraints were added to the
+-- tables get them in `20261124130000_tag_link_unique`.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_note_tag_note_id_tag_id ON note_tag(note_id, tag_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_card_tag_card_id_tag_id ON card_tag(card_id, tag_id);
 
 CREATE INDEX IF NOT EXISTS idx_note_link_parent_note_id ON note_link(parent_note_id);
 

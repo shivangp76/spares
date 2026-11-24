@@ -535,9 +535,52 @@ mod tests {
                 20_240_326_145_400,
                 20_261_104_130_000,
                 20_261_124_110_000,
-                20_261_124_120_000
+                20_261_124_120_000,
+                20_261_124_130_000
             ]
         );
+    }
+
+    /// `20261124130000_tag_link_unique` gives the tag links of a collection made before they were
+    /// unique their unique indexes, dropping repeated links first.
+    #[sqlx::test(migrations = false)]
+    async fn migration_tag_link_unique_drops_repeated_links(pool: SqlitePool) {
+        let migrator = crate::collection::migrator();
+        migrator.run(&pool).await.unwrap();
+        // One connection, which foreign keys are off for
+        let mut conn = pool.acquire().await.unwrap();
+        for statement in [
+            "DROP INDEX idx_note_tag_note_id_tag_id",
+            "DROP INDEX idx_card_tag_card_id_tag_id",
+            "PRAGMA foreign_keys = OFF",
+            "INSERT INTO note_tag (id, note_id, tag_id) VALUES (1, 1, 1), (2, 1, 1), (3, 1, 2)",
+            "INSERT INTO card_tag (id, card_id, tag_id) VALUES (1, 1, 1), (2, 1, 1)",
+            "DELETE FROM _sqlx_migrations WHERE version = 20261124130000",
+        ] {
+            sqlx::query(statement).execute(&mut *conn).await.unwrap();
+        }
+        drop(conn);
+
+        migrator.run(&pool).await.unwrap();
+
+        let note_tags: Vec<i64> = sqlx::query_scalar("SELECT id FROM note_tag ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(note_tags, [1, 3]);
+        let card_tags: Vec<i64> = sqlx::query_scalar("SELECT id FROM card_tag ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(card_tags, [1]);
+        let indexes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE name IN ('idx_note_tag_note_id_tag_id', 'idx_card_tag_card_id_tag_id')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(indexes, 2);
     }
 
     /// The baseline refuses a database that stopped partway through the migrations it replaced,
