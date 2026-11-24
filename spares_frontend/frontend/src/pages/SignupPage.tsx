@@ -7,15 +7,8 @@ import {
   signUp,
   type SignupPolicy,
 } from "../api/client";
+import AuthLayout from "../components/AuthLayout";
 import { errorMessage } from "../utils";
-
-const field: React.CSSProperties = {
-  display: "block",
-  width: "100%",
-  marginTop: 4,
-  padding: "6px 8px",
-  boxSizing: "border-box",
-};
 
 /** Creating an account, as the host's signup policy allows: by invite, or with an email address to verify. */
 export default function SignupPage() {
@@ -69,20 +62,17 @@ export default function SignupPage() {
   }
 
   return (
-    <div
-      className="login"
-      style={{ maxWidth: 400, margin: "80px auto", padding: 24 }}
+    <AuthLayout
+      title="Create an account"
+      error={error}
+      links={<Link to="/login">Log in instead</Link>}
     >
-      <h2 style={{ marginBottom: 24 }}>Create an account</h2>
       {policy?.signups === "closed" && (
         <p>This host takes no new accounts. Its admin can add one.</p>
       )}
       {message && <p role="status">{message}</p>}
       {policy && policy.signups !== "closed" && !message && (
-        <form
-          onSubmit={handleSubmit}
-          style={{ display: "flex", flexDirection: "column", gap: 14 }}
-        >
+        <form onSubmit={handleSubmit} className="login-form">
           <label>
             Name
             <input
@@ -92,7 +82,6 @@ export default function SignupPage() {
               autoComplete="username"
               autoCapitalize="none"
               required
-              style={field}
             />
           </label>
           <label>
@@ -103,7 +92,6 @@ export default function SignupPage() {
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
               required={policy.signups === "open"}
-              style={field}
             />
           </label>
           <label>
@@ -115,7 +103,6 @@ export default function SignupPage() {
               autoComplete="new-password"
               minLength={8}
               required
-              style={field}
             />
           </label>
           {policy.signups === "invite" && (
@@ -126,31 +113,18 @@ export default function SignupPage() {
                 value={invite}
                 onChange={(e) => setInvite(e.target.value)}
                 required
-                style={field}
               />
             </label>
           )}
           <button
             type="submit"
             disabled={busy}
-            className="touch-target"
-            style={{ padding: "8px 0", marginTop: 4 }}
+            className="touch-target login-submit"
           >
             {busy ? "Creating…" : "Create account"}
           </button>
         </form>
       )}
-      {error && (
-        <div
-          role="alert"
-          style={{ color: "var(--error)", fontSize: 13, marginTop: 12 }}
-        >
-          {error}
-        </div>
-      )}
-      <p style={{ fontSize: 13, marginTop: 16 }}>
-        <Link to="/login">Log in instead</Link>
-      </p>
-    </div>
+    </AuthLayout>
   );
 }

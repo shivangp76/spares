@@ -678,6 +678,58 @@ input[type="checkbox"] {
   color: var(--text-muted);
 }
 
+/* The pages before logging in (logging in, signing up, resetting a password): one narrow column */
+.login {
+  max-width: 400px;
+  margin: 80px auto;
+  padding: 24px;
+}
+
+.login h2 {
+  margin-bottom: 24px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-form input:not([type="checkbox"]) {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+}
+
+.login-form .field-hint {
+  display: block;
+}
+
+.login-submit {
+  padding: 8px 0;
+  margin-top: 4px;
+}
+
+.login-error {
+  margin-top: 12px;
+}
+
+/* Kept in the accessibility tree while empty, so its error is announced when it appears */
+.login-error:empty {
+  margin: 0;
+}
+
+.login-links {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
 /* A short note beside or under a control, quieter than the text around it */
 .hint {
   font-size: 13px;

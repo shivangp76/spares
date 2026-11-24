@@ -9,15 +9,9 @@ import {
   saveCredentials,
   type SignupPolicy,
 } from "../api/client";
+import AuthLayout from "../components/AuthLayout";
 import { LOGIN_DOCS, docUrl } from "../help/pages";
 import { errorMessage } from "../utils";
-
-const hint: React.CSSProperties = {
-  display: "block",
-  fontSize: 12,
-  color: "var(--text-secondary)",
-  marginTop: 4,
-};
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -84,24 +78,23 @@ export default function LoginPage() {
     }
   }
 
-  const field: React.CSSProperties = {
-    display: "block",
-    width: "100%",
-    marginTop: 4,
-    padding: "6px 8px",
-    boxSizing: "border-box",
-  };
-
   return (
-    <div
-      className="login"
-      style={{ maxWidth: 400, margin: "80px auto", padding: 24 }}
+    <AuthLayout
+      title="Spares"
+      error={error}
+      links={
+        <>
+          {policy && policy.signups !== "closed" && (
+            <Link to="/signup">Create an account</Link>
+          )}
+          {policy?.email && (
+            <Link to="/reset-password">Forgot your password?</Link>
+          )}
+          <Link to={docUrl(LOGIN_DOCS)}>{LOGIN_DOCS.label}</Link>
+        </>
+      }
     >
-      <h2 style={{ marginBottom: 24 }}>Spares</h2>
-      <form
-        onSubmit={handleSubmit}
-        style={{ display: "flex", flexDirection: "column", gap: 14 }}
-      >
+      <form onSubmit={handleSubmit} className="login-form">
         <label>
           Server URL
           <input
@@ -110,9 +103,8 @@ export default function LoginPage() {
             onChange={(e) => setServerUrl(e.target.value)}
             placeholder="https://your-server.example.com"
             required
-            style={field}
           />
-          <span style={hint}>
+          <span className="field-hint">
             The address of the spares host, which is this page's when it serves
             the page.
           </span>
@@ -126,9 +118,8 @@ export default function LoginPage() {
             autoComplete="username"
             autoCapitalize="none"
             required
-            style={field}
           />
-          <span style={hint}>
+          <span className="field-hint">
             Your account on the host, or its email address.
           </span>
         </label>
@@ -140,7 +131,6 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
             required
-            style={field}
           />
         </label>
         <label>
@@ -150,9 +140,8 @@ export default function LoginPage() {
             value={schedulerName}
             onChange={(e) => setSchedulerName(e.target.value)}
             placeholder="The server's default"
-            style={field}
           />
-          <span style={hint}>
+          <span className="field-hint">
             What schedules the cards you rate. The server's are checked when you
             log in.
           </span>
@@ -160,8 +149,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={checking}
-          className="touch-target"
-          style={{ padding: "8px 0", marginTop: 4 }}
+          className="touch-target login-submit"
         >
           {checking ? "Checking…" : "Login"}
         </button>
@@ -170,21 +158,7 @@ export default function LoginPage() {
             Your email address is verified. Log in.
           </div>
         )}
-        {error && <div className="error-text-small">{error}</div>}
-        {policy && policy.signups !== "closed" && (
-          <Link to="/signup" style={{ fontSize: 13 }}>
-            Create an account
-          </Link>
-        )}
-        {policy?.email && (
-          <Link to="/reset-password" style={{ fontSize: 13 }}>
-            Forgot your password?
-          </Link>
-        )}
-        <Link to={docUrl(LOGIN_DOCS)} style={{ fontSize: 13 }}>
-          {LOGIN_DOCS.label}
-        </Link>
       </form>
-    </div>
+    </AuthLayout>
   );
 }
