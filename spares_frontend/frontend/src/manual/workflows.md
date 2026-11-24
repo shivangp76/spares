@@ -23,6 +23,8 @@ The Mariana Trench is the deepest point in the Pacific Ocean {{[inh:aae/1] at ab
 
 Here the new card inherits from note `aae`'s first card. The rules are on `inherit` in `spares_core::parsers::ClozeGroupingSettings`.
 
+In the web app's editor, a Typst note completes what follows `inh:` or `mv:`: type the note's id or words of its text to pick the note, and then its card orders are offered (Ctrl+N and Ctrl+P pick, Ctrl+Y or Enter accepts). Inside `#lin[…]` it completes the keywords notes have, and a `#key[…]` keyword another note already has is underlined.
+
 ## Merging notes
 
 `inh:` copies, so the source card keeps its reviews, and if you then delete its note, those reviews stay behind with no card and are still counted in the history next to the copies. To merge notes, use `mv:` instead, which takes the same `NOTE_ID/ORDER` but moves the source card itself into the new cloze's place, with its id, scheduling and review history:

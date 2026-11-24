@@ -44,6 +44,8 @@ export const NOTE_EDITOR_SHORTCUTS: Shortcut[] = [
   { keys: [':q!'], description: 'Close the note, dropping its unsaved changes' },
   { keys: [':wq', ':x'], description: 'Save and close the note' },
   { keys: [':wn'], description: 'Create the new note and start another with the same parser and tags' },
+  { keys: ['Ctrl+N', 'Ctrl+P'], description: 'Pick a completion, as in Vim: in a Typst note, keywords in #lin[…] and notes after inh: or mv:' },
+  { keys: ['Ctrl+Y'], description: 'Accept the completion picked' },
   { keys: [':e!'], description: 'Undo the changes made since the note was last saved (or clear the new note)' },
 ];
 

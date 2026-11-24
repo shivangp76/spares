@@ -100,7 +100,11 @@ export default function NoteDetail({
   const theme = useResolvedTheme();
   // A live note's text comes from a file on the laptop, which would overwrite edits made here
   const live = isLiveNote(note);
-  const editor = useEditorSetup(note.parser_name, live ? null : note.parser_id);
+  const editor = useEditorSetup(
+    note.parser_name,
+    live ? null : note.parser_id,
+    note.id,
+  );
   const vimEnabled = useVimKeybindings();
   // Unsaved edits kept in this browser from before: restored at once if the note hasn't changed
   // since they began, else offered, since restoring them would undo the change

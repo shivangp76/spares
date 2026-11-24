@@ -3,6 +3,7 @@ import { vim } from '@replit/codemirror-vim';
 import { EditorView, type Extension } from '@uiw/react-codemirror';
 import { imageUpload } from '../imageUpload';
 import { clozeHighlighting, loadLanguage, type NoteSyntax, noteSyntax } from '../editorLanguages';
+import { typstNoteCompletion } from '../noteCompletion';
 import {
   useCloseBrackets, useEditorFont, useEditorFontSize, useEditorLineNumbers, useEditorSpellcheck, useVimKeybindings,
 } from '../preferences';
@@ -17,8 +18,10 @@ export const EDITOR_TIPS = ['Images pasted or dropped into the text are uploaded
     has the setting's line numbers and spellcheck, and highlights the syntax of the note's parser
     and its clozes; `extensions` and `fieldSetup` are for its tags and keywords. The parser's
     language is loaded on demand, so its highlighting appears once loaded. With `imageParserId`,
-    images pasted or dropped into the data are uploaded and inserted in that parser's syntax. */
-export function useEditorSetup(parserName?: string | null, imageParserId?: number | null) {
+    images pasted or dropped into the data are uploaded and inserted in that parser's syntax. A Typst
+    note's data also completes links, keywords and the notes `inh:` and `mv:` name (see
+    noteCompletion.ts), as note `noteId`, or a new note when it is left out. */
+export function useEditorSetup(parserName?: string | null, imageParserId?: number | null, noteId?: number | null) {
   const vimEnabled = useVimKeybindings();
   const fontSize = useEditorFontSize();
   const font = useEditorFont();
@@ -55,8 +58,9 @@ export function useEditorSetup(parserName?: string | null, imageParserId?: numbe
     if (syntax === null) return [...extensions, ...spelling, ...images];
     // A language loaded for a previous parser is left out until this parser's has loaded
     const extension = language?.syntax === syntax ? [language.extension] : [];
-    return [...extensions, ...spelling, ...extension, clozeHighlighting(syntax), ...images];
-  }, [extensions, spellcheck, syntax, language, imageParserId]);
+    const completion = syntax === 'typst' ? [typstNoteCompletion(noteId ?? null)] : [];
+    return [...extensions, ...spelling, ...extension, clozeHighlighting(syntax), ...completion, ...images];
+  }, [extensions, spellcheck, syntax, language, imageParserId, noteId]);
   const dataSetup = useMemo(() => ({ lineNumbers: lineNumbers && !isNarrow, closeBrackets }), [lineNumbers, isNarrow, closeBrackets]);
   const fieldSetup = useMemo(() => ({ lineNumbers: false, closeBrackets }), [closeBrackets]);
   return { extensions, dataExtensions, dataSetup, fieldSetup };
