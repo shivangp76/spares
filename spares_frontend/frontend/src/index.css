@@ -982,35 +982,6 @@ input[type="checkbox"] {
   color: var(--text);
 }
 
-/* Rarely changed, so its summary is a step quieter than the fields above it */
-.login-advanced summary {
-  width: fit-content;
-  font-size: var(--font-sm);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.login-advanced summary:hover {
-  color: var(--text);
-}
-
-.login-advanced summary .hint {
-  font-size: var(--font-xs);
-}
-
-/* Its fields hang under the summary, so they read as part of it */
-.login-advanced[open] {
-  padding-bottom: 4px;
-}
-
-.login-advanced > label {
-  display: block;
-  margin-left: 5px;
-  padding-top: 12px;
-  padding-left: 14px;
-  border-left: 2px solid var(--border-subtle);
-}
-
 .login-submit {
   padding: 10px 0;
   margin-top: 4px;

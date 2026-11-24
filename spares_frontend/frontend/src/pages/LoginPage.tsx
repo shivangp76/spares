@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import {
   NetworkError,
@@ -12,14 +12,11 @@ import {
 } from "../api/client";
 import AuthLayout from "../components/AuthLayout";
 import { LOGIN_DOCS, docUrl } from "../help/pages";
-import { hostOf, isSameHost, nextPath } from "../login";
+import { nextPath } from "../login";
 import { errorMessage } from "../utils";
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  // A built app is served by the server it talks to
-  // The dev server sends the API to the host (see vite.config.ts)
-  const [serverUrl, setServerUrl] = useState(window.location.origin);
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [checking, setChecking] = useState(false);
@@ -37,36 +34,23 @@ export default function LoginPage() {
     }
   });
 
-  // This page's host's: the signup and password-reset pages talk to it, not to the typed one
   useEffect(() => {
-    getSignupPolicy(window.location.origin).then(setPolicy, () =>
-      setPolicy(null),
-    );
+    getSignupPolicy().then(setPolicy, () => setPolicy(null));
   }, []);
-  const thisHost = isSameHost(serverUrl, window.location.origin);
-  const hostLabel = thisHost ? "this host" : hostOf(serverUrl);
 
   const passwordId = useId();
   const [showPassword, setShowPassword] = useState(false);
-  const hostDetails = useRef<HTMLDetailsElement>(null);
-  // Set on the element at once, not through state, so the browser can focus an invalid field in it
-  // in the same submit
-  function openHostDetails() {
-    if (hostDetails.current) hostDetails.current.open = true;
-  }
 
   /** Logs in, then picks the scheduler with the host before saving the session. */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!serverUrl || !user || !password) return;
-    const url = serverUrl.replace(/\/$/, "");
+    if (!user || !password) return;
     setChecking(true);
     setError(null);
     try {
-      const session = await login(url, user.trim(), password);
-      const schedulers = await getSchedulerNames(url);
+      const session = await login(user.trim(), password);
+      const schedulers = await getSchedulerNames();
       saveCredentials({
-        serverUrl: url,
         csrfToken: session.csrfToken,
         user: session.user,
         schedulerName: schedulerToUse(schedulers),
@@ -75,9 +59,8 @@ export default function LoginPage() {
     } catch (e) {
       if (e instanceof NetworkError) {
         setError(
-          "The host could not be reached. Check its URL under Host. A device that keeps a copy of the collection works offline once logged in.",
+          "The host could not be reached. A device that keeps a copy of the collection works offline once logged in.",
         );
-        openHostDetails();
       } else {
         setError(errorMessage(e));
       }
@@ -94,10 +77,10 @@ export default function LoginPage() {
       error={error}
       links={
         <>
-          {thisHost && policy && policy.signups !== "closed" && (
+          {policy && policy.signups !== "closed" && (
             <Link to="/signup">Create an account</Link>
           )}
-          {thisHost && policy?.email && (
+          {policy?.email && (
             <Link to="/reset-password">Forgot your password?</Link>
           )}
           <Link to={docUrl(LOGIN_DOCS)}>{LOGIN_DOCS.label}</Link>
@@ -147,28 +130,6 @@ export default function LoginPage() {
             </button>
           </div>
         </div>
-        {/* Rarely changed, so closed until an error needs it */}
-        <details ref={hostDetails} className="login-advanced">
-          <summary>
-            Host <span className="hint">({hostLabel})</span>
-          </summary>
-          <label>
-            Server URL
-            <input
-              type="url"
-              value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
-              // A field in a closed section can't be focused to show what's wrong with it
-              onInvalid={openHostDetails}
-              placeholder="https://your-server.example.com"
-              required
-            />
-            <span className="field-hint">
-              The address of the spares host, which is this page's when it
-              serves the page.
-            </span>
-          </label>
-        </details>
         <button
           type="submit"
           disabled={checking}

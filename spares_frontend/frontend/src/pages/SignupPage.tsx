@@ -14,7 +14,6 @@ import { errorMessage } from "../utils";
 /** Creating an account, as the host's signup policy allows: by invite, or with an email address to verify. */
 export default function SignupPage() {
   const navigate = useNavigate();
-  const serverUrl = window.location.origin;
   const [policy, setPolicy] = useState<SignupPolicy | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -27,17 +26,15 @@ export default function SignupPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    getSignupPolicy(serverUrl).then(setPolicy, (e) =>
-      setError(errorMessage(e)),
-    );
-  }, [serverUrl]);
+    getSignupPolicy().then(setPolicy, (e) => setError(errorMessage(e)));
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const result = await signUp(serverUrl, {
+      const result = await signUp({
         name: name.trim(),
         email: email.trim(),
         password,
@@ -46,9 +43,8 @@ export default function SignupPage() {
       if ("verify" in result) {
         setMessage(result.message);
       } else {
-        const schedulers = await getSchedulerNames(serverUrl);
+        const schedulers = await getSchedulerNames();
         saveCredentials({
-          serverUrl,
           csrfToken: result.csrfToken,
           user: result.user,
           schedulerName: schedulerToUse(schedulers),

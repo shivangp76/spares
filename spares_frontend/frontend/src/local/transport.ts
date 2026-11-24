@@ -26,10 +26,8 @@ const LOCK_NAME = "spares-db";
 export const COPY_FILES_CACHE = "spares-copy-files";
 export const COPY_RENDER_ASSETS_CACHE = "spares-copy-render-assets";
 
-/** The copy this device keeps, as set up in Settings. */
+/** The copy this device keeps, as set up in Settings. It syncs with the host that serves the page. */
 export interface LocalCopy {
-  /** The server it syncs with. Logged in to another, the device is a thin client again. */
-  serverUrl: string;
   replica: number;
   /** Whether its first full download has finished. Until then, requests go to the server. */
   ready: boolean;
@@ -49,10 +47,9 @@ export function setLocalCopy(copy: LocalCopy | null): void {
   else localStorage.removeItem(COPY_KEY);
 }
 
-/** Whether requests to `serverUrl` are answered by this device's copy. */
-export function usesLocalCopy(serverUrl: string): boolean {
-  const copy = getLocalCopy();
-  return copy !== null && copy.ready && copy.serverUrl === serverUrl;
+/** Whether requests to the host are answered by this device's copy. */
+export function usesLocalCopy(): boolean {
+  return getLocalCopy()?.ready === true;
 }
 
 let storageProbe: Promise<boolean> | null = null;

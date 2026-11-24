@@ -6,7 +6,6 @@ import { errorMessage } from "../utils";
 
 /** A forgotten password: asks for a link by email, and, from the link, sets a new password. */
 export default function ResetPasswordPage() {
-  const serverUrl = window.location.origin;
   const token = new URLSearchParams(window.location.search).get("token");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,10 +19,10 @@ export default function ResetPasswordPage() {
     setError(null);
     try {
       if (token) {
-        await resetPassword(serverUrl, token, password);
+        await resetPassword(token, password);
         setMessage("Your password is changed. Log in with it.");
       } else {
-        setMessage(await requestPasswordReset(serverUrl, email.trim()));
+        setMessage(await requestPasswordReset(email.trim()));
       }
     } catch (e) {
       setError(errorMessage(e));

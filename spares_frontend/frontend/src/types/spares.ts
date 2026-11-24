@@ -1,5 +1,5 @@
+/** The session with the host that serves the web app (`hostUrl`). */
 export interface Credentials {
-  serverUrl: string;
   /**
    * The session's CSRF token, which every request sends in `X-CSRF-Token`. The session itself is
    * a cookie the page can't read (see `spares_server::host::auth`).

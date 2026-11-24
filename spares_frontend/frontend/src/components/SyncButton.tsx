@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  getCredentials,
   getSyncStatus,
   runSync,
   type SyncReport,
@@ -45,14 +44,6 @@ function describeReport(report: SyncReport): string {
     : `Synced: received ${report.pulled} changes, sent ${report.pushed}.${conflicts}`;
 }
 
-function usesCopy(): boolean {
-  try {
-    return usesLocalCopy(getCredentials().serverUrl);
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Syncs this device's copy of the collection with the server, or, on the laptop, the laptop's
  * server with the sync server (`spares sync cloud`), with the time of the last sync and the number
@@ -61,7 +52,7 @@ function usesCopy(): boolean {
 export default function SyncButton({ onStatus }: { onStatus: OnStatus }) {
   // Rendered again when the copy starts or stops, e.g. right after Keep a Copy
   useLocalStatus();
-  return usesCopy() ? (
+  return usesLocalCopy() ? (
     <LocalSyncButton onStatus={onStatus} />
   ) : (
     <ServerSyncButton onStatus={onStatus} />

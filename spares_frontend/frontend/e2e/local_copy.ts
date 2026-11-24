@@ -131,7 +131,7 @@ async function logIn(page: Page): Promise<void> {
       // Typed into the editor as into a plain one
       localStorage.setItem("spares_vim_keybindings", "false");
     },
-    { serverUrl: ORIGIN, csrfToken, user: USER, schedulerName: schedulers[0] },
+    { csrfToken, user: USER, schedulerName: schedulers[0] },
   );
 }
 
@@ -1025,7 +1025,6 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     // Logging out keeps the copy and its files, and logging back in starts it again
     await page.getByRole("button", { name: "Account" }).click();
     await page.getByRole("menuitem", { name: "Log out" }).click();
-    await page.getByLabel("Server URL").fill(ORIGIN);
     await page.getByLabel("Name").fill(USER);
     await page.getByLabel("Password").fill(PASSWORD);
     await page.getByRole("button", { name: "Log in" }).click();

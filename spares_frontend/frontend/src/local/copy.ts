@@ -25,6 +25,7 @@ import {
   clearCaches,
   fileUrl,
   getCredentials,
+  hostUrl,
   listRenderPackages,
   onCredentialsChange,
   renderAssetUrl,
@@ -207,33 +208,21 @@ export function usePendingRender(noteId: number | undefined): boolean {
 export const OCCLUSIONS_FROM_NOTES =
   "On a device that keeps a copy of the collection, insert image occlusions from a note's editor: the device sends them to the server with the note, at the next sync.";
 
-function currentServer(): { serverUrl: string; csrfToken: string } | null {
+/** The session's CSRF token, or `null` when logged out. */
+function sessionToken(): string | null {
   try {
-    return getCredentials();
+    return getCredentials().csrfToken;
   } catch {
     return null;
   }
 }
 
-/** The copy's server, with the session's CSRF token when logged in to it. Everything the copy sends goes there. */
-function copyServer(): { serverUrl: string; csrfToken: string | null } | null {
-  const copy = getLocalCopy();
-  if (!copy) return null;
-  const server = currentServer();
-  return {
-    serverUrl: copy.serverUrl,
-    csrfToken: server?.serverUrl === copy.serverUrl ? server.csrfToken : null,
-  };
-}
-
-/** `copyServer()`, throwing unless logged in to it. */
+/** The host the copy syncs with, and the session's CSRF token, throwing unless logged in. */
 function copyCredentials(): { serverUrl: string; csrfToken: string } {
-  const server = copyServer();
-  if (!server) throw new Error("This device doesn't keep a copy.");
-  const { serverUrl, csrfToken } = server;
-  if (csrfToken === null)
-    throw new Error(`Log in to ${serverUrl} to sync this device's copy.`);
-  return { serverUrl, csrfToken };
+  if (!getLocalCopy()) throw new Error("This device doesn't keep a copy.");
+  const csrfToken = sessionToken();
+  if (csrfToken === null) throw new Error("Log in to sync this device's copy.");
+  return { serverUrl: hostUrl(), csrfToken };
 }
 
 async function refreshStatus(): Promise<void> {
@@ -279,7 +268,7 @@ export async function syncLocalCopy(
 export async function runOnServer<T>(
   action: () => Promise<T>,
 ): Promise<{ result: T; local: boolean; syncError: string | null }> {
-  const local = usesLocalCopy(getCredentials().serverUrl);
+  const local = usesLocalCopy();
   if (local) await syncLocalCopy();
   const result = await action();
   let syncError: string | null = null;
@@ -366,7 +355,7 @@ function syncInBackground(): void {
     !status.active ||
     status.fullSyncRequired ||
     status.notEnrolled ||
-    !copyServer()?.csrfToken
+    sessionToken() === null
   )
     return;
   syncLocalCopy().catch(() => {
@@ -414,10 +403,9 @@ function syncWhenDue(): void {
   }, CHECK_EVERY_MS);
 }
 
-/** Opens the copy if this device keeps one for the server logged in to, syncs it, and keeps syncing it in the background. */
+/** Opens the copy if this device keeps one and is logged in, syncs it, and keeps syncing it in the background. */
 export async function startLocalCopy(): Promise<void> {
-  const server = currentServer();
-  if (status.active || !server || !usesLocalCopy(server.serverUrl)) return;
+  if (status.active || sessionToken() === null || !usesLocalCopy()) return;
   setStatus({ active: true });
   // In case the service worker was installed before the copy was set up
   navigator.serviceWorker?.controller?.postMessage("cacheLocalCopy");
@@ -489,15 +477,10 @@ export async function enableLocalCopy(
     throw new Error(
       "This browser has no storage for a copy, as in a private window.",
     );
-  const server = currentServer();
-  if (!server) throw new Error("Log in first.");
-  const { serverUrl, csrfToken } = server;
+  const csrfToken = sessionToken();
+  if (csrfToken === null) throw new Error("Log in first.");
+  const serverUrl = hostUrl();
   const existing = getLocalCopy();
-  if (existing && existing.serverUrl !== serverUrl) {
-    throw new Error(
-      `This device keeps a copy for ${existing.serverUrl}. Log in to it to turn the copy off first.`,
-    );
-  }
   onStep("Registering this device");
   let state = (await openCopy()) as CopyState;
   if (state.replica !== null && existing === null) {
@@ -511,14 +494,14 @@ export async function enableLocalCopy(
   // Already enrolled when an earlier attempt stopped after it
   const replica =
     state.replica ?? (await call<number>("enroll", serverUrl, csrfToken, name));
-  setLocalCopy({ serverUrl, replica, ready: false });
+  setLocalCopy({ replica, ready: false });
   onStep("Downloading the collection");
   try {
     await call<SyncReport>("sync", serverUrl, csrfToken, "full_download");
   } finally {
     setStatus({ collection: null });
   }
-  setLocalCopy({ serverUrl, replica, ready: true });
+  setLocalCopy({ replica, ready: true });
   clearCaches();
   await globalThis.caches
     ?.open(SERVICE_WORKER_MARKER)
@@ -720,7 +703,7 @@ async function downloadFiles(): Promise<void> {
   const current = new Set(files.map((file) => file.path));
   for (const path of Object.keys(knownFiles)) {
     if (current.has(path)) continue;
-    await filesCache.delete(fileUrl(path, serverUrl));
+    await filesCache.delete(fileUrl(path));
     delete knownFiles[path];
   }
   // Also those the device no longer needs, such as images of cards' image occlusions, which it makes itself
@@ -729,7 +712,7 @@ async function downloadFiles(): Promise<void> {
   const changedAssets = new Set<string>();
   for (const path of Object.keys(knownAssets)) {
     if (currentAssets.has(path)) continue;
-    await assetsCache.delete(renderAssetUrl(path, serverUrl));
+    await assetsCache.delete(renderAssetUrl(path));
     delete knownAssets[path];
     changedAssets.add(path);
   }
@@ -798,7 +781,7 @@ async function downloadFiles(): Promise<void> {
     ...files
       .filter((file) => knownFiles[file.path] !== file.mtime)
       .map((file) => async () => {
-        const url = fileUrl(file.path, serverUrl);
+        const url = fileUrl(file.path);
         const response = await fetch(url, { headers, cache: "no-cache" });
         // A file that went away meanwhile is left for the next time
         if (!response.ok) return;
@@ -808,7 +791,7 @@ async function downloadFiles(): Promise<void> {
     ...assets
       .filter((asset) => knownAssets[asset.path] !== asset.hash)
       .map((asset) => async () => {
-        const url = renderAssetUrl(asset.path, serverUrl);
+        const url = renderAssetUrl(asset.path);
         const response = await fetch(url, { headers, cache: "no-cache" });
         if (!response.ok && response.status !== 404) return;
         // A 404 is fetched again at the next refresh: the server may only be missing the file for

@@ -68,6 +68,14 @@ import { reportServerReachable } from "./reachability";
 
 const STORAGE_KEY = "spares_credentials";
 
+/**
+ * The host the web app talks to: the one that serves it. The host only takes requests from its
+ * own web app (CORS), and the dev server forwards the API to it (see vite.config.ts).
+ */
+export function hostUrl(): string {
+  return window.location.origin;
+}
+
 export function getCredentials(): Credentials {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) throw new Error("Not authenticated");
@@ -75,17 +83,16 @@ export function getCredentials(): Credentials {
 }
 
 /**
- * Logs in to the host at `serverUrl`, which sets the session's cookie, and returns the session's
+ * Logs in to the host, which sets the session's cookie, and returns the session's
  * CSRF token and the account's name. Throws `NetworkError` if the host can't be reached, and an
  * `ApiError` if it refuses the name or password.
  */
 export async function login(
-  serverUrl: string,
   user: string,
   password: string,
 ): Promise<{ csrfToken: string; user: string }> {
   const label = "Log in";
-  const res = await send(label, `${serverUrl}/api/auth/login`, {
+  const res = await send(label, `${hostUrl()}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user, password }),
@@ -102,8 +109,7 @@ export async function login(
 /** Ends the session on the host, then forgets the credentials. */
 export async function logout(): Promise<void> {
   try {
-    const { serverUrl } = getCredentials();
-    await send("Log out", `${serverUrl}/api/auth/logout`, {
+    await send("Log out", `${hostUrl()}/api/auth/logout`, {
       method: "POST",
       headers: authHeaders(),
     });
@@ -114,13 +120,13 @@ export async function logout(): Promise<void> {
 }
 
 /**
- * The schedulers of the host at `serverUrl`, its default first, asked for in the session just
+ * The host's schedulers, its default first, asked for in the session just
  * started, to pick the scheduler before it is saved (`schedulerToUse`). Throws `NetworkError` if
  * the host can't be reached.
  */
-export async function getSchedulerNames(serverUrl: string): Promise<string[]> {
+export async function getSchedulerNames(): Promise<string[]> {
   const label = "Log in";
-  const res = await send(label, `${serverUrl}/api/schedulers`);
+  const res = await send(label, `${hostUrl()}/api/schedulers`);
   await throwIfNotOk(res, label);
   return res.json() as Promise<string[]>;
 }
@@ -282,11 +288,7 @@ async function copyFile(
   url: string,
   cacheName: string,
 ): Promise<Response | null> {
-  if (
-    typeof caches === "undefined" ||
-    !usesLocalCopy(getCredentials().serverUrl)
-  )
-    return null;
+  if (typeof caches === "undefined" || !usesLocalCopy()) return null;
   try {
     return (
       (await (await caches.open(cacheName)).match(url, { ignoreVary: true })) ??
@@ -385,11 +387,11 @@ async function apiSend(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const { serverUrl } = getCredentials();
+  const serverUrl = hostUrl();
   if ((init.method ?? "GET") !== "GET") listPages.clear();
   const request = { ...init, headers: authHeaders(init.body) };
   let res: Response | null = null;
-  if (usesLocalCopy(serverUrl)) {
+  if (usesLocalCopy()) {
     res = await localFetch(path, request);
     if (await needsServer(res)) {
       try {
@@ -413,12 +415,9 @@ function pageQuery(page: number, limit: number): string {
   return `page=${page}&limit=${limit}`;
 }
 
-/** A rendered file's URL on `serverUrl`, by default the server logged in to. */
-export function fileUrl(
-  relativePath: string,
-  serverUrl = getCredentials().serverUrl,
-): string {
-  return `${serverUrl.replace(/\/$/, "")}/files/${relativePath}`;
+/** A rendered file's URL on the host. */
+export function fileUrl(relativePath: string): string {
+  return `${hostUrl()}/files/${relativePath}`;
 }
 
 /**
@@ -436,10 +435,9 @@ export async function fetchFile(relativePath: string): Promise<Blob> {
 
 /** Package specs (`namespace/name/version`) that browser-rendered sources import. */
 export async function listRenderPackages(): Promise<string[]> {
-  const { serverUrl } = getCredentials();
-  if (usesLocalCopy(serverUrl))
+  if (usesLocalCopy())
     return apiFetch("Render packages fetch", "/api/render-assets/packages");
-  const url = `${serverUrl}/api/render-assets/packages`;
+  const url = `${hostUrl()}/api/render-assets/packages`;
   const res = await sendForFile("Render packages fetch", url);
   if (!res.ok) throw new Error(`Render packages fetch failed: ${res.status}`);
   return res.json();
@@ -447,21 +445,17 @@ export async function listRenderPackages(): Promise<string[]> {
 
 /** Typst files that browser-rendered sources read, e.g. preambles, by the absolute paths the sources use. */
 export async function listRenderSources(): Promise<string[]> {
-  const { serverUrl } = getCredentials();
-  if (usesLocalCopy(serverUrl))
+  if (usesLocalCopy())
     return apiFetch("Render sources fetch", "/api/render-assets/sources");
-  const url = `${serverUrl}/api/render-assets/sources`;
+  const url = `${hostUrl()}/api/render-assets/sources`;
   const res = await sendForFile("Render sources fetch", url);
   if (!res.ok) throw new Error(`Render sources fetch failed: ${res.status}`);
   return res.json();
 }
 
-/** A render asset's URL on `serverUrl`, by default the server logged in to. */
-export function renderAssetUrl(
-  path: string,
-  serverUrl = getCredentials().serverUrl,
-): string {
-  return `${serverUrl}/api/render-assets?path=${encodeURIComponent(path)}`;
+/** A render asset's URL on the host. */
+export function renderAssetUrl(path: string): string {
+  return `${hostUrl()}/api/render-assets?path=${encodeURIComponent(path)}`;
 }
 
 /**
@@ -473,7 +467,7 @@ export function renderAssetUrl(
 export async function fetchRenderAsset(
   path: string,
 ): Promise<Uint8Array | null> {
-  if (usesLocalCopy(getCredentials().serverUrl)) {
+  if (usesLocalCopy()) {
     // Its error, e.g. for an image occlusion whose image it can't read, names that image, which
     // the server's 404 for the file the device makes from it wouldn't
     const added = await deviceMediaFile(path);
@@ -738,7 +732,7 @@ export async function modifyNoteTags(
  * brings them.
  */
 export async function renderNote(noteId: number): Promise<void> {
-  if (usesLocalCopy(getCredentials().serverUrl)) return;
+  if (usesLocalCopy()) return;
   await apiSend("Render note", "/api/notes/generate_files", {
     method: "POST",
     body: JSON.stringify({
@@ -1626,17 +1620,15 @@ if (localStorage.getItem(RETIRED_OFFLINE_KEY) === null) {
   })().catch(console.error);
 }
 
-/** Who can create an account on the host at `serverUrl`, and whether it sends email (for password resets). */
+/** Who can create an account on the host, and whether it sends email (for password resets). */
 export interface SignupPolicy {
   signups: "closed" | "invite" | "open";
   email: boolean;
 }
 
-export async function getSignupPolicy(
-  serverUrl: string,
-): Promise<SignupPolicy> {
+export async function getSignupPolicy(): Promise<SignupPolicy> {
   const label = "Signup policy";
-  const res = await send(label, `${serverUrl}/api/auth/signups`);
+  const res = await send(label, `${hostUrl()}/api/auth/signups`);
   await throwIfNotOk(res, label);
   return res.json() as Promise<SignupPolicy>;
 }
@@ -1645,14 +1637,16 @@ export async function getSignupPolicy(
  * Creates an account. With an invite, it is logged in at once (the session's CSRF token is
  * returned); with open signups, a link to verify the email address is sent first (`verify`).
  */
-export async function signUp(
-  serverUrl: string,
-  request: { name: string; email: string; password: string; invite?: string },
-): Promise<
+export async function signUp(request: {
+  name: string;
+  email: string;
+  password: string;
+  invite?: string;
+}): Promise<
   { csrfToken: string; user: string } | { verify: true; message: string }
 > {
   const label = "Sign up";
-  const res = await send(label, `${serverUrl}/api/auth/signup`, {
+  const res = await send(label, `${hostUrl()}/api/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1674,12 +1668,9 @@ export async function signUp(
 }
 
 /** Emails a link to reset the password of the account with this address, if there is one. */
-export async function requestPasswordReset(
-  serverUrl: string,
-  email: string,
-): Promise<string> {
+export async function requestPasswordReset(email: string): Promise<string> {
   const label = "Password reset";
-  const res = await send(label, `${serverUrl}/api/auth/reset-request`, {
+  const res = await send(label, `${hostUrl()}/api/auth/reset-request`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
@@ -1690,12 +1681,11 @@ export async function requestPasswordReset(
 
 /** Sets a new password with the token from a reset email. */
 export async function resetPassword(
-  serverUrl: string,
   token: string,
   password: string,
 ): Promise<void> {
   const label = "Password reset";
-  const res = await send(label, `${serverUrl}/api/auth/reset`, {
+  const res = await send(label, `${hostUrl()}/api/auth/reset`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, password }),
@@ -1716,9 +1706,8 @@ export async function changePassword(
 
 /** The account's whole collection, as a `.tar.gz` another host imports. */
 export async function exportAccount(): Promise<Blob> {
-  const { serverUrl } = getCredentials();
   const label = "Export";
-  const res = await send(label, `${serverUrl}/api/account/export`, {
+  const res = await send(label, `${hostUrl()}/api/account/export`, {
     headers: authHeaders(),
   });
   await throwIfNotOk(res, label);
@@ -1740,9 +1729,8 @@ export interface DeviceToken {
 
 /** The account's device tokens that are not revoked. Always from the server, which keeps them. */
 export async function listDeviceTokens(): Promise<DeviceToken[]> {
-  const { serverUrl } = getCredentials();
   const label = "Devices fetch";
-  const res = await send(label, `${serverUrl}/api/auth/devices`, {
+  const res = await send(label, `${hostUrl()}/api/auth/devices`, {
     headers: authHeaders(),
   });
   await throwIfNotOk(res, label);
@@ -1751,9 +1739,8 @@ export async function listDeviceTokens(): Promise<DeviceToken[]> {
 
 /** Revokes a device token, like `spares logout` on that device, and frees the replica it enrolled as. */
 export async function revokeDeviceToken(id: number): Promise<void> {
-  const { serverUrl } = getCredentials();
   const label = "Revoke device";
-  const res = await send(label, `${serverUrl}/api/auth/devices/${id}`, {
+  const res = await send(label, `${hostUrl()}/api/auth/devices/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
   });

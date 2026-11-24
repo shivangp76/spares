@@ -88,9 +88,7 @@ Running `init` again is safe if something fails partway: it keeps the server's h
 
 ## 5. Log in on the phone
 
-With Tailscale on, open the address `init` printed, e.g. `https://spares.tail6814bc.ts.net`, and log in:
-- **Name** and **Password:** your account on the server.
-- **Host:** leave it closed. The server URL is already that same address.
+With Tailscale on, open the address `init` printed, e.g. `https://spares.tail6814bc.ts.net`, and log in with your account on the server. The web app always talks to the host that serves it.
 
 The phone schedules with the server's default scheduler. If you use another one on the laptop, choose it in **Settings → Review → Scheduler**; the phone keeps that choice when you log in again.
 
