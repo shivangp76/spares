@@ -1,3 +1,4 @@
+import { showNoteDiagnostic, noteDiagnostics } from "../noteDiagnostics";
 import {
   useEffect,
   useImperativeHandle,
@@ -135,7 +136,7 @@ export default function NoteDetail({
               },
             }),
           ]
-        : [...editor.dataExtensions, submitKeymap],
+        : [...editor.dataExtensions, noteDiagnostics, submitKeymap],
     [live, editor.dataExtensions],
   );
   const fieldExtensions = useMemo(
@@ -342,6 +343,7 @@ export default function NoteDetail({
       setTimeout(() => setSaveStatus("idle"), 2000);
       return true;
     } catch (e) {
+      showNoteDiagnostic(dataEditorRef.current?.view, dataContent, e);
       setSaveError(errorMessage(e));
       setSaveStatus("error");
       return false;

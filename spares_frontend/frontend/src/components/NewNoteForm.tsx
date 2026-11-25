@@ -1,3 +1,4 @@
+import { showNoteDiagnostic, noteDiagnostics } from "../noteDiagnostics";
 import { useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { createNotes, listParsers, renderNote } from "../api/client";
@@ -50,6 +51,7 @@ function lines(value: string): string[] {
 
 /** What a new note starts with, as "New note like this" gives it from another note. */
 export interface NewNoteStart {
+  data?: string;
   parserId?: number;
   /** The parser by name, where its id isn't known, as on the Review page. */
   parserName?: string;
@@ -64,12 +66,14 @@ export interface NewNoteStart {
  */
 export default function NewNoteForm({
   onCreated,
+  createLabel = "Create",
   onCancel,
   start,
   ref,
 }: {
   /** `more` when Create and New was used, which keeps the form open for another note. */
   onCreated: (note: NoteResponse, more: boolean) => void;
+  createLabel?: string;
   onCancel: () => void;
   start?: NewNoteStart;
   ref?: React.Ref<NotePaneHandle>;
@@ -98,7 +102,7 @@ export default function NewNoteForm({
     parserId,
   );
   const vimEnabled = useVimKeybindings();
-  const [data, setData] = useState(initial.draft?.value.data ?? "");
+  const [data, setData] = useState(initial.draft?.value.data ?? start?.data ?? "");
   const dataEditorRef = useRef<ReactCodeMirrorRef>(null);
   const [tags, setTags] = useState(initial.draft?.value.tags ?? initial.tags);
   const [keywords, setKeywords] = useState(
@@ -165,7 +169,7 @@ export default function NewNoteForm({
   }
 
   const dataExtensions = useMemo(
-    () => [...editor.dataExtensions, submitKeymap],
+    () => [...editor.dataExtensions, noteDiagnostics, submitKeymap],
     [editor.dataExtensions],
   );
   const fieldExtensions = useMemo(
@@ -239,6 +243,7 @@ export default function NewNoteForm({
       }
       onCreated(note, more);
     } catch (e) {
+      showNoteDiagnostic(dataEditorRef.current?.view, data, e);
       setError(errorMessage(e));
     } finally {
       setSaving(false);
@@ -413,7 +418,7 @@ export default function NewNoteForm({
           style={{ padding: "5px 14px", fontSize: 13 }}
           title="Ctrl+Enter (Cmd+Enter on a Mac)"
         >
-          {saving ? "Creating…" : "Create"}
+          {saving ? "Creating…" : createLabel}
         </button>
         <button
           onClick={() => create(true)}

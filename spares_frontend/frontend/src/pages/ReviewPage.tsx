@@ -15,6 +15,9 @@ import {
   ApiError,
   cachedReviewHistory,
   cachedTodayStatistics,
+  countNotes,
+  createParser,
+  listParsers,
   createReviewSnapshot,
   describeReverted,
   forgetCard,
@@ -470,7 +473,63 @@ export default function ReviewPage() {
   // the new note left unfinished before. It stays open from card to card.
   const [newNotePanel, setNewNotePanel] = useState<{
     start?: NewNoteStart;
+    firstReview?: boolean;
   } | null>(null);
+  const [emptyCollection, setEmptyCollection] = useState(false);
+  const [openingFirst, setOpeningFirst] = useState(false);
+  const nextDueDate = Object.keys(
+    statistics?.due_count_by_date ?? {},
+  ).sort()[0];
+
+  useEffect(() => {
+    let current = true;
+    if (
+      statistics &&
+      Object.values(statistics.card_count_by_state).every(
+        (count) => count === 0,
+      )
+    ) {
+      countNotes().then((count) => {
+        if (current) setEmptyCollection(count === 0);
+      }, console.error);
+    }
+    return () => {
+      current = false;
+    };
+  }, [statistics]);
+
+  async function openFirstNote() {
+    setOpeningFirst(true);
+    try {
+      const findMarkdown = async () =>
+        (await listParsers(1, 1000)).find(
+          (parser) => parser.name === "markdown",
+        );
+      let parser = await findMarkdown();
+      if (!parser) {
+        try {
+          parser = await createParser("markdown");
+        } catch (error) {
+          parser = await findMarkdown();
+          if (!parser) throw error;
+        }
+      }
+      setNewNotePanel({
+        firstReview: true,
+        start: newNoteDraft.load()
+          ? undefined
+          : {
+              parserId: parser.id,
+              data: "The capital of France is {{ Paris }}.",
+            },
+      });
+    } catch (error) {
+      setError(errorMessage(error));
+      setPhase("error");
+    } finally {
+      setOpeningFirst(false);
+    }
+  }
   const [noteLoading, setNoteLoading] = useState(false);
   const notePanelRef = useRef<HTMLDivElement>(null);
   const newNotePane = useRef<NotePaneHandle>(null);
@@ -1974,11 +2033,20 @@ export default function ReviewPage() {
       <Suspense fallback={<div className="hint">Loading the editor…</div>}>
         <NewNoteForm
           ref={newNotePane}
+          createLabel={
+            newNotePanel.firstReview ? "Create and review" : undefined
+          }
           start={newNotePanel.start}
           onCreated={(note, more) => {
             setStatus(
               `Note ${formatNoteId(note.id)} created.${more ? " Writing another like it." : ""}`,
             );
+            if (newNotePanel.firstReview) {
+              setEmptyCollection(false);
+              void refreshStatistics();
+              if (!more)
+                void startReview("query", `id=${formatNoteId(note.id)}`);
+            }
             if (!more) setNewNotePanel(null);
           }}
           onCancel={() => setNewNotePanel(null)}
@@ -1987,20 +2055,20 @@ export default function ReviewPage() {
     </div>
   ) : (
     panelNote && (
-    <div
-      ref={notePanelRef}
-      className={splitNote ? "review-note-split" : undefined}
-      style={splitNote ? undefined : { marginTop: 16, scrollMarginTop: 16 }}
-    >
-      <Suspense fallback={<div className="hint">Loading note…</div>}>
-        <NoteDetail
-          key={panelNote.id}
-          note={panelNote}
-          onClose={() => setPanelNote(null)}
-          onNoteUpdated={onNoteUpdated}
-        />
-      </Suspense>
-    </div>
+      <div
+        ref={notePanelRef}
+        className={splitNote ? "review-note-split" : undefined}
+        style={splitNote ? undefined : { marginTop: 16, scrollMarginTop: 16 }}
+      >
+        <Suspense fallback={<div className="hint">Loading note…</div>}>
+          <NoteDetail
+            key={panelNote.id}
+            note={panelNote}
+            onClose={() => setPanelNote(null)}
+            onNoteUpdated={onNoteUpdated}
+          />
+        </Suspense>
+      </div>
     )
   );
 
@@ -2124,7 +2192,21 @@ export default function ReviewPage() {
                 (c) => c === 0,
               ) && (
                 <p style={{ color: "var(--text-secondary)", margin: 0 }}>
-                  Nothing due to review.
+                  {emptyCollection &&
+                  Object.values(statistics.card_count_by_state).every(
+                    (count) => count === 0,
+                  ) ? (
+                    <button
+                      disabled={openingFirst || !!newNotePanel}
+                      onClick={openFirstNote}
+                    >
+                      Create your first note
+                    </button>
+                  ) : nextDueDate ? (
+                    `Next cards due on ${nextDueDate}.`
+                  ) : (
+                    "Nothing due to review."
+                  )}
                 </p>
               )}
           </div>
@@ -2333,6 +2415,9 @@ export default function ReviewPage() {
           }}
         >
           <p>Nothing left to review.</p>
+          {!activeFilter && nextDueDate && (
+            <p>Next cards due on {nextDueDate}.</p>
+          )}
           {status && <p style={{ fontSize: 13 }}>{status}</p>}
           {summary && <div style={{ marginTop: 24 }}>{summary}</div>}
           <p

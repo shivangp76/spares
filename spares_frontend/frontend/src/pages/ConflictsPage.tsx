@@ -5,6 +5,7 @@ import { loginPath } from "../login";
 import {
   listSyncConflicts,
   resolveSyncConflict,
+  type ChangedPassage,
   type ConflictResolution,
   type SyncConflict,
 } from "../api/client";
@@ -33,12 +34,37 @@ const textBox: React.CSSProperties = {
   overflow: "auto",
 };
 
-function Side({ label, text }: { label: string; text: string | null }) {
+function Side({
+  label,
+  text,
+  changes,
+}: {
+  label: string;
+  text: string | null;
+  changes?: ChangedPassage[] | null;
+}) {
   return (
     <div style={{ flex: "1 1 280px", minWidth: 0 }}>
       <div style={sectionLabel}>{label}</div>
       {text === null ? (
         <p style={{ margin: 0, color: "var(--text-muted)" }}>Deleted</p>
+      ) : changes ? (
+        <>
+          {changes.length === 0 && <p>No changes since the last sync.</p>}
+          {changes.map(({ line, removed, added }, index) => (
+            <div key={index}>
+              <small>{line ? `Base line ${line}` : "Start of note"}</small>
+              <pre style={textBox}>
+                {removed && <del>{removed}</del>}
+                {added && <ins>{added}</ins>}
+              </pre>
+            </div>
+          ))}
+          <details>
+            <summary>Full text</summary>
+            <pre style={textBox}>{text}</pre>
+          </details>
+        </>
       ) : (
         <pre style={textBox}>{text}</pre>
       )}
@@ -86,24 +112,34 @@ function Conflict({
         {KIND_ABOUT[conflict.kind]} Found{" "}
         {new Date(conflict.created_at * 1000).toLocaleString()}.
       </p>
-      {editing === null ? (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <Side label="This side (now)" text={conflict.local} />
-          <Side label="Other side" text={conflict.remote} />
+      <div className={editing === null ? undefined : "conflict-edit"}>
+        <div className="conflict-passages">
+          <Side
+            label="This side (now)"
+            text={conflict.local}
+            changes={conflict.local_changes}
+          />
+          <Side
+            label="Other side"
+            text={conflict.remote}
+            changes={conflict.remote_changes}
+          />
         </div>
-      ) : (
-        <textarea
-          value={editing}
-          onChange={(e) => setEditing(e.target.value)}
-          rows={12}
-          style={{
-            width: "100%",
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: 13,
-          }}
-        />
-      )}
-      {conflict.base !== null && editing === null && (
+        {editing !== null && (
+          <textarea
+            aria-label="Merged note"
+            value={editing}
+            onChange={(e) => setEditing(e.target.value)}
+            rows={12}
+            style={{
+              width: "100%",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 13,
+            }}
+          />
+        )}
+      </div>
+      {conflict.base !== null && (
         <details style={{ marginTop: 8 }}>
           <summary style={{ cursor: "pointer", fontSize: 13 }}>
             Text at the last sync

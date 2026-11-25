@@ -79,9 +79,38 @@ function ServerSyncButton({ onStatus }: { onStatus: OnStatus }) {
 
   useEffect(() => {
     // Offline, there is no status, and the button stays hidden
-    getSyncStatus().then(setStatus, () => setStatus(null));
+    let active = true;
+    const refresh = () =>
+      getSyncStatus().then(
+        (value) => {
+          if (active) setStatus(value);
+        },
+        () => {
+          if (active) setStatus(null);
+        },
+      );
+    void refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
 
+  const startError = status?.auto_sync_error;
+  if (status && startError)
+    return (
+      <button
+        className="navbar-button"
+        title={startError}
+        onClick={() => onStatus(startError)}
+      >
+        Sync needs attention ·{" "}
+        {status.last_sync_at
+          ? `last synced ${ago(status.last_sync_at)}`
+          : "no recorded sync"}
+      </button>
+    );
   if (!status?.sync_url) return null;
 
   async function sync() {

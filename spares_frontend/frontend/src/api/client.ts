@@ -312,6 +312,9 @@ function sendForFile(label: string, url: string): Promise<Response> {
 export class ApiError extends Error {
   span: [number, number] | null;
   queryField: string | null;
+  code?: string;
+  source?: string;
+  spans: [number, number][] = [];
 
   constructor(
     message: string,
@@ -333,13 +336,25 @@ async function throwIfNotOk(res: Response, label: string): Promise<void> {
   let message = `${label} failed: ${res.status}`;
   let span: [number, number] | null = null;
   let queryField: string | null = null;
+  let diagnostics: Pick<ApiError, "code" | "source" | "spans"> | undefined;
   const text = await res.text().catch(() => "");
   try {
     const body = JSON.parse(text) as {
+      code?: unknown;
+      source?: unknown;
+      spans?: unknown;
       message?: unknown;
       span?: unknown;
       query_field?: unknown;
     };
+    if (typeof body.code === "string" && Array.isArray(body.spans)) {
+      diagnostics = {
+        code: body.code,
+        source: typeof body.source === "string" ? body.source : undefined,
+        spans: body.spans.filter((s): s is [number, number] =>
+          Array.isArray(s) && s.length === 2 && s.every(Number.isSafeInteger)),
+      };
+    }
     if (typeof body.message === "string") message = body.message;
     if (typeof body.query_field === "string") queryField = body.query_field;
     if (
@@ -365,7 +380,7 @@ async function throwIfNotOk(res: Response, label: string): Promise<void> {
     // Not JSON, e.g. a request the server rejected before reaching a handler
     if (text) message = text;
   }
-  throw new ApiError(message, span, queryField);
+  throw Object.assign(new ApiError(message, span, queryField), diagnostics);
 }
 
 async function apiFetch<T>(
@@ -798,6 +813,7 @@ export async function removeSavedCopies(paths: string[]): Promise<void> {
 
 /** This host's two-way sync state (`GET /api/sync/status`). */
 export interface SyncStatus {
+  auto_sync_error?: string | null;
   replica: number;
   /** The collection's upstream, which this host's copy syncs with; `null` on the root */
   sync_url: string | null;
@@ -853,7 +869,11 @@ export async function removeSyncDevice(replica: number): Promise<void> {
 
 /** A note a sync could not merge on its own (`spares_core::sync::conflicts`). Texts have card ids
     in place of card orders (`o:c40` is card 40), so the same card reads the same on both sides. */
+export interface ChangedPassage { line: number; removed: string; added: string }
+
 export interface SyncConflict {
+  local_changes?: ChangedPassage[] | null;
+  remote_changes?: ChangedPassage[] | null;
   id: number;
   note_id: number;
   /** `text`: both sides changed the same lines, and this side's text was kept. `deleted_there`:

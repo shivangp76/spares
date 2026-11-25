@@ -668,11 +668,13 @@ input[type="checkbox"] {
   container-type: inline-size;
 }
 
+/* Wrap controls before they overlap the neighboring detail panel. */
+.split-list .search-row {
+  flex-wrap: wrap;
+}
+
 /* Its search box takes the whole row, with the buttons below, as on phones */
 @container (max-width: 600px) {
-  .search-row {
-    flex-wrap: wrap;
-  }
 
   .search-row > input,
   .search-row > .search-input {
@@ -1789,4 +1791,13 @@ html:has(.review-answer-bar) {
   to {
     opacity: 0;
   }
+}
+
+.conflict-edit { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.conflict-passages { display: flex; flex-wrap: wrap; gap: 12px; }
+.conflict-passages del, .conflict-passages ins { display: block; }
+.conflict-passages del { color: var(--tone-red-fg); background: var(--tone-red-bg); }
+.conflict-passages ins { color: var(--tone-green-fg); background: var(--tone-green-bg); }
+@media (max-width: 640px) {
+  .conflict-edit, .conflict-passages { display: grid; grid-template-columns: minmax(0, 1fr); }
 }

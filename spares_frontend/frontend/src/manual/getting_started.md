@@ -2,10 +2,10 @@
 
 Clone this repository:
 ```sh
-git clone https://github.com/shivangp76/spares.git
+git clone --recurse-submodules https://github.com/shivangp76/spares.git
 cd spares
 cargo build --release
-export PATH="$PATH:~/spares/target/release"
+export PATH="$PWD/target/release:$PATH"
 ```
 
 ## Reference documentation
@@ -24,11 +24,22 @@ Spares ships with 3 main parsers: "markdown", "typst", and "latex-note". To crea
 
 spares runs as a *host*: one `spares_server` with a root directory (`SPARES_ROOT`, by default `~/.local/share/spares`) that holds its settings (`host.toml`), its accounts, and each account's collection in `users/<id>/`. Your machine is a host with one account and signups closed. Create it once, with your account:
 ```sh
-spares host init --user <your name>
+spares host init --user your-name
+```
+
+For the web app, build its files from the repository root. This requires Bun, npm, and LLVM with WebAssembly support (Homebrew LLVM on macOS).
+
+```sh
+(cd spares_frontend/frontend && bun install --frozen-lockfile && bun run build)
+```
+
+In the generated `host.toml`, set `frontend_dir` to the absolute path of `spares_frontend/frontend/dist`. Start the host:
+
+```sh
 spares_server
 spares login            # in another terminal: the CLI's device token for this host
 ```
-Then open the web app at the host's address (`http://127.0.0.1:8080`, or `bind` in `host.toml`) and log in with the same name and password. Settings in the web app lists the devices logged in with `spares login`, and logs out one you lost (as `spares logout` on it would). `spares host --help` lists the admin's commands, which work on the root directly: adding accounts, resetting passwords, making device tokens, limits and backups.
+Then open the web app at the host's address (`http://127.0.0.1:8080`, or `bind` in `host.toml`) and log in with the same name and password. On the Review page of an empty collection, choose **Create your first note**, edit the Markdown cloze, and choose **Create and review**. Settings in the web app lists the devices logged in with `spares login`, and logs out one you lost (as `spares logout` on it would). `spares host --help` lists the admin's commands, which work on the root directly: adding accounts, resetting passwords, making device tokens, limits and backups.
 
 ### Running on a remote server (optional)
 
