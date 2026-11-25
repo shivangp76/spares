@@ -64,7 +64,7 @@ import {
   usesLocalCopy,
 } from "../local/transport";
 import { loginPath } from "../login";
-import { reportServerReachable } from "./reachability";
+import { isGatewayError, reportServerReachable } from "./reachability";
 
 import { credentialsKey as STORAGE_KEY, copyAccount, requireCopyAccount } from "../local/copyScope";
 
@@ -247,13 +247,16 @@ function authHeaders(body?: RequestInit["body"]): HeadersInit {
   };
 }
 
-/** The server could not be reached, e.g. because the device is offline. */
+/**
+ * The server could not be reached, e.g. because the device is offline or the server isn't running.
+ * The message is shown as it is, so it says so plainly rather than giving a status code.
+ */
 export class NetworkError extends Error {
   constructor(
     label: string,
-    message = "failed: the server could not be reached",
+    message = `Offline: can't reach the server (${label.toLowerCase()} failed).`,
   ) {
-    super(`${label} ${message}`);
+    super(message);
     this.name = "NetworkError";
   }
 }
@@ -274,6 +277,10 @@ async function send(
   } catch (e) {
     // An abort is the caller's, not the network's
     if (e instanceof DOMException && e.name === "AbortError") throw e;
+    reportServerReachable(false);
+    throw new NetworkError(label);
+  }
+  if (isGatewayError(res)) {
     reportServerReachable(false);
     throw new NetworkError(label);
   }
@@ -416,7 +423,7 @@ async function apiSend(
         if (isNetworkError(e))
           throw new NetworkError(
             label,
-            "needs the server, which could not be reached",
+            `Offline: ${label.toLowerCase()} needs the server, which can't be reached.`,
           );
         throw e;
       }

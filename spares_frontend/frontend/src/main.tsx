@@ -6,6 +6,9 @@ import "./index.css";
 import { credentialsKey, legacyCopyKey } from "./local/copyScope";
 import { startLocalCopy } from "./local/copy";
 import { startVersionChecks } from "./version";
+import { onServerBack } from "./api/reachability";
+import { usesLocalCopy } from "./local/transport";
+import { dataChanged } from "./dataVersion";
 
 // Lets the app open offline (see service-worker.js). Not in development, where files change.
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
@@ -15,6 +18,11 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 startVersionChecks();
 // Opens this device's copy of the collection, if it keeps one, and syncs it
 startLocalCopy().catch(console.error);
+// Pages that failed while the server was unreachable fetch again once it is back. A device with a
+// copy shows the copy, and its sync tells the pages when anything changed.
+onServerBack(() => {
+  if (!usesLocalCopy()) dataChanged();
+});
 
 // Cookies and credentials are shared by tabs. Drop mounted editors when another tab
 // changes sessions, before the old account can submit work into the new collection.
