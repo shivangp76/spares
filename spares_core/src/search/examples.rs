@@ -33,6 +33,7 @@ const EXAMPLES: &[QueryExample] = &[
     example("Examples", "c.rated[>=today-7d]=1", "Cards forgotten this week"),
     example("Examples", "sort_by_asc=c.retrievability limit=20", "The 20 cards you are least likely to recall"),
     example("Examples", "linked_to_note=(tag=history)", "Notes linking to a note tagged `history`"),
+    example("Examples", "prerequisite_of=(tag=history depth<=2)", "Notes that notes tagged `history` build on, up to two links away"),
     example("Examples", "(tag=a limit=5) or (tag=b limit=5)", "Up to 5 of each tag"),
 
     example("Text", "tag~history", "`~` finds text anywhere in a field: tags like `prehistory` and `history:rome`"),

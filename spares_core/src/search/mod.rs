@@ -37,6 +37,8 @@
 //! | `linked_to_note`      | i64      |
 //! | `linked_to_keyword`   | String   |
 //! | `linked_from_note`    | i64      |
+//! | `prerequisite_of`     | i64      |
+//! | `dependent_of`        | i64      |
 //! | c.rated             | u32      |
 //! | c.postponed         | bool     |
 //! | c.reviewed          | `DateTime` |
@@ -284,7 +286,33 @@
 //! - `linked_to_note=(linked_to_note=(tag=history))`: queries nest, so this is notes that link to
 //!   a note that links to a note tagged `history`.
 //!
-//! The query in parentheses can't have a sort, a limit or `c.cloze`, and no other field takes one.
+//! The query in parentheses can't have a sort, a limit or `c.cloze`.
+//!
+//! #### Chains of links
+//!
+//! `prerequisite_of` follows links any number of steps, rather than one: `prerequisite_of=(X)` is
+//! every note the notes of `X` link to, the notes those link to, and so on, which is what `X`
+//! builds on. `dependent_of=(X)` goes the other way, to every note that builds on `X`. Like
+//! `linked_to_note`, either takes a note id or a query in parentheses, and two options can go in
+//! the parentheses with the query:
+//! - `depth<=N` follows at most `N` links (`depth<N` and `depth=N` work too). `depth<=1` is the
+//!   same as `linked_from_note`, for `prerequisite_of`.
+//! - `via=(query)` steps only onto notes matching that query, so the chain goes through them alone.
+//!
+//! For example:
+//! - `tag=spdes or prerequisite_of=(tag=spdes depth<=2)`: an exam's notes and what they build on,
+//!   two links out.
+//! - `prerequisite_of=(tag=spdes via=(tag=functional-analysis))`: the functional analysis the SPDE
+//!   notes build on, following links between functional-analysis notes only, so one reached
+//!   through a measure-theory note is left out.
+//! - `dependent_of=(keyword="Fubini's theorem")`: everything that builds on Fubini, to check
+//!   before rewriting it.
+//!
+//! A chain that comes back to a note of the query, through a cycle, includes it, and links that
+//! matched no note are not followed. Without `depth`, a chain can reach far-off subjects: search it
+//! on its own first, and add a `depth` or a `via` if it does.
+//!
+//! No other field takes a query.
 //!
 //! ### Sorting
 //!
@@ -358,6 +386,11 @@
 //!   it has already been reached today.
 //! - `spares card review --tag-name review-<hash>` also resumes the set, but doesn't rebuild it on a
 //!   new day.
+//! - With `new_after_linked_notes` or `reviews_after_linked_notes` (see `QueueConfig` in
+//!   `spares_core::config`), the cards waiting on links when the set is built are left out of it,
+//!   so the limits pick among the cards ready to study. Waiting counts only the query's own cards,
+//!   so a limited query needs no `-c.waiting_on_links`. The set doesn't change during the day: a
+//!   card whose links are learned that day comes up the next.
 //!
 //! ### Other Operators
 //!

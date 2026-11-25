@@ -579,6 +579,12 @@ enum NoteField {
     LinkedToNote,
     LinkedToKeyword,
     LinkedFromNote,
+    /// The notes reached by following links from a note, step after step, as in
+    /// `prerequisite_of=(tag=spdes)`: what those notes build on. See [`evaluate_link_walk`].
+    PrerequisiteOf,
+    /// The notes that reach a note by following links, as in `dependent_of=(tag=measure-theory)`:
+    /// what builds on those notes. See [`evaluate_link_walk`].
+    DependentOf,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -634,7 +640,7 @@ const fn doc(name: &'static str, example: &'static str, about: &'static str) -> 
 }
 
 #[rustfmt::skip]
-pub(crate) const FIELDS: [FieldDoc; 37] = [
+pub(crate) const FIELDS: [FieldDoc; 39] = [
     doc("id", "id=gir", "The note's id"),
     doc("data", "data~verb", "The note's text, which a word on its own searches"),
     doc("created_at", "created_at>=today-7d", "When the note was created"),
@@ -646,6 +652,8 @@ pub(crate) const FIELDS: [FieldDoc; 37] = [
     doc("linked_to_note", "linked_to_note=gir", "A note the note links to"),
     doc("linked_to_keyword", "linked_to_keyword=\"Irregular verbs\"", "A keyword the note links to"),
     doc("linked_from_note", "linked_from_note=gir", "A note that links to the note"),
+    doc("prerequisite_of", "prerequisite_of=(tag=spdes depth<=2)", "A note the note is reached from by following links, any number of steps"),
+    doc("dependent_of", "dependent_of=(tag=measure-theory)", "A note the note reaches by following links, any number of steps"),
     doc("c.id", "c.id=12", "The card's id"),
     doc("c.created_at", "c.created_at>=today", "When the card was created"),
     doc("c.updated_at", "c.updated_at>=today", "When the card was last changed"),
@@ -884,6 +892,8 @@ impl Field {
             "linked_to_note" => Ok(Field::Note(NoteField::LinkedToNote)),
             "linked_to_keyword" => Ok(Field::Note(NoteField::LinkedToKeyword)),
             "linked_from_note" => Ok(Field::Note(NoteField::LinkedFromNote)),
+            "prerequisite_of" => Ok(Field::Note(NoteField::PrerequisiteOf)),
+            "dependent_of" => Ok(Field::Note(NoteField::DependentOf)),
             "c.id" => Ok(Field::Card(CardField::Id)),
             "c.created_at" => Ok(Field::Card(CardField::CreatedAt)),
             "c.updated_at" => Ok(Field::Card(CardField::UpdatedAt)),
@@ -987,6 +997,9 @@ impl Field {
                         value_str
                     )
                 }
+                NoteField::PrerequisiteOf | NoteField::DependentOf => {
+                    link_walk_from_sql(self, value_str)
+                }
             },
             Field::Card(card_field) => match card_field {
                 CardField::Id => with_op("c.id"),
@@ -1041,9 +1054,13 @@ impl Field {
     /// The kind of value the field holds, as listed by `spares note search --fields`.
     fn kind_name(&self) -> &'static str {
         match self {
-            Field::Note(NoteField::Id | NoteField::LinkedToNote | NoteField::LinkedFromNote) => {
-                "note id"
-            }
+            Field::Note(
+                NoteField::Id
+                | NoteField::LinkedToNote
+                | NoteField::LinkedFromNote
+                | NoteField::PrerequisiteOf
+                | NoteField::DependentOf,
+            ) => "note id",
             Field::Card(CardField::State) => "card state",
             Field::SortAsc(_) | Field::SortDesc(_) => "field",
             _ => match self.get_field_type() {
@@ -1061,9 +1078,11 @@ impl Field {
     fn get_field_type(&self) -> FieldType {
         match self {
             Field::Note(note_field) => match note_field {
-                NoteField::Id | NoteField::LinkedToNote | NoteField::LinkedFromNote => {
-                    FieldType::Integer
-                }
+                NoteField::Id
+                | NoteField::LinkedToNote
+                | NoteField::LinkedFromNote
+                | NoteField::PrerequisiteOf
+                | NoteField::DependentOf => FieldType::Integer,
                 NoteField::Data
                 | NoteField::Keyword
                 | NoteField::ParserName
@@ -1112,7 +1131,11 @@ impl Field {
         }
         match field {
             Field::Note(note_field) => match note_field {
-                NoteField::Id | NoteField::LinkedToNote | NoteField::LinkedFromNote => Ok("n.id".to_string()),
+                NoteField::Id
+                | NoteField::LinkedToNote
+                | NoteField::LinkedFromNote
+                | NoteField::PrerequisiteOf
+                | NoteField::DependentOf => Ok("n.id".to_string()),
                 NoteField::CreatedAt => Ok("n.created_at".to_string()),
                 NoteField::UpdatedAt => Ok("n.updated_at".to_string()),
                 NoteField::ParserName => Ok("p.name".to_string()),
@@ -1800,9 +1823,12 @@ fn evaluate_link_query(
     let (this_note, other_note) = match field {
         Field::Note(NoteField::LinkedToNote) => ("parent_note_id", "linked_note_id"),
         Field::Note(NoteField::LinkedFromNote) => ("linked_note_id", "parent_note_id"),
+        Field::Note(NoteField::PrerequisiteOf | NoteField::DependentOf) => {
+            return evaluate_link_walk(field, field_name, query, context, op);
+        }
         _ => {
             return Err(miette!(
-                help = "Only `linked_to_note` and `linked_from_note` take a query, as in `linked_to_note=(tag=history)`",
+                help = "Only `linked_to_note`, `linked_from_note`, `prerequisite_of` and `dependent_of` take a query, as in `linked_to_note=(tag=history)`",
                 "`{field_name}` can't be compared with a query in parentheses",
             ));
         }
@@ -1837,6 +1863,234 @@ fn evaluate_link_query(
         "EXISTS (SELECT 1 FROM note_link nl WHERE nl.{this_note} = n.id AND nl.{other_note} IN ({notes}))"
     ));
     Ok(())
+}
+
+/// Adds the condition that the note is reached from a note matching the query in `query`'s
+/// parentheses by following links one or more steps (`prerequisite_of`), or reaches one
+/// (`dependent_of`). Two options may go in the parentheses, anded with the query:
+///
+/// - `depth<=N` (or `depth=N`, or `depth<N`): follow at most `N` steps. `depth<=1` is
+///   `linked_to_note`'s reverse for `prerequisite_of`: the notes linked from the query's notes.
+///   Without it, links are followed as far as they go, cycles included.
+/// - `via=(query)`: only step onto notes matching it, so the walk goes through and ends at such
+///   notes. `prerequisite_of=(tag=spdes via=(tag=functional-analysis))` is the
+///   functional-analysis notes the SPDE notes build on, through functional analysis alone, not
+///   through a measure-theory note on the way.
+///
+/// The query's own notes match only when a walk comes back to them. Links that matched no note
+/// are not followed.
+fn evaluate_link_walk(
+    field: &Field,
+    field_name: &str,
+    query: &[TokenTree],
+    context: &mut EvaluationContext,
+    op: Op,
+) -> Result<(), Error> {
+    if !matches!(op, Op::Equal) {
+        return Err(miette!(
+            "A query in parentheses can only follow `=` or `!=`, as in `{field_name}=(tag=history)`"
+        ));
+    }
+    let [query] = query else {
+        return Err(miette!("Missing query"));
+    };
+    if matches!(query, TokenTree::Atom(Atom::Nil, _)) {
+        return Err(miette!(
+            "The parentheses after `{field_name}=` are empty. Write a query in them, as in `{field_name}=(tag=history)`"
+        ));
+    }
+    let mut terms = Vec::new();
+    and_terms(query, &mut terms);
+    let mut max_depth = None;
+    let mut via = None;
+    let mut seed_terms = Vec::new();
+    for term in terms {
+        let TokenTree::Cons(term_op, children) = term else {
+            seed_terms.push(term.clone());
+            continue;
+        };
+        let name = match children.first() {
+            Some(TokenTree::Atom(Atom::Field(name), _)) => name.as_ref(),
+            _ => "",
+        };
+        match (name, term_op, children.get(1)) {
+            ("depth", Op::Equal | Op::LessThanEqual | Op::LessThan, Some(value)) => {
+                let TokenTree::Atom(Atom::Integer(n), span) = value else {
+                    return Err(label_error(
+                        miette!("`depth` takes a whole number of steps, as in `depth<=2`"),
+                        value.span(),
+                        "not a whole number",
+                    ));
+                };
+                let n = if matches!(term_op, Op::LessThan) {
+                    *n - 1
+                } else {
+                    *n
+                };
+                if n < 1 {
+                    return Err(label_error(
+                        miette!("`depth` must allow at least one step"),
+                        *span,
+                        "this depth",
+                    ));
+                }
+                max_depth = Some(u32::try_from(n).unwrap_or(u32::MAX));
+            }
+            ("depth", _, _) => {
+                return Err(label_error(
+                    miette!("`depth` is compared with `<=`, `<` or `=`, as in `depth<=2`"),
+                    term.span(),
+                    "this option",
+                ));
+            }
+            ("via", Op::Equal, Some(TokenTree::Cons(Op::Group, via_query))) => {
+                let [via_query] = via_query.as_slice() else {
+                    return Err(miette!("Missing query in `via=(…)`"));
+                };
+                via = Some(link_query_notes(via_query, "via", context)?);
+            }
+            ("via", _, _) => {
+                return Err(label_error(
+                    miette!(
+                        "`via` takes a query in parentheses, as in `via=(tag=functional-analysis)`"
+                    ),
+                    term.span(),
+                    "this option",
+                ));
+            }
+            _ => seed_terms.push(term.clone()),
+        }
+    }
+    if let Some(option) = seed_terms.iter().find_map(walk_option_in) {
+        return Err(label_error(
+            miette!(
+                help = format!(
+                    "`and` binds tighter than `or`, so the option only goes with the term next to it. Put the query in its own parentheses: `{field_name}=((a or b) {option}=…)`"
+                ),
+                "`{option}` must apply to the whole query in `{field_name}=(…)`",
+            ),
+            query.span(),
+            "this query",
+        ));
+    }
+    let seed = match seed_terms.len() {
+        0 => {
+            return Err(miette!(
+                "`{field_name}=(…)` needs a query besides its options, as in `{field_name}=(tag=history depth<=2)`"
+            ));
+        }
+        1 => seed_terms.remove(0),
+        _ => TokenTree::Cons(Op::And, seed_terms),
+    };
+    let seed = link_query_notes(&seed, field_name, context)?;
+    context.add_where_clause(link_walk_sql(field, &seed, via.as_deref(), max_depth));
+    Ok(())
+}
+
+/// The name of a link walk's option (`depth` or `via`) written in `tree` as a field, if there is
+/// one, though not in another walk's parentheses.
+fn walk_option_in(tree: &TokenTree) -> Option<&'static str> {
+    match tree {
+        TokenTree::Atom(Atom::Field(name), _) => match name.as_ref() {
+            "depth" => Some("depth"),
+            "via" => Some("via"),
+            _ => None,
+        },
+        TokenTree::Atom(_, _) => None,
+        // The first child of a comparison is its field, and a query in parentheses after it is
+        // another query, with options of its own.
+        TokenTree::Cons(
+            Op::Equal
+            | Op::GreaterThan
+            | Op::GreaterThanEqual
+            | Op::LessThan
+            | Op::LessThanEqual
+            | Op::Tilde,
+            children,
+        ) => children.first().and_then(walk_option_in),
+        TokenTree::Cons(_, children) => children.iter().find_map(walk_option_in),
+    }
+}
+
+/// The terms of `tree` anded together at its top level, as in `a b depth<=2`.
+fn and_terms<'a, 'de>(tree: &'a TokenTree<'de>, terms: &mut Vec<&'a TokenTree<'de>>) {
+    match tree {
+        TokenTree::Cons(Op::And, children) => {
+            for child in children {
+                and_terms(child, terms);
+            }
+        }
+        TokenTree::Cons(Op::Group, children) if children.len() == 1 => {
+            and_terms(&children[0], terms);
+        }
+        _ => terms.push(tree),
+    }
+}
+
+/// The SQL for the ids of the notes matching `query`, a query in a link's parentheses written
+/// after `field_name`.
+fn link_query_notes(
+    query: &TokenTree,
+    field_name: &str,
+    context: &EvaluationContext,
+) -> Result<String, Error> {
+    if tree_has_modifier(query) {
+        return Err(miette!(
+            "A sort or limit can't go in `{field_name}=(…)`, since it only says which notes are linked"
+        ));
+    }
+    if has_cloze_field(query) {
+        return Err(miette!(
+            "`c.cloze` can't go in `{field_name}=(…)`, since it is matched after the database query"
+        ));
+    }
+    let mut query_context = EvaluationContext::new(EvaluatorReturnItemType::NoteIds, None);
+    query_context.config = Arc::clone(&context.config);
+    query.evaluate(&mut query_context)?;
+    Ok(query_context.build_query(EvaluatorReturnItemType::NoteIds))
+}
+
+/// [`link_walk_sql`] from the note whose id compares with `value_str`, as in `prerequisite_of=gir`.
+fn link_walk_from_sql(field: &Field, value_str: &str) -> String {
+    link_walk_sql(
+        field,
+        &format!("SELECT id FROM note WHERE id {value_str}"),
+        None,
+        None,
+    )
+}
+
+/// The condition that `n` is reached by following links from the notes `seed` selects
+/// (`prerequisite_of`), or reaches them (`dependent_of`), stepping only onto the notes `via`
+/// selects, at most `max_depth` steps. See [`evaluate_link_walk`].
+fn link_walk_sql(field: &Field, seed: &str, via: Option<&str>, max_depth: Option<u32>) -> String {
+    let (from, to) = match field {
+        Field::Note(NoteField::DependentOf) => ("linked_note_id", "parent_note_id"),
+        _ => ("parent_note_id", "linked_note_id"),
+    };
+    // A walk inside the seed or `via`, as in `prerequisite_of=(prerequisite_of=(x))`, gets its own
+    // name, so the inner one doesn't hide the outer one.
+    let nested = seed.matches("WITH RECURSIVE walk").count()
+        + via.map_or(0, |via| via.matches("WITH RECURSIVE walk").count());
+    let walk = format!("walk{nested}");
+    let via = via.map_or_else(String::new, |via| format!(" AND nl.{to} IN ({via})"));
+    // With a depth, each note is kept once per depth it is reached at, which ends since depths
+    // are bounded. Without one, `UNION` keeps each note once, which ends on cycles too.
+    let (columns, first, next, bound) = match max_depth {
+        Some(max) => (
+            "id, depth",
+            ", 1",
+            format!(", {walk}.depth + 1"),
+            format!(" AND {walk}.depth < {max}"),
+        ),
+        None => ("id", "", String::new(), String::new()),
+    };
+    format!(
+        "n.id IN (WITH RECURSIVE {walk}({columns}) AS (\
+         SELECT nl.{to}{first} FROM note_link nl WHERE nl.{from} IN ({seed}) AND nl.{to} IS NOT NULL{via} \
+         UNION SELECT nl.{to}{next} FROM {walk} JOIN note_link nl ON nl.{from} = {walk}.id \
+         WHERE nl.{to} IS NOT NULL{via}{bound}) SELECT id FROM {walk})"
+    )
 }
 
 /// Whether `tree` has a `sort_by_asc`, `sort_by_desc` or `limit` anywhere.
@@ -1989,7 +2243,13 @@ fn evaluate_comparison(
     // that an old query like `id>100` cannot silently change meaning.
     if matches!(
         field,
-        Field::Note(NoteField::Id | NoteField::LinkedToNote | NoteField::LinkedFromNote)
+        Field::Note(
+            NoteField::Id
+                | NoteField::LinkedToNote
+                | NoteField::LinkedFromNote
+                | NoteField::PrerequisiteOf
+                | NoteField::DependentOf
+        )
     ) && !matches!(op, Op::Tilde)
     {
         let value = value_context
@@ -3942,6 +4202,135 @@ mod tests {
         assert_eq!(search("linked_to_note=(-tag=math)").await, ["b", "c"]);
         // Still a single note without parentheses
         assert_eq!(search("linked_to_note=x").await, ["c"]);
+    }
+
+    #[sqlx::test]
+    async fn searches_notes_along_chains_of_links(pool: SqlitePool) {
+        let exec = async |sql: &str| {
+            sqlx::query(AssertSqlSafe(sql))
+                .execute(&pool)
+                .await
+                .unwrap();
+        };
+        let id = |letters: &str| letters.parse::<NoteId>().unwrap().packed();
+        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        exec("INSERT INTO tag (id, name, description, auto_delete) VALUES (1, 'top', '', 0)").await;
+        exec("INSERT INTO tag (id, name, description, auto_delete) VALUES (2, 'fa', '', 0)").await;
+        // `s` (tagged `top`) -> `a` (fa) -> `b` (fa) -> `c` (fa) -> `a`, a cycle, and
+        // `s` -> `m` (untagged) -> `d` (fa). `x` links to `s`. `u` is unlinked.
+        for letters in ["s", "a", "b", "c", "m", "d", "x", "u"] {
+            exec(&format!(
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES ({}, '', 0, 0, '{{}}', 1)",
+                id(letters)
+            ))
+            .await;
+        }
+        for (note, tag) in [("s", 1), ("a", 2), ("b", 2), ("c", 2), ("d", 2)] {
+            exec(&format!(
+                "INSERT INTO note_tag (note_id, tag_id) VALUES ({}, {tag})",
+                id(note)
+            ))
+            .await;
+        }
+        let links = [
+            ("s", "a"),
+            ("a", "b"),
+            ("b", "c"),
+            ("c", "a"),
+            ("s", "m"),
+            ("m", "d"),
+            ("x", "s"),
+        ];
+        for (order, (from, to)) in links.into_iter().enumerate() {
+            exec(&format!(
+                "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword) VALUES ({}, {}, {order}, 'k')",
+                id(from),
+                id(to)
+            ))
+            .await;
+        }
+        // A link that matched no note is not followed.
+        exec(&format!(
+            "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword) VALUES ({}, NULL, 9, 'missing')",
+            id("d")
+        ))
+        .await;
+        let search = async |query: &str| {
+            let mut ids = Evaluator::new(query)
+                .get_note_ids(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{query}: {e}"))
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        };
+        assert_eq!(
+            search("prerequisite_of=(tag=top)").await,
+            ["a", "b", "c", "d", "m"]
+        );
+        assert_eq!(
+            search("prerequisite_of=(tag=top depth<=1)").await,
+            ["a", "m"]
+        );
+        assert_eq!(
+            search("prerequisite_of=(tag=top depth<3)").await,
+            ["a", "b", "d", "m"]
+        );
+        assert_eq!(
+            search("prerequisite_of=(tag=top depth<=1)").await,
+            search("linked_from_note=(tag=top)").await
+        );
+        // Only through `fa` notes: `d` is reached through `m`, which isn't one.
+        assert_eq!(
+            search("prerequisite_of=(tag=top via=(tag=fa))").await,
+            ["a", "b", "c"]
+        );
+        assert_eq!(
+            search("prerequisite_of=(via=(tag=fa) depth<=2 tag=top)").await,
+            ["a", "b"]
+        );
+        // A note of the query itself only when a walk comes back to it.
+        assert_eq!(search("prerequisite_of=(id=a)").await, ["a", "b", "c"]);
+        assert_eq!(search("prerequisite_of=a").await, ["a", "b", "c"]);
+        assert_eq!(search("dependent_of=(id=d)").await, ["m", "s", "x"]);
+        assert_eq!(search("dependent_of=(id=d depth<=1)").await, ["m"]);
+        assert_eq!(
+            search("-prerequisite_of=(tag=top) -tag=top").await,
+            ["u", "x"]
+        );
+        // Options apply to the whole query when it is in its own parentheses.
+        assert_eq!(
+            search("prerequisite_of=((tag=top or id=x) via=(tag=fa))").await,
+            ["a", "b", "c"]
+        );
+        let error = Evaluator::new("prerequisite_of=(tag=top or id=x via=(tag=fa))")
+            .get_note_ids(&pool)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("must apply to the whole query"), "{error}");
+        // Walks nest.
+        assert_eq!(
+            search("prerequisite_of=(prerequisite_of=(tag=top depth<=1) depth<=1)").await,
+            ["b", "d"]
+        );
+        for bad in [
+            "prerequisite_of=(depth<=2)",
+            "prerequisite_of=(tag=top depth<=0)",
+            "prerequisite_of=(tag=top depth>2)",
+            "prerequisite_of=(tag=top via=fa)",
+            "prerequisite_of=(tag=top limit=2)",
+            "prerequisite_of>(tag=top)",
+            "via=(tag=fa)",
+            "prerequisite_of=(tag=top or id=x via=(tag=fa))",
+        ] {
+            assert!(
+                Evaluator::new(bad).get_note_ids(&pool).await.is_err(),
+                "{bad} should be an error"
+            );
+        }
     }
 
     #[sqlx::test]
