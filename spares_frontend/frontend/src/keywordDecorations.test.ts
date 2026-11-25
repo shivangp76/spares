@@ -76,3 +76,56 @@ test("incremental marks agree with a full scan across bracket, prefix and multil
     }
   }
 });
+
+test("visible matches follow the original syntax through simultaneous edits", () => {
+  const list: [number, string][] = [
+    [1, "one"],
+    [2, "two\nlines"],
+  ];
+  const owners = keywordOwners(list);
+  let state = EditorState.create({ doc: "#key[one]\n".repeat(75) });
+  let candidates = keywordRanges(state.doc, owners, null);
+  let seed = 1;
+  const next = (max: number) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed % max;
+  };
+  const inserts = [
+    "#key[one]",
+    "#key([two\nlines]",
+    "#key",
+    "one",
+    "[",
+    "]",
+    "",
+    "\n",
+  ];
+  for (let i = 0; i < 500; i++) {
+    const starts = [
+      next(state.doc.length + 1),
+      next(state.doc.length + 1),
+    ].sort((a, b) => a - b);
+    const changes = starts.map((from, j) => ({
+      from,
+      to: Math.min(from + next(8), starts[j + 1] ?? state.doc.length),
+      insert: inserts[next(inserts.length)],
+    }));
+    const tx = state.update({ changes });
+    candidates = keywordRanges(tx.newDoc, owners, null, {
+      ranges: candidates,
+      changes: tx.changes,
+    });
+    const expected = [];
+    for (const m of tx.newDoc.toString().matchAll(/#key\(?\[([^[\]]+)\]/g)) {
+      if (!owners.has(m[1].trim().toLowerCase())) continue;
+      const start = m.index + m[0].indexOf("[") + 1;
+      expected.push([start, start + m[1].length]);
+    }
+    expect(
+      ranges(visibleKeywordMarks(candidates, 0, tx.newDoc.length)).map(
+        ([a, b]) => [a, b],
+      ),
+    ).toEqual(expected);
+    state = tx.state;
+  }
+});

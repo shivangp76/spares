@@ -1437,10 +1437,19 @@ mod tests {
         assert_eq!(edges, pairs([("d", "c")]));
         assert!(truncated);
 
-        // An empty query finds every note
-        let (nodes, edges, _) = graph(&pool, graph_request(" ")).await;
-        assert_eq!(nodes.len(), 5);
-        assert_eq!(edges.len(), 5);
+        // The extra seed distinguishes exactly full graphs from truncated ones.
+        for (limit, expected, truncated) in [(4, 4, true), (5, 5, false), (6, 5, false)] {
+            let request = NoteGraphRequest {
+                max_nodes: limit,
+                ..graph_request(" ")
+            };
+            let (nodes, edges, was_truncated) = graph(&pool, request).await;
+            assert_eq!(nodes.len(), expected);
+            assert_eq!(was_truncated, truncated);
+            if !truncated {
+                assert_eq!(edges.len(), 5);
+            }
+        }
     }
 
     #[sqlx::test]
