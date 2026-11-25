@@ -1,0 +1,417 @@
+area,workload,phase,sample,revision,unit,value
+link lookup,Continuity / 10 distinct,100 lookups,1,before,ms,4.858583
+link lookup,Continuity / 100 distinct,100 lookups,1,before,ms,3.228541
+link lookup,Continuty / 10 distinct,100 lookups,1,before,ms,3.976292
+link lookup,Continuty / 100 distinct,100 lookups,1,before,ms,3.498
+link lookup,Missing / 10 distinct,100 lookups,1,before,ms,3.4595
+link lookup,Missing / 100 distinct,100 lookups,1,before,ms,3.148292
+review,normal,fetch,1,before,ms,2718.136
+review,normal,rate,1,before,ms,9.55
+review,normal,fetch after rating,1,before,ms,2599.487
+review internals,normal,pace,1,before,ms,1892.968083
+review internals,normal,pace,2,before,ms,1779.327541
+review internals,normal,count,1,before,ms,766.850458
+review internals,normal,count,2,before,ms,810.1485
+review,normal,fetch,2,before,ms,2649.026
+review,normal,rate,2,before,ms,8.476
+review,normal,fetch after rating,2,before,ms,2686.661
+review internals,normal,pace,3,before,ms,1788.891292
+review internals,normal,pace,4,before,ms,1814.535
+review internals,normal,count,3,before,ms,851.572917
+review internals,normal,count,4,before,ms,862.897
+review,normal,fetch,3,before,ms,2651.632
+review,normal,rate,3,before,ms,7.528
+review,normal,fetch after rating,3,before,ms,2706.704
+review internals,normal,pace,5,before,ms,1851.416459
+review internals,normal,pace,6,before,ms,1866.177875
+review internals,normal,count,5,before,ms,792.18225
+review internals,normal,count,6,before,ms,831.356583
+review,normal,fetch,4,before,ms,2672.318
+review,normal,rate,4,before,ms,10.018
+review,normal,fetch after rating,4,before,ms,2669.898
+review internals,normal,pace,7,before,ms,1846.639792
+review internals,normal,pace,8,before,ms,1909.612458
+review internals,normal,count,7,before,ms,817.670333
+review internals,normal,count,8,before,ms,751.099042
+review,normal,fetch,5,before,ms,2528.018
+review,normal,rate,5,before,ms,8.089
+review,normal,fetch after rating,5,before,ms,2502.205
+review internals,normal,pace,9,before,ms,1774.124958
+review internals,normal,pace,10,before,ms,1803.175833
+review internals,normal,count,9,before,ms,745.883667
+review internals,normal,count,10,before,ms,690.809333
+review,normal,fetch,6,before,ms,2523.481
+review,normal,rate,6,before,ms,8.958
+review,normal,fetch after rating,6,before,ms,2577.716
+review internals,normal,pace,11,before,ms,1724.69575
+review internals,normal,pace,12,before,ms,1825.230166
+review internals,normal,count,11,before,ms,790.267667
+review internals,normal,count,12,before,ms,743.272417
+review,normal,fetch,7,before,ms,2699.482
+review,normal,rate,7,before,ms,8.775
+review,normal,fetch after rating,7,before,ms,3061.936
+review internals,normal,pace,13,before,ms,1914.595583
+review internals,normal,pace,14,before,ms,2182.462542
+review internals,normal,count,13,before,ms,777.105917
+review internals,normal,count,14,before,ms,870.780291
+review,normal,fetch,8,before,ms,2707.869
+review,normal,rate,8,before,ms,9.008
+review,normal,fetch after rating,8,before,ms,2614.65
+review internals,normal,pace,15,before,ms,1919.0775
+review internals,normal,pace,16,before,ms,1822.304708
+review internals,normal,count,15,before,ms,777.8425
+review internals,normal,count,16,before,ms,783.2025
+review,normal,fetch,9,before,ms,2608.827
+review,normal,rate,9,before,ms,9.54
+review,normal,fetch after rating,9,before,ms,2615.025
+review internals,normal,pace,17,before,ms,1824.025333
+review internals,normal,pace,18,before,ms,1826.669375
+review internals,normal,count,17,before,ms,776.993375
+review internals,normal,count,18,before,ms,779.469667
+review,normal,fetch,10,before,ms,2629.361
+review,normal,rate,10,before,ms,9.57
+review,normal,fetch after rating,10,before,ms,2685.252
+review internals,normal,pace,19,before,ms,1826.136959
+review internals,normal,pace,20,before,ms,1833.585417
+review internals,normal,count,19,before,ms,795.249292
+review internals,normal,count,20,before,ms,842.360459
+review,narrow,fetch,1,before,ms,2261.502
+review,narrow,rate,1,before,ms,9.104
+review,narrow,fetch after rating,1,before,ms,2198.964
+review internals,narrow,pace,1,before,ms,1871.71625
+review internals,narrow,pace,2,before,ms,1817.246459
+review internals,narrow,count,1,before,ms,384.226834
+review internals,narrow,count,2,before,ms,376.357417
+review,narrow,fetch,2,before,ms,2275.193
+review,narrow,rate,2,before,ms,10.871
+review,narrow,fetch after rating,2,before,ms,2206.755
+review internals,narrow,pace,3,before,ms,1880.43425
+review internals,narrow,pace,4,before,ms,1820.1725
+review internals,narrow,count,3,before,ms,389.178583
+review internals,narrow,count,4,before,ms,381.007792
+review,narrow,fetch,3,before,ms,2229.583
+review,narrow,rate,3,before,ms,9.908
+review,narrow,fetch after rating,3,before,ms,2199.793
+review internals,narrow,pace,5,before,ms,1805.5905
+review internals,narrow,pace,6,before,ms,1817.005208
+review internals,narrow,count,5,before,ms,418.3715
+review internals,narrow,count,6,before,ms,377.268917
+review,narrow,fetch,4,before,ms,2188.504
+review,narrow,rate,4,before,ms,8.125
+review,narrow,fetch after rating,4,before,ms,2189.728
+review internals,narrow,pace,7,before,ms,1807.7285
+review internals,narrow,pace,8,before,ms,1807.792042
+review internals,narrow,count,7,before,ms,375.077041
+review internals,narrow,count,8,before,ms,376.361
+review,narrow,fetch,5,before,ms,2233.801
+review,narrow,rate,5,before,ms,8.24
+review,narrow,fetch after rating,5,before,ms,2224.786
+review internals,narrow,pace,9,before,ms,1843.88525
+review internals,narrow,pace,10,before,ms,1837.278625
+review internals,narrow,count,9,before,ms,384.426709
+review internals,narrow,count,10,before,ms,381.521583
+review,narrow,fetch,6,before,ms,2197.581
+review,narrow,rate,6,before,ms,7.587
+review,narrow,fetch after rating,6,before,ms,2200.893
+review internals,narrow,pace,11,before,ms,1813.298708
+review internals,narrow,pace,12,before,ms,1818.168542
+review internals,narrow,count,11,before,ms,378.398708
+review internals,narrow,count,12,before,ms,377.708751
+review,narrow,fetch,7,before,ms,2235.37
+review,narrow,rate,7,before,ms,9.498
+review,narrow,fetch after rating,7,before,ms,2247.849
+review internals,narrow,pace,13,before,ms,1831.884667
+review internals,narrow,pace,14,before,ms,1857.229375
+review internals,narrow,count,13,before,ms,398.041917
+review internals,narrow,count,14,before,ms,385.360292
+review,narrow,fetch,8,before,ms,2191.7
+review,narrow,rate,8,before,ms,9.563
+review,narrow,fetch after rating,8,before,ms,2211.145
+review internals,narrow,pace,15,before,ms,1807.989542
+review internals,narrow,pace,16,before,ms,1823.497583
+review internals,narrow,count,15,before,ms,378.491334
+review internals,narrow,count,16,before,ms,382.355376
+review,narrow,fetch,9,before,ms,2237.487
+review,narrow,rate,9,before,ms,11.272
+review,narrow,fetch after rating,9,before,ms,2240.425
+review internals,narrow,pace,17,before,ms,1839.835125
+review internals,narrow,pace,18,before,ms,1859.759292
+review internals,narrow,count,17,before,ms,392.394499
+review internals,narrow,count,18,before,ms,375.070833
+review,narrow,fetch,10,before,ms,2212.285
+review,narrow,rate,10,before,ms,8.953
+review,narrow,fetch after rating,10,before,ms,2242.055
+review internals,narrow,pace,19,before,ms,1813.202167
+review internals,narrow,pace,20,before,ms,1821.076959
+review internals,narrow,count,19,before,ms,393.64475
+review internals,narrow,count,20,before,ms,415.465667
+stored links,10 target numbers,1000 links,1,before,ms,32.517667
+stored links,1000 target numbers,1000 links,1,before,ms,33.414417
+offline refresh,initial,wall,1,before,ms,70.1
+offline refresh,initial,main thread,1,before,ms,77.849
+offline refresh,initial,serialized metadata,1,before,bytes,16875583.0
+offline refresh,unchanged,wall,1,before,ms,4.0
+offline refresh,unchanged,main thread,1,before,ms,4.342
+offline refresh,unchanged,serialized metadata,1,before,bytes,368508.0
+offline refresh,edit,wall,1,before,ms,3.6
+offline refresh,edit,main thread,1,before,ms,3.963
+offline refresh,edit,serialized metadata,1,before,bytes,368508.0
+offline refresh,cold,wall,1,before,ms,4.0
+offline refresh,cold,main thread,1,before,ms,4.271
+offline refresh,cold,serialized metadata,1,before,bytes,368508.0
+offline refresh,initial,wall,2,before,ms,64.3
+offline refresh,initial,main thread,2,before,ms,71.053
+offline refresh,initial,serialized metadata,2,before,bytes,16875583.0
+offline refresh,unchanged,wall,2,before,ms,3.6
+offline refresh,unchanged,main thread,2,before,ms,4.094
+offline refresh,unchanged,serialized metadata,2,before,bytes,368508.0
+offline refresh,edit,wall,2,before,ms,3.5
+offline refresh,edit,main thread,2,before,ms,3.983
+offline refresh,edit,serialized metadata,2,before,bytes,368508.0
+offline refresh,cold,wall,2,before,ms,3.8
+offline refresh,cold,main thread,2,before,ms,4.079
+offline refresh,cold,serialized metadata,2,before,bytes,368508.0
+offline refresh,initial,wall,3,before,ms,66.5
+offline refresh,initial,main thread,3,before,ms,73.55
+offline refresh,initial,serialized metadata,3,before,bytes,16875583.0
+offline refresh,unchanged,wall,3,before,ms,3.9
+offline refresh,unchanged,main thread,3,before,ms,4.293
+offline refresh,unchanged,serialized metadata,3,before,bytes,368508.0
+offline refresh,edit,wall,3,before,ms,3.7
+offline refresh,edit,main thread,3,before,ms,4.19
+offline refresh,edit,serialized metadata,3,before,bytes,368508.0
+offline refresh,cold,wall,3,before,ms,3.8
+offline refresh,cold,main thread,3,before,ms,4.279
+offline refresh,cold,serialized metadata,3,before,bytes,368508.0
+offline refresh,initial,wall,4,before,ms,68.7
+offline refresh,initial,main thread,4,before,ms,75.598
+offline refresh,initial,serialized metadata,4,before,bytes,16875583.0
+offline refresh,unchanged,wall,4,before,ms,3.7
+offline refresh,unchanged,main thread,4,before,ms,4.16
+offline refresh,unchanged,serialized metadata,4,before,bytes,368508.0
+offline refresh,edit,wall,4,before,ms,3.7
+offline refresh,edit,main thread,4,before,ms,4.188
+offline refresh,edit,serialized metadata,4,before,bytes,368508.0
+offline refresh,cold,wall,4,before,ms,3.8
+offline refresh,cold,main thread,4,before,ms,4.205
+offline refresh,cold,serialized metadata,4,before,bytes,368508.0
+offline refresh,initial,wall,5,before,ms,68.3
+offline refresh,initial,main thread,5,before,ms,75.439
+offline refresh,initial,serialized metadata,5,before,bytes,16875583.0
+offline refresh,unchanged,wall,5,before,ms,3.7
+offline refresh,unchanged,main thread,5,before,ms,4.18
+offline refresh,unchanged,serialized metadata,5,before,bytes,368508.0
+offline refresh,edit,wall,5,before,ms,3.7
+offline refresh,edit,main thread,5,before,ms,4.127
+offline refresh,edit,serialized metadata,5,before,bytes,368508.0
+offline refresh,cold,wall,5,before,ms,4.0
+offline refresh,cold,main thread,5,before,ms,4.302
+offline refresh,cold,serialized metadata,5,before,bytes,368508.0
+link lookup,Continuity / 10 distinct,100 lookups,1,after,ms,0.243583
+link lookup,Continuity / 100 distinct,100 lookups,1,after,ms,0.025792
+link lookup,Continuty / 10 distinct,100 lookups,1,after,ms,0.370667
+link lookup,Continuty / 100 distinct,100 lookups,1,after,ms,0.21025
+link lookup,Missing / 10 distinct,100 lookups,1,after,ms,0.137625
+link lookup,Missing / 100 distinct,100 lookups,1,after,ms,0.169333
+review,normal,fetch,1,after,ms,264.582
+review,normal,rate,1,after,ms,9.312
+review,normal,fetch after rating,1,after,ms,49.896
+review internals,normal,pace,1,after,ms,29.728709
+review internals,normal,pace,2,after,ms,28.564083
+review internals,normal,count,1,after,ms,187.683749
+review internals,normal,count,2,after,ms,11.980708
+review,normal,fetch,2,after,ms,45.82
+review,normal,rate,2,after,ms,7.373
+review,normal,fetch after rating,2,after,ms,47.805
+review internals,normal,pace,3,after,ms,28.291709
+review internals,normal,pace,4,after,ms,28.236042
+review internals,normal,count,3,after,ms,9.501958
+review internals,normal,count,4,after,ms,11.275791
+review,normal,fetch,3,after,ms,44.992
+review,normal,rate,3,after,ms,7.11
+review,normal,fetch after rating,3,after,ms,48.876
+review internals,normal,pace,5,after,ms,27.973125
+review internals,normal,pace,6,after,ms,28.330875
+review internals,normal,count,5,after,ms,9.476458
+review internals,normal,count,6,after,ms,11.645958
+review,normal,fetch,4,after,ms,49.133
+review,normal,rate,4,after,ms,10.491
+review,normal,fetch after rating,4,after,ms,49.609
+review internals,normal,pace,7,after,ms,30.567625
+review internals,normal,pace,8,after,ms,28.738833
+review internals,normal,count,7,after,ms,10.241207
+review internals,normal,count,8,after,ms,11.952708
+review,normal,fetch,5,after,ms,46.224
+review,normal,rate,5,after,ms,7.764
+review,normal,fetch after rating,5,after,ms,50.055
+review internals,normal,pace,9,after,ms,28.456417
+review internals,normal,pace,10,after,ms,29.2235
+review internals,normal,count,9,after,ms,9.873375
+review internals,normal,count,10,after,ms,11.832167
+review,normal,fetch,6,after,ms,48.053
+review,normal,rate,6,after,ms,7.887
+review,normal,fetch after rating,6,after,ms,51.694
+review internals,normal,pace,11,after,ms,29.603334
+review internals,normal,pace,12,after,ms,30.37975
+review internals,normal,count,11,after,ms,10.029458
+review internals,normal,count,12,after,ms,12.092917
+review,normal,fetch,7,after,ms,48.943
+review,normal,rate,7,after,ms,8.858
+review,normal,fetch after rating,7,after,ms,49.684
+review internals,normal,pace,13,after,ms,29.241291
+review internals,normal,pace,14,after,ms,29.788792
+review internals,normal,count,13,after,ms,9.851833
+review internals,normal,count,14,after,ms,10.830417
+review,normal,fetch,8,after,ms,48.603
+review,normal,rate,8,after,ms,7.093
+review,normal,fetch after rating,8,after,ms,51.515
+review internals,normal,pace,15,after,ms,29.173417
+review internals,normal,pace,16,after,ms,30.288667
+review internals,normal,count,15,after,ms,11.341875
+review internals,normal,count,16,after,ms,12.047583
+review,normal,fetch,9,after,ms,50.358
+review,normal,rate,9,after,ms,9.909
+review,normal,fetch after rating,9,after,ms,50.151
+review internals,normal,pace,17,after,ms,29.986875
+review internals,normal,pace,18,after,ms,29.885625
+review internals,normal,count,17,after,ms,12.473042
+review internals,normal,count,18,after,ms,11.387542
+review,normal,fetch,10,after,ms,49.677
+review,normal,rate,10,after,ms,8.428
+review,normal,fetch after rating,10,after,ms,49.502
+review internals,normal,pace,19,after,ms,29.592458
+review internals,normal,pace,20,after,ms,29.019042
+review internals,normal,count,19,after,ms,12.216542
+review internals,normal,count,20,after,ms,11.321417
+review,narrow,fetch,1,after,ms,37.685
+review,narrow,rate,1,after,ms,8.064
+review,narrow,fetch after rating,1,after,ms,38.253
+review internals,narrow,pace,1,after,ms,29.390292
+review internals,narrow,pace,2,after,ms,29.376833
+review internals,narrow,count,1,after,ms,2.092708
+review internals,narrow,count,2,after,ms,3.280667
+review,narrow,fetch,2,after,ms,36.377
+review,narrow,rate,2,after,ms,7.741
+review,narrow,fetch after rating,2,after,ms,36.139
+review internals,narrow,pace,3,after,ms,30.027625
+review internals,narrow,pace,4,after,ms,28.232542
+review internals,narrow,count,3,after,ms,1.697001
+review internals,narrow,count,4,after,ms,2.925833
+review,narrow,fetch,3,after,ms,33.591
+review,narrow,rate,3,after,ms,7.575
+review,narrow,fetch after rating,3,after,ms,36.229
+review internals,narrow,pace,5,after,ms,28.145083
+review internals,narrow,pace,6,after,ms,28.680042
+review internals,narrow,count,5,after,ms,1.256292
+review internals,narrow,count,6,after,ms,2.472166
+review,narrow,fetch,4,after,ms,33.713
+review,narrow,rate,4,after,ms,6.55
+review,narrow,fetch after rating,4,after,ms,37.843
+review internals,narrow,pace,7,after,ms,27.909792
+review internals,narrow,pace,8,after,ms,30.116125
+review internals,narrow,count,7,after,ms,1.290792
+review internals,narrow,count,8,after,ms,2.819041
+review,narrow,fetch,5,after,ms,34.018
+review,narrow,rate,5,after,ms,6.104
+review,narrow,fetch after rating,5,after,ms,36.103
+review internals,narrow,pace,9,after,ms,27.955375
+review internals,narrow,pace,10,after,ms,28.157
+review internals,narrow,count,9,after,ms,1.522417
+review internals,narrow,count,10,after,ms,2.428834
+review,narrow,fetch,6,after,ms,35.655
+review,narrow,rate,6,after,ms,6.591
+review,narrow,fetch after rating,6,after,ms,35.747
+review internals,narrow,pace,11,after,ms,29.450291
+review internals,narrow,pace,12,after,ms,28.164125
+review internals,narrow,count,11,after,ms,1.321
+review internals,narrow,count,12,after,ms,2.631667
+review,narrow,fetch,7,after,ms,34.21
+review,narrow,rate,7,after,ms,7.707
+review,narrow,fetch after rating,7,after,ms,41.36
+review internals,narrow,pace,13,after,ms,28.187917
+review internals,narrow,pace,14,after,ms,30.589333
+review internals,narrow,count,13,after,ms,1.232333
+review internals,narrow,count,14,after,ms,2.418667
+review,narrow,fetch,8,after,ms,39.214
+review,narrow,rate,8,after,ms,8.051
+review,narrow,fetch after rating,8,after,ms,37.595
+review internals,narrow,pace,15,after,ms,31.359792
+review internals,narrow,pace,16,after,ms,28.559584
+review internals,narrow,count,15,after,ms,1.853625
+review internals,narrow,count,16,after,ms,3.428416
+review,narrow,fetch,9,after,ms,34.623
+review,narrow,rate,9,after,ms,7.94
+review,narrow,fetch after rating,9,after,ms,36.93
+review internals,narrow,pace,17,after,ms,28.452417
+review internals,narrow,pace,18,after,ms,28.614625
+review internals,narrow,count,17,after,ms,1.473583
+review internals,narrow,count,18,after,ms,2.701208
+review,narrow,fetch,10,after,ms,34.922
+review,narrow,rate,10,after,ms,8.025
+review,narrow,fetch after rating,10,after,ms,37.112
+review internals,narrow,pace,19,after,ms,28.544542
+review internals,narrow,pace,20,after,ms,28.535375
+review internals,narrow,count,19,after,ms,1.51425
+review internals,narrow,count,20,after,ms,2.821167
+stored links,10 target numbers,1000 links,1,after,ms,22.157917
+stored links,1000 target numbers,1000 links,1,after,ms,20.92675
+offline refresh,initial,wall,1,after,ms,27.7
+offline refresh,initial,main thread,1,after,ms,19.117
+offline refresh,initial,serialized metadata,1,after,bytes,413231.0
+offline refresh,unchanged,wall,1,after,ms,1.9
+offline refresh,unchanged,main thread,1,after,ms,2.326
+offline refresh,unchanged,serialized metadata,1,after,bytes,0.0
+offline refresh,edit,wall,1,after,ms,2.7
+offline refresh,edit,main thread,1,after,ms,2.203
+offline refresh,edit,serialized metadata,1,after,bytes,303.0
+offline refresh,cold,wall,1,after,ms,5.8
+offline refresh,cold,main thread,1,after,ms,4.821
+offline refresh,cold,serialized metadata,1,after,bytes,0.0
+offline refresh,initial,wall,2,after,ms,18.3
+offline refresh,initial,main thread,2,after,ms,12.558
+offline refresh,initial,serialized metadata,2,after,bytes,413231.0
+offline refresh,unchanged,wall,2,after,ms,2.1
+offline refresh,unchanged,main thread,2,after,ms,2.405
+offline refresh,unchanged,serialized metadata,2,after,bytes,0.0
+offline refresh,edit,wall,2,after,ms,2.7
+offline refresh,edit,main thread,2,after,ms,2.2
+offline refresh,edit,serialized metadata,2,after,bytes,303.0
+offline refresh,cold,wall,2,after,ms,4.1
+offline refresh,cold,main thread,2,after,ms,4.044
+offline refresh,cold,serialized metadata,2,after,bytes,0.0
+offline refresh,initial,wall,3,after,ms,17.9
+offline refresh,initial,main thread,3,after,ms,12.273
+offline refresh,initial,serialized metadata,3,after,bytes,413231.0
+offline refresh,unchanged,wall,3,after,ms,2.0
+offline refresh,unchanged,main thread,3,after,ms,2.383
+offline refresh,unchanged,serialized metadata,3,after,bytes,0.0
+offline refresh,edit,wall,3,after,ms,2.6
+offline refresh,edit,main thread,3,after,ms,2.055
+offline refresh,edit,serialized metadata,3,after,bytes,303.0
+offline refresh,cold,wall,3,after,ms,4.1
+offline refresh,cold,main thread,3,after,ms,3.756
+offline refresh,cold,serialized metadata,3,after,bytes,0.0
+offline refresh,initial,wall,4,after,ms,16.6
+offline refresh,initial,main thread,4,after,ms,11.604
+offline refresh,initial,serialized metadata,4,after,bytes,413231.0
+offline refresh,unchanged,wall,4,after,ms,1.9
+offline refresh,unchanged,main thread,4,after,ms,2.226
+offline refresh,unchanged,serialized metadata,4,after,bytes,0.0
+offline refresh,edit,wall,4,after,ms,2.4
+offline refresh,edit,main thread,4,after,ms,1.929
+offline refresh,edit,serialized metadata,4,after,bytes,303.0
+offline refresh,cold,wall,4,after,ms,3.7
+offline refresh,cold,main thread,4,after,ms,3.508
+offline refresh,cold,serialized metadata,4,after,bytes,0.0
+offline refresh,initial,wall,5,after,ms,16.4
+offline refresh,initial,main thread,5,after,ms,11.333
+offline refresh,initial,serialized metadata,5,after,bytes,413231.0
+offline refresh,unchanged,wall,5,after,ms,2.2
+offline refresh,unchanged,main thread,5,after,ms,2.562
+offline refresh,unchanged,serialized metadata,5,after,bytes,0.0
+offline refresh,edit,wall,5,after,ms,2.5
+offline refresh,edit,main thread,5,after,ms,2.109
+offline refresh,edit,serialized metadata,5,after,bytes,303.0
+offline refresh,cold,wall,5,after,ms,4.4
+offline refresh,cold,main thread,5,after,ms,4.134
+offline refresh,cold,serialized metadata,5,after,bytes,0.0

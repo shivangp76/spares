@@ -280,14 +280,14 @@ fn rematch_note_links(
         .iter()
         .map(|link| link.searched_keyword.as_str())
         .collect();
-    let matches: HashMap<_, _> = searches
+    let resolved: HashMap<_, _> = searches
         .into_par_iter()
         .map(|text| (text, matcher.best_match(text)))
         .collect();
     existing_note_links
         .par_iter()
         .filter_map(|existing_link| {
-            let matched_keyword_data = &matches[existing_link.searched_keyword.as_str()];
+            let matched_keyword_data = &resolved[existing_link.searched_keyword.as_str()];
             let target_changed = matched_keyword_data
                 .as_ref()
                 .map(|x| x.matched_keyword.clone())
