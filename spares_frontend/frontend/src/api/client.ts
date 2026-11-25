@@ -66,7 +66,7 @@ import {
 import { loginPath } from "../login";
 import { reportServerReachable } from "./reachability";
 
-const STORAGE_KEY = "spares_credentials";
+import { credentialsKey as STORAGE_KEY, copyAccount, requireCopyAccount } from "../local/copyScope";
 
 /**
  * The host the web app talks to: the one that serves it. The host only takes requests from its
@@ -233,6 +233,7 @@ async function cacheListPage<T>(
 
 /** For a `FormData` body, without `Content-Type`, which the browser sets with the multipart boundary. */
 function authHeaders(body?: RequestInit["body"]): HeadersInit {
+  if (copyAccount) requireCopyAccount();
   const { csrfToken } = getCredentials();
   if (body instanceof FormData) return { "X-CSRF-Token": csrfToken };
   if (body instanceof Blob)

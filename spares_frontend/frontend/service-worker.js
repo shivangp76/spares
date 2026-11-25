@@ -45,7 +45,7 @@ self.addEventListener("install", (event) => {
     (async () => {
       const page = await caches.open(PAGE_CACHE);
       await page.add(new Request(PAGE_URL, { cache: "reload" }));
-      const localCopy = await caches.has(LOCAL_COPY_MARKER);
+      const localCopy = (await caches.keys()).some((name) => name === LOCAL_COPY_MARKER || name.startsWith(LOCAL_COPY_MARKER + ":"));
       if (localCopy) await cacheEditor(page);
       const assets = await caches.open(ASSETS_CACHE);
       const cached = new Set(

@@ -58,13 +58,13 @@ thread_local! {
 }
 
 /// Installs the VFS once per worker.
-async fn vfs() -> Result<OpfsSAHPoolUtil, JsValue> {
+async fn vfs(directory: &str) -> Result<OpfsSAHPoolUtil, JsValue> {
     if let Some(vfs) = VFS.with(|v| v.borrow().clone()) {
         return Ok(vfs);
     }
     // Room for both databases with their journals and a full sync's snapshot
     let cfg = OpfsSAHPoolCfgBuilder::new()
-        .directory("spares")
+        .directory(directory)
         .initial_capacity(10)
         .build();
     let vfs = install::<sqlite_wasm_rs::WasmOsCallback>(&cfg, true)
@@ -76,6 +76,43 @@ async fn vfs() -> Result<OpfsSAHPoolUtil, JsValue> {
         })?;
     VFS.with(|v| *v.borrow_mut() = Some(vfs.clone()));
     Ok(vfs)
+}
+
+/// Check the old directory without migrating it or returning collection data to the page.
+pub(crate) async fn legacy_matches(
+    account: &str,
+    epoch: &str,
+    replica: u8,
+) -> Result<bool, JsValue> {
+    let vfs = vfs("spares").await?;
+    for file in [DEVICE_FILE, DB_FILE] {
+        if !vfs
+            .contains(file)
+            .map_err(|e| js_error(&format!("{e:?}")))?
+        {
+            return Err(js_error("The older database files could not be located."));
+        }
+    }
+    let device = connect(DEVICE_FILE).await?;
+    if load_replica(&device).await?.map(Replica::number) != Some(replica) {
+        return Err(js_error(
+            "The saved replica number differs from the enrollment.",
+        ));
+    }
+    let image_dir = get_state(&device, "image_dir").await?.unwrap_or_default();
+    let suffix = format!("/users/{account}/media/images");
+    if !image_dir.replace('\\', "/").ends_with(&suffix) {
+        return Err(js_error(
+            "The saved media location does not identify this account.",
+        ));
+    }
+    let db = connect(DB_FILE).await?;
+    let saved: Option<String> = sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
+        .bind(spares_core::sync::SYNC_EPOCH_KEY)
+        .fetch_optional(&db)
+        .await
+        .map_err(sqlx_error)?;
+    Ok(!epoch.is_empty() && saved.as_deref() == Some(epoch))
 }
 
 /// The storage, once [`open`] has run.
@@ -106,11 +143,11 @@ async fn connect(file: &str) -> Result<SqlitePool, JsValue> {
 
 /// Installs the VFS, opens both databases, migrates the collection, and makes the device's replica
 /// and config the ones `spares_core` uses. Later calls return what the first set up.
-pub(crate) async fn open() -> Result<Opened, JsValue> {
+pub(crate) async fn open(directory: &str) -> Result<Opened, JsValue> {
     if let Ok(opened) = opened() {
         return Ok(opened);
     }
-    let vfs = vfs().await?;
+    let vfs = vfs(directory).await?;
     // Snapshots a sync left behind when the page closed during it
     for file in TEMP_FILES {
         remove_file(&vfs, file)?;

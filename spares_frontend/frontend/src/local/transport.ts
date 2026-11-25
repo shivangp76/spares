@@ -19,12 +19,21 @@ import type {
   WorkerRequest,
 } from "./worker";
 
-const COPY_KEY = "spares_local_copy";
-const LOCK_NAME = "spares-db";
+import {
+  accountSuffix,
+  copyAccount,
+  copyDirectory,
+  copyKey,
+  legacyCopyKey,
+  requireCopyAccount,
+} from "./copyScope";
+
+const COPY_KEY = copyKey(legacyCopyKey);
+const LOCK_NAME = copyKey("spares-db");
 
 /** Where the copy keeps the rendered files and render assets it downloads (see copy.ts), by URL on its server. */
-export const COPY_FILES_CACHE = "spares-copy-files";
-export const COPY_RENDER_ASSETS_CACHE = "spares-copy-render-assets";
+export const COPY_FILES_CACHE = copyKey("spares-copy-files");
+export const COPY_RENDER_ASSETS_CACHE = copyKey("spares-copy-render-assets");
 
 /** The copy this device keeps, as set up in Settings. It syncs with the host that serves the page. */
 export interface LocalCopy {
@@ -38,13 +47,17 @@ export interface LocalCopy {
 export function getLocalCopy(): LocalCopy | null {
   try {
     const raw = localStorage.getItem(COPY_KEY);
-    return raw ? (JSON.parse(raw) as LocalCopy) : null;
+    if (!raw || !copyAccount) return null;
+    requireCopyAccount();
+    const copy = JSON.parse(raw) as LocalCopy;
+    return copy.collectionId === copyAccount ? copy : null;
   } catch {
     return null;
   }
 }
 
 export function setLocalCopy(copy: LocalCopy | null): void {
+  requireCopyAccount();
   if (copy) localStorage.setItem(COPY_KEY, JSON.stringify(copy));
   else localStorage.removeItem(COPY_KEY);
 }
@@ -155,7 +168,7 @@ function takeLock(): Promise<boolean> {
 
 // Other tabs
 
-const CHANNEL_NAME = "spares-copy";
+const CHANNEL_NAME = "spares-copy" + accountSuffix;
 /** How long a request waits for the tab with the copy to say it has it */
 const ACK_MS = 5 * 1000;
 /**
@@ -441,6 +454,7 @@ function post<T>(
   args: unknown[],
   transfer: Transferable[] = [],
 ): Promise<T> {
+  requireCopyAccount();
   if (owner === "elsewhere") return askCopyTab<T>({ kind: "call", op, args });
   worker ??= startWorker();
   const id = nextId++;
@@ -467,6 +481,7 @@ function storageStillHeld(e: unknown): boolean {
 
 /** Opens the copy in this tab, creating an empty one the first time, and returns its status (see `call('status')`). */
 export function openCopy(): Promise<unknown> {
+  requireCopyAccount();
   if (released)
     return Promise.reject(
       new LocalError("This page was left, so it has closed the copy."),
@@ -477,7 +492,7 @@ export function openCopy(): Promise<unknown> {
     const started = Date.now();
     for (let wait = 100; ; wait = Math.min(wait * 2, 2000)) {
       try {
-        return await post("open", []);
+        return await post("open", [copyDirectory]);
       } catch (e) {
         if (!storageStillHeld(e) || Date.now() - started > OPEN_RETRY_MS)
           throw e;

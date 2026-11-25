@@ -87,6 +87,7 @@ self.fetch = async (input, init) => {
 
 const calls = {
   open: spares.open,
+  legacy_matches: spares.legacy_matches,
   status: spares.status,
   handle: spares.handle,
   enroll: spares.enroll,

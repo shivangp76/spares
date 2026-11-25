@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import {
   NetworkError,
   getCredentials,
@@ -16,7 +16,6 @@ import { nextPath } from "../login";
 import { errorMessage } from "../utils";
 
 export default function LoginPage() {
-  const navigate = useNavigate();
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [checking, setChecking] = useState(false);
@@ -56,7 +55,7 @@ export default function LoginPage() {
         accountId: session.accountId,
         schedulerName: schedulerToUse(schedulers),
       });
-      navigate(next, { replace: true });
+      window.location.replace(next);
     } catch (e) {
       if (e instanceof NetworkError) {
         setError(

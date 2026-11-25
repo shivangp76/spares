@@ -718,6 +718,18 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       return;
     }
     await firstReviewAndDrafts(page, engine);
+    // WebKit exercises the old physical directory; other engines use the new per-account layout.
+    const cacheSuffix = engine === "webkit" ? "" : ":" + USER;
+    if (engine === "webkit") {
+      await page.evaluate(
+        (user) =>
+          localStorage.setItem(
+            "spares_local_copy",
+            JSON.stringify({ replica: 2, ready: false, collectionId: user }),
+          ),
+        USER,
+      );
+    }
     // Controlled by the service worker from here on, so the app opens offline
     await page.evaluate(() => navigator.serviceWorker.ready);
     // A card's image occlusion without masks, from the server
@@ -730,7 +742,9 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     // 1. Set up the copy
     const started = performance.now();
     await page
-      .getByRole("button", { name: "Keep a Copy on This Device" })
+      .getByRole("button", {
+        name: /Keep a Copy on This Device|Finish Setting Up/,
+      })
       .click();
     await see(page, /now keeps a copy of the collection/);
     check(
@@ -768,6 +782,81 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       null,
       { timeout: TIMEOUT, polling: 500 },
     );
+
+    if (engine === "webkit") {
+      await context.setOffline(true);
+      await page.goto(`${ORIGIN}/notes`);
+      await createNote(
+        page,
+        "markdown",
+        "Unsynced legacy edit {{ recover me }}",
+      );
+      await page.evaluate(() => {
+        const copy = JSON.parse(localStorage.getItem("spares_local_copy")!);
+        delete copy.collectionId;
+        localStorage.setItem("spares_local_copy", JSON.stringify(copy));
+      });
+      await page.goto(`${ORIGIN}/settings`);
+      await context.setOffline(false);
+      check(
+        "the legacy edit exists only in the browser",
+        (await serverNotes('"Unsynced legacy edit"')).length === 0,
+      );
+    }
+    await logIn(page, `first-${engine}`);
+    await page.goto(`${ORIGIN}/settings`);
+    await page
+      .getByRole("button", { name: "Keep a Copy on This Device" })
+      .waitFor();
+    if (engine === "webkit") {
+      await page.getByRole("button", { name: "Recover older copy" }).click();
+      await see(page, /older copy has been preserved/);
+    }
+    await page
+      .getByRole("button", { name: "Keep a Copy on This Device" })
+      .click();
+    await see(page, /now keeps a copy of the collection/);
+    await context.setOffline(true);
+    await page.goto(`${ORIGIN}/notes`);
+    await page.getByPlaceholder("Search notes…").fill('"First card"');
+    await page.keyboard.press("Enter");
+    await page
+      .getByRole("row")
+      .filter({ hasText: "First card" })
+      .first()
+      .waitFor();
+    await page.getByPlaceholder("Search notes…").fill('"Occlusion seed"');
+    await page.keyboard.press("Enter");
+    await see(page, /No notes match this search/);
+    check("another account opens only its own collection offline", true);
+    await context.setOffline(false);
+    await logIn(page);
+    await page.goto(`${ORIGIN}/settings`);
+    if (engine === "webkit") {
+      await page.getByRole("button", { name: "Recover older copy" }).click();
+      await Promise.race([
+        page.getByRole("button", { name: "Stop Keeping a Copy" }).waitFor(),
+        page
+          .getByRole("alert")
+          .waitFor()
+          .then(async () => {
+            throw new Error(
+              "Recovering the enrolled copy: " +
+                (await page.getByRole("alert").innerText()),
+            );
+          }),
+      ]);
+    }
+    await page.getByRole("button", { name: "Stop Keeping a Copy" }).waitFor();
+
+    if (engine === "webkit") {
+      await page.getByRole("button", { name: /^Sync/ }).click();
+      await see(page, /Synced: received|Already in sync/);
+      check(
+        "verified recovery preserves and syncs the original offline edit",
+        (await serverNotes('"Unsynced legacy edit"')).length === 1,
+      );
+    }
 
     // A page put into the back-forward cache lets go of the copy, so the page after it can open
     // it, and opens it again when shown. The events are dispatched, since whether a page is cached
@@ -1156,14 +1245,16 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       note.data.startsWith("# Offline"),
     )!;
     await page.waitForFunction(
-      async (letters) => {
-        const keys = await (await caches.open("spares-copy-files")).keys();
+      async ([letters, suffix]) => {
+        const keys = await (
+          await caches.open("spares-copy-files" + suffix)
+        ).keys();
         return keys.some(
           (request) =>
             request.url.includes(letters) && request.url.endsWith(".html"),
         );
       },
-      formatNoteId(rendered.id),
+      [formatNoteId(rendered.id), cacheSuffix],
       { timeout: TIMEOUT, polling: 500 },
     );
     // After the downloads, the web app tells the device which HTML it has
@@ -1302,7 +1393,21 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       (await api<unknown[]>("GET", "/api/sync/devices")).length === 0,
     );
     check(
-      "stopping deleted pandoc.wasm",
+      "another account still has the shared Markdown compiler",
+      await page.evaluate(() => caches.has("spares-copy-pandoc")),
+    );
+    await logIn(page, `first-${engine}`);
+    await page.goto(`${ORIGIN}/settings`);
+    await page.getByRole("button", { name: "Stop Keeping a Copy" }).click();
+    await page
+      .getByRole("dialog", { name: "Stop keeping a copy on this device?" })
+      .getByRole("button", { name: "Stop keeping a copy" })
+      .click();
+    await page
+      .getByRole("button", { name: "Keep a Copy on This Device" })
+      .waitFor();
+    check(
+      "removing the last copy releases the compiler",
       !(await page.evaluate(() => caches.has("spares-copy-pandoc"))),
     );
   } catch (e) {

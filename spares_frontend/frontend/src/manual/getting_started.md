@@ -86,10 +86,14 @@ Rendering a Markdown note also writes an HTML file, which the web app shows inst
 
 #### Keeping a copy on this device
 
+Each account keeps its own offline database and downloaded files in this browser. Logging out keeps unsynced edits for the next time that account logs in. Stopping a copy removes only the current account’s copy.
+
+If Settings offers **Recover older copy**, sign in to the original account while online and choose it before setting up a new copy. Spares checks the device enrollment, collection sync epoch, and saved account media path. When those records cannot identify the owner, the old files stay on this device. Keep the browser’s site data if the older copy might contain unsynced edits.
+
 A browser can keep the whole collection, so the web app works without a connection: reviewing, searching, statistics, and adding and editing notes and tags, with undo. The device schedules cards itself, so a card rated Again comes back after its step. It syncs with the server as your machine does. It needs the server to be reached over HTTPS (or at `localhost`), and storage the page can use, which private windows don't have.
 
 1. On an iPhone or iPad, add the web app to the Home Screen and open it from there: Safari deletes a website's storage after 7 days without a visit, but not a Home Screen app's.
-2. In **Settings → This Device**, choose **Keep a Copy on This Device**. The device registers with the server under the name shown (up to three devices), downloads the collection, and then the rendered cards, the files Typst cards read, and pandoc for Markdown cards (about 11 MB to download, 62 MB of storage).
+2. In **Settings → This Device**, choose **Keep a Copy on This Device**. The device registers with the server under the name shown (up to three devices), downloads the collection, and then the rendered cards, the files Typst cards read, and pandoc for Markdown cards (about 11 MB to download and 62 MB of storage, shared across accounts on this host).
 3. From then on, every page uses the copy, online or not. The navbar shows **Offline** when the server can't be reached, and how many changes haven't been synced.
 
 The copy syncs when the app opens, when it is hidden or closed, when the connection comes back, 30 seconds after the last change (and every 15 minutes while the app stays open), and with the **Sync** button.

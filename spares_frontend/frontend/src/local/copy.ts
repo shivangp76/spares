@@ -20,6 +20,12 @@
 // token only when the credentials are for that server. On every change of credentials, the copy pauses: no
 // syncs or downloads in the background, while the copy and its files stay. It starts again once
 // logged in to its server.
+import {
+  copyKey,
+  legacyCopy,
+  legacyCopyKey,
+  requireCopyAccount,
+} from "./copyScope";
 import { useSyncExternalStore } from "react";
 import {
   clearCaches,
@@ -54,7 +60,11 @@ import {
   usesLocalCopy,
 } from "./transport";
 import { COPY_PANDOC_CACHE, PANDOC_WASM_URL } from "./pandoc";
-import type { CollectionProgress } from "./worker";
+import type {
+  CollectionProgress,
+  WorkerMessage,
+  WorkerRequest,
+} from "./worker";
 
 /** Syncs once nothing changed for this long */
 const IDLE_MS = 30 * 1000;
@@ -71,12 +81,12 @@ const PROGRESS_MS = 250;
 
 // What has been downloaded, by path: a rendered file's mtime, and a render asset's hash. Only
 // `dropCopy` removes them, along with the caches they describe.
-const FILES_KEY = "spares_copy_files";
-const ASSETS_KEY = "spares_copy_assets";
+const FILES_KEY = copyKey("spares_copy_files");
+const ASSETS_KEY = copyKey("spares_copy_assets");
 // The server's rendered files as last listed (`FileListing`)
-const LISTING_KEY = "spares_copy_file_listing";
+const LISTING_KEY = copyKey("spares_copy_file_listing");
 // Tells the service worker to keep spares_wasm and the Typst compiler offline too (see service-worker.js)
-const SERVICE_WORKER_MARKER = "spares-local-copy";
+const SERVICE_WORKER_MARKER = copyKey("spares-local-copy");
 
 /** spares_wasm's `status()` */
 interface CopyState {
@@ -437,11 +447,12 @@ async function openLocalCopy(): Promise<boolean> {
 // copy, so the page that replaces it can open it (see `releaseCopy`). Shown again, as on going
 // back, it opens the copy again, and syncs if the copy is due as on opening the app.
 window.addEventListener("pagehide", (event) => {
-  if (event.persisted && status.active) releaseCopy();
+  if (event.persisted) releaseCopy();
 });
 window.addEventListener("pageshow", (event) => {
-  if (!event.persisted || !status.active) return;
+  if (!event.persisted) return;
   resumeCopy();
+  if (!status.active) return;
   openLocalCopy().then((opened) => {
     if (opened && worthSyncing(Date.now())) syncInBackground();
   }, console.error);
@@ -452,11 +463,73 @@ let session = 0;
 
 onCredentialsChange(() => {
   session += 1;
-  setStatus({ active: false, downloading: null });
-  startLocalCopy().catch(console.error);
+  releaseCopy();
+  setStatus(OFF);
 });
 
 // Setting up and removing the copy
+
+/** Restore an unlabelled copy only after its saved collection and host account both match. */
+export async function recoverLegacyCopy(): Promise<void> {
+  const account = requireCopyAccount();
+  const csrf = getCredentials().csrfToken;
+  if (!navigator.locks)
+    throw new Error("Recovery needs a browser with Web Locks support.");
+  await navigator.locks.request("spares-copy-setup:" + account, () =>
+    navigator.locks.request(
+      "spares-db",
+      { ifAvailable: true },
+      async (held) => {
+        if (!held)
+          throw new Error(
+            "Close other tabs using the older copy and try again.",
+          );
+        const old = legacyCopy();
+        if (!old || old.collectionId || getLocalCopy())
+          throw new Error("The offline copy changed. Reload Settings.");
+        const message =
+          "This account’s enrollment and collection could not be verified. The older copy has been preserved.";
+        const verifier = new Worker(new URL("./worker.ts", import.meta.url), {
+          type: "module",
+        });
+        try {
+          const matches = await new Promise<boolean>((resolve, reject) => {
+            verifier.onerror = () => reject(new Error(message));
+            verifier.onmessage = ({ data }: MessageEvent<WorkerMessage>) => {
+              if ("error" in data)
+                reject(
+                  new Error(
+                    data.error.message + " The older copy has been preserved.",
+                  ),
+                );
+              else if ("result" in data) resolve(data.result === true);
+            };
+            verifier.postMessage({
+              id: 1,
+              op: "legacy_matches",
+              args: [account, hostUrl(), csrf, old.replica],
+            } satisfies WorkerRequest);
+          });
+          requireCopyAccount();
+          if (
+            !matches ||
+            getCredentials().csrfToken !== csrf ||
+            getLocalCopy() ||
+            legacyCopy()?.collectionId
+          )
+            throw new Error(message);
+          localStorage.setItem(
+            legacyCopyKey,
+            JSON.stringify({ ...old, collectionId: account }),
+          );
+        } finally {
+          verifier.terminate();
+        }
+      },
+    ),
+  );
+  window.location.reload();
+}
 
 /** A step of `enableLocalCopy`, for its progress. */
 export type SetupStep =
@@ -473,6 +546,20 @@ export async function enableLocalCopy(
   name: string,
   onStep: (step: SetupStep) => void,
 ): Promise<void> {
+  const account = requireCopyAccount();
+  const setup = async () => {
+    if (getLocalCopy()?.ready) {
+      await startLocalCopy();
+      return;
+    }
+    await setUpCopy(name, onStep);
+  };
+  if (navigator.locks)
+    await navigator.locks.request("spares-copy-setup:" + account, setup);
+  else await setup();
+}
+
+async function setUpCopy(name: string, onStep: (step: SetupStep) => void) {
   if (!(await canKeepCopy()))
     throw new Error(
       "This browser has no storage for a copy, as in a private window.",
@@ -480,25 +567,18 @@ export async function enableLocalCopy(
   const csrfToken = sessionToken();
   if (csrfToken === null) throw new Error("Log in first.");
   const serverUrl = hostUrl();
-  const existing = getLocalCopy();
   onStep("Registering this device");
-  let state = (await openCopy()) as CopyState;
-  if (state.replica !== null && existing === null) {
-    // Left from a copy this page no longer knows of, e.g. after its site data was partly cleared.
-    // Its number may be another device's by now, so it isn't unenrolled: if it is still this
-    // browser's, it stays in the list of devices (`DeviceList`), to remove there.
-    await call("forget");
-    stopCopy();
-    state = (await openCopy()) as CopyState;
-  }
+  const state = (await openCopy()) as CopyState;
   // Already enrolled when an earlier attempt stopped after it
   const replica =
     state.replica ?? (await call<number>("enroll", serverUrl, csrfToken, name));
-  const collectionId = existing ? existing.collectionId : getCredentials().accountId;
+  const collectionId = requireCopyAccount();
   setLocalCopy({ replica, collectionId, ready: false });
   onStep("Downloading the collection");
   try {
-    await call<SyncReport>("sync", serverUrl, csrfToken, "full_download");
+    // Missing browser metadata can coexist with a valid account database containing offline edits.
+    if (state.last_sync_at === null)
+      await call<SyncReport>("sync", serverUrl, csrfToken, "full_download");
   } finally {
     setStatus({ collection: null });
   }
@@ -528,10 +608,19 @@ async function dropCopy(): Promise<void> {
     SERVICE_WORKER_MARKER,
     COPY_FILES_CACHE,
     COPY_RENDER_ASSETS_CACHE,
-    COPY_PANDOC_CACHE,
   ]) {
     await globalThis.caches?.delete(name).catch(console.error);
   }
+  // The versioned compiler is public and identical for every account on this host.
+  const remaining = await globalThis.caches?.keys();
+  if (
+    remaining &&
+    !remaining.some(
+      (key) =>
+        key === "spares-local-copy" || key.startsWith("spares-local-copy:"),
+    )
+  )
+    await caches.delete(COPY_PANDOC_CACHE).catch(console.error);
   clearCaches();
   status = OFF;
   for (const listener of listeners) listener();
@@ -718,6 +807,7 @@ async function downloadFiles(): Promise<void> {
     changedAssets.add(path);
   }
   const save = () => {
+    if (session !== started) return;
     localStorage.setItem(FILES_KEY, JSON.stringify(knownFiles));
     localStorage.setItem(ASSETS_KEY, JSON.stringify(knownAssets));
     // A bucket counts as seen once each of its files is here, so one that failed is listed again

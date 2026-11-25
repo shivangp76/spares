@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   getSchedulerNames,
   getSignupPolicy,
@@ -13,7 +13,6 @@ import { errorMessage } from "../utils";
 
 /** Creating an account, as the host's signup policy allows: by invite, or with an email address to verify. */
 export default function SignupPage() {
-  const navigate = useNavigate();
   const [policy, setPolicy] = useState<SignupPolicy | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -47,10 +46,10 @@ export default function SignupPage() {
         saveCredentials({
           csrfToken: result.csrfToken,
           user: result.user,
-        accountId: result.accountId,
+          accountId: result.accountId,
           schedulerName: schedulerToUse(schedulers),
         });
-        navigate("/review");
+        window.location.replace("/review");
       }
     } catch (e) {
       setError(errorMessage(e));
