@@ -95,12 +95,12 @@ struct Word {
 /// against many keywords normalizes each of them only once.
 #[derive(Debug)]
 pub struct NormalizedKeyword {
-    lowercase: String,
+    pub(super) lowercase: String,
     words: Vec<Word>,
     /// Stems of all words run together.
     joined: String,
     /// Runs of digits in the keyword, in order.
-    numbers: Vec<String>,
+    pub(super) numbers: Vec<String>,
 }
 
 impl NormalizedKeyword {

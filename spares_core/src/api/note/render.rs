@@ -61,27 +61,37 @@ pub struct RenderNoteData {
 /// against them.
 pub struct KeywordMatcher<'a> {
     keywords: Vec<(NoteId, &'a str, NormalizedKeyword)>,
+    exact: HashMap<String, Vec<usize>>,
+    by_numbers: HashMap<Vec<String>, Vec<usize>>,
 }
 
 impl<'a> KeywordMatcher<'a> {
     pub fn new(keywords: &'a [(NoteId, String)]) -> Self {
+        let keywords: Vec<_> = keywords
+            .par_iter()
+            .map(|(id, keyword)| (*id, keyword.as_str(), NormalizedKeyword::new(keyword)))
+            .collect();
+        let mut exact = HashMap::<_, Vec<_>>::new();
+        let mut by_numbers = HashMap::<_, Vec<_>>::new();
+        for (i, (_, _, key)) in keywords.iter().enumerate() {
+            exact.entry(key.lowercase.clone()).or_default().push(i);
+            by_numbers.entry(key.numbers.clone()).or_default().push(i);
+        }
         Self {
-            keywords: keywords
-                .par_iter()
-                .map(|(id, keyword)| (*id, keyword.as_str(), NormalizedKeyword::new(keyword)))
-                .collect(),
+            keywords,
+            exact,
+            by_numbers,
         }
     }
 
-    /// All keywords matching `searched_keyword`, in no particular order.
     pub fn matches(&self, searched_keyword: &str) -> Vec<MatchedKeywordResponse> {
         let searched = NormalizedKeyword::new(searched_keyword);
         self.keywords
             .par_iter()
-            .filter_map(|(note_id, keyword, normalized)| {
-                keyword_distance(&searched, normalized).map(|score| MatchedKeywordResponse {
-                    matched_keyword: (*keyword).to_string(),
-                    note_id: *note_id,
+            .filter_map(|(id, keyword, key)| {
+                keyword_distance(&searched, key).map(|score| MatchedKeywordResponse {
+                    note_id: *id,
+                    matched_keyword: (*keyword).to_owned(),
                     score,
                 })
             })
@@ -91,14 +101,30 @@ impl<'a> KeywordMatcher<'a> {
     /// The closest keyword to `searched_keyword`. Ties go to a keyword with the same case, then
     /// to the lowest note id.
     pub fn best_match(&self, searched_keyword: &str) -> Option<MatchedKeywordResponse> {
-        self.matches(searched_keyword).into_iter().min_by(|a, b| {
-            a.score
-                .total_cmp(&b.score)
-                .then_with(|| {
-                    (a.matched_keyword != searched_keyword)
-                        .cmp(&(b.matched_keyword != searched_keyword))
+        let lowercase = searched_keyword.to_lowercase();
+        let (i, score) = if let Some(exact) = self.exact.get(&lowercase) {
+            let &i = exact
+                .iter()
+                .min_by_key(|&&i| (self.keywords[i].1 != searched_keyword, self.keywords[i].0))?;
+            (i, 0.0)
+        } else {
+            let searched = NormalizedKeyword::new(searched_keyword);
+            self.by_numbers
+                .get(&searched.numbers)?
+                .iter()
+                .filter_map(|&i| {
+                    keyword_distance(&searched, &self.keywords[i].2).map(|score| (i, score))
                 })
-                .then_with(|| a.note_id.cmp(&b.note_id))
+                .min_by(|(a, x), (b, y)| {
+                    x.total_cmp(y)
+                        .then_with(|| self.keywords[*a].0.cmp(&self.keywords[*b].0))
+                })?
+        };
+        let (note_id, keyword, _) = &self.keywords[i];
+        Some(MatchedKeywordResponse {
+            note_id: *note_id,
+            matched_keyword: (*keyword).to_owned(),
+            score,
         })
     }
 }
@@ -107,7 +133,19 @@ pub fn match_keyword(
     searched_keyword: &str,
     keywords: &[(NoteId, String)],
 ) -> Vec<MatchedKeywordResponse> {
-    KeywordMatcher::new(keywords).matches(searched_keyword)
+    let searched = NormalizedKeyword::new(searched_keyword);
+    keywords
+        .par_iter()
+        .filter_map(|(id, keyword)| {
+            keyword_distance(&searched, &NormalizedKeyword::new(keyword)).map(|score| {
+                MatchedKeywordResponse {
+                    note_id: *id,
+                    matched_keyword: keyword.clone(),
+                    score,
+                }
+            })
+        })
+        .collect()
 }
 
 pub async fn get_render_note_data(
@@ -234,11 +272,22 @@ fn rematch_note_links(
     existing_note_links: &[NoteLink],
     keywords: &[(NoteId, String)],
 ) -> Vec<(NoteLink, bool)> {
+    if existing_note_links.is_empty() {
+        return Vec::new();
+    }
     let matcher = KeywordMatcher::new(keywords);
+    let searches: HashSet<_> = existing_note_links
+        .iter()
+        .map(|link| link.searched_keyword.as_str())
+        .collect();
+    let matches: HashMap<_, _> = searches
+        .into_par_iter()
+        .map(|text| (text, matcher.best_match(text)))
+        .collect();
     existing_note_links
         .par_iter()
         .filter_map(|existing_link| {
-            let matched_keyword_data = matcher.best_match(&existing_link.searched_keyword);
+            let matched_keyword_data = &matches[existing_link.searched_keyword.as_str()];
             let target_changed = matched_keyword_data
                 .as_ref()
                 .map(|x| x.matched_keyword.clone())
@@ -636,6 +685,44 @@ mod tests {
     use crate::parsers::get_all_parsers;
     use crate::schema::note::NotesSelector;
     use crate::schema::note::RenderNotesRequest;
+
+    #[test]
+    fn indexed_best_match_agrees_with_exhaustive_scores() {
+        let keywords = [
+            (3, "Distribution 2.5"),
+            (1, "distribution 2.5"),
+            (2, "Distributions 2.5"),
+            (4, "Distribution 25"),
+            (6, "École"),
+            (5, "ÉCOLE"),
+        ]
+        .map(|(id, text)| (super::NoteId::from_packed(id), text.to_string()));
+        let matcher = super::KeywordMatcher::new(&keywords);
+        for text in [
+            "Distribution 2.5",
+            "DISTRIBUTION 2.5",
+            "Distribuion 2.5",
+            "Distribution 2.6",
+            "Distribution 25",
+            "Ecole",
+            "école",
+            "Missing",
+        ] {
+            let expected = matcher.matches(text).into_iter().min_by(|a, b| {
+                a.score
+                    .total_cmp(&b.score)
+                    .then_with(|| (a.matched_keyword != text).cmp(&(b.matched_keyword != text)))
+                    .then_with(|| a.note_id.cmp(&b.note_id))
+            });
+            let result =
+                |hit: super::MatchedKeywordResponse| (hit.note_id, hit.matched_keyword, hit.score);
+            assert_eq!(
+                matcher.best_match(text).map(result),
+                expected.map(result),
+                "{text}"
+            );
+        }
+    }
 
     #[sqlx::test]
     async fn test_render_note(pool: SqlitePool) -> () {
