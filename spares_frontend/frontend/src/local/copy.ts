@@ -815,6 +815,15 @@ async function refreshFromCheckpoint(
   const missing = new Map<string, number>();
   for (const file of files) {
     const old = priorFiles[file.path];
+    const downloaded = knownFiles[file.path];
+    // Keep track of the old cached file if the replacement download fails during migration.
+    if (
+      migrating &&
+      !old &&
+      typeof downloaded === "number" &&
+      downloaded !== file.mtime
+    )
+      checkpoint.file({ ...file, mtime: downloaded });
     if (old && old.size !== file.size) delete knownFiles[file.path];
     if (knownFiles[file.path] !== file.mtime)
       missing.set(file.bucket, (missing.get(file.bucket) ?? 0) + 1);

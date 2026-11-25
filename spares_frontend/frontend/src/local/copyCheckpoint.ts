@@ -24,7 +24,23 @@ interface Snapshot extends FileListing {
 
 const databaseName = copyKey("spares_copy_checkpoint");
 const storeName = "completed";
-let cached: { revision: string; snapshot: Snapshot } | undefined;
+interface CheckpointState {
+  revision?: string;
+  snapshot: Snapshot;
+  baseBytes: number;
+  deltaBytes: number;
+}
+let cached: CheckpointState | undefined;
+type Change = [string, Entry | null];
+
+function applyEntry(snapshot: Snapshot, key: string, row: Entry | null) {
+  if (row?.kind === "file") snapshot.files[row.file.path] = row.file;
+  else if (row?.kind === "asset") snapshot.assets[row.path] = row.hash;
+  else if (row?.kind === "bucket") snapshot.buckets[row.bucket] = row.digest;
+  else if (key.startsWith("f:")) delete snapshot.files[key.slice(2)];
+  else if (key.startsWith("a:")) delete snapshot.assets[key.slice(2)];
+  else delete snapshot.buckets[key.slice(2)];
+}
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -43,20 +59,29 @@ async function readSnapshot(db: IDBDatabase) {
   const revision: string | undefined = await requestResult(
     tx.objectStore("revision").get(0),
   );
-  if (cached && cached.revision === revision)
-    return { revision, snapshot: cached.snapshot };
+  if (cached && cached.revision === revision) return cached;
+  const [base, rows]: [string | undefined, (Entry | string)[]] =
+    await Promise.all([
+      requestResult(tx.objectStore("revision").get(1)),
+      requestResult(tx.objectStore(storeName).getAll()),
+    ]);
+  const saved: Snapshot | undefined = base ? JSON.parse(base) : undefined;
   const snapshot: Snapshot = {
-    files: Object.create(null),
-    buckets: Object.create(null),
-    assets: Object.create(null),
+    files: Object.assign(Object.create(null), saved?.files),
+    buckets: Object.assign(Object.create(null), saved?.buckets),
+    assets: Object.assign(Object.create(null), saved?.assets),
   };
-  const rows: Entry[] = await requestResult(tx.objectStore(storeName).getAll());
-  for (const row of rows) {
-    if (row.kind === "file") snapshot.files[row.file.path] = row.file;
-    else if (row.kind === "asset") snapshot.assets[row.path] = row.hash;
-    else snapshot.buckets[row.bucket] = row.digest;
-  }
-  return { revision, snapshot };
+  let deltaBytes = 0;
+  // Individual entries from older checkpoints precede the ordered batches.
+  for (const row of rows)
+    if (typeof row !== "string") applyEntry(snapshot, "", row);
+  for (const row of rows)
+    if (typeof row === "string") {
+      deltaBytes += row.length;
+      for (const [key, entry] of JSON.parse(row) as Change[])
+        applyEntry(snapshot, key, entry);
+    }
+  return { revision, snapshot, baseBytes: base?.length ?? 0, deltaBytes };
 }
 
 export async function openCheckpoints() {
@@ -74,14 +99,25 @@ export async function openCheckpoints() {
     db.close();
     throw error;
   }
-  let { revision } = state;
+  let { revision, baseBytes, deltaBytes } = state;
   const { snapshot } = state;
-  let pending = new Map<string, Entry | null>();
+  const pending = new Map<string, Entry | null>();
   let writes = Promise.resolve();
   function save(): Promise<void> {
     if (!pending.size) return writes;
-    const entries = pending;
-    pending = new Map();
+    // One IndexedDB value per batch keeps cold reads inexpensive. Bound replay and storage
+    // by folding batches into a new base after roughly one base worth of changes.
+    const batch = JSON.stringify([...pending]);
+    pending.clear();
+    deltaBytes += batch.length;
+    const base =
+      deltaBytes > Math.max(64 * 1024, baseBytes)
+        ? JSON.stringify(snapshot)
+        : undefined;
+    if (base) {
+      baseBytes = base.length;
+      deltaBytes = 0;
+    }
     // An aborted batch must prevent later workers from committing its bucket digest.
     writes = writes.then(async () => {
       const tx = db.transaction([storeName, "revision"], "readwrite");
@@ -96,9 +132,17 @@ export async function openCheckpoints() {
         revision = crypto.randomUUID();
         versions.put(revision, 0);
         const store = tx.objectStore(storeName);
-        for (const [key, entry] of entries) {
-          if (entry) store.put(entry, key);
-          else store.delete(key);
+        if (base) {
+          versions.put(base, 1);
+          store.clear();
+        } else {
+          // `revision` is a UUID for conflict detection; a separate counter orders the journal.
+          const seq = versions.get(2);
+          seq.onsuccess = () => {
+            const next = (seq.result ?? 0) + 1;
+            store.put(batch, next);
+            versions.put(next, 2);
+          };
         }
       };
       await new Promise<void>((resolve, reject) => {
@@ -118,7 +162,7 @@ export async function openCheckpoints() {
     close(success: boolean) {
       cached =
         success && revision && pending.size === 0
-          ? { revision, snapshot }
+          ? { revision, snapshot, baseBytes, deltaBytes }
           : undefined;
       db.close();
     },
