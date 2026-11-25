@@ -75,6 +75,90 @@ async fn rematch(db: &sqlx::SqlitePool) {
     }
 }
 
+/// Times the public APIs, including SQLite row decoding and response construction.
+async fn browsing(db: &sqlx::SqlitePool, root: &std::path::Path) {
+    use spares_core::api::note::{search_keyword, search_page};
+    use spares_core::collection::{Collection, CollectionPaths};
+    use spares_core::schema::note::{SearchKeywordRequest, SearchPageItems, SearchPageRequest};
+    use spares_core::search::QueryReturnItemType;
+    use spares_core::sync::media::{ChangedFilesRequest, changed_rendered_files};
+    let paths = CollectionPaths::in_dir(root);
+    paths.create().unwrap();
+    let note = ("word αβγ ".repeat(120) + "{{ answer }} ").repeat(8);
+    sqlx::query("UPDATE note SET data=? WHERE id<=100")
+        .bind(&note)
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query(r#"UPDATE card SET note_id=1+(id-1)/8, "order"=1+(id-1)%8 WHERE id<=800"#)
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE note_keyword SET keyword='Continuity theorem' WHERE note_id % 2 = 0")
+        .execute(db)
+        .await
+        .unwrap();
+    for i in 0..2000 {
+        std::fs::write(paths.files.join(format!("card-{i}.html")), b"front").unwrap();
+    }
+    let collection = std::sync::Arc::new(Collection::new("bench", db.clone(), paths));
+    collection
+        .scope(async {
+            let mut request = ChangedFilesRequest::default();
+            for i in 0..12 {
+                let start = Instant::now();
+                let changed = changed_rendered_files(&request).unwrap();
+                let elapsed = start.elapsed();
+                assert_eq!(changed.files.len(), if i == 0 { 2000 } else { 0 });
+                request.buckets = changed.buckets;
+                println!("manifest {i} {:.3}", elapsed.as_secs_f64() * 1000.);
+            }
+            for i in 0..12 {
+                let start = Instant::now();
+                let page = search_page(
+                    db,
+                    SearchPageRequest {
+                        query: "c.id<=800".into(),
+                        page: 1,
+                        limit: 800,
+                        sort: None,
+                        output_type: QueryReturnItemType::Cards,
+                    },
+                )
+                .await
+                .unwrap();
+                let elapsed = start.elapsed();
+                let SearchPageItems::Cards(rows) = page.items else {
+                    unreachable!()
+                };
+                let expected: String = note.chars().take(200).collect();
+                assert_eq!(rows.len(), 800);
+                assert!(rows.iter().all(|row| row.note_preview == expected));
+                println!("preview {i} {:.3}", elapsed.as_secs_f64() * 1000.);
+            }
+            for i in 0..12 {
+                for (label, term, count) in [
+                    ("numbered", "Continuty theorem 101", 1),
+                    ("numberless", "Continuty theorem", 5000),
+                ] {
+                    let start = Instant::now();
+                    let matches = search_keyword(
+                        db,
+                        SearchKeywordRequest {
+                            keyword: term.into(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                    let elapsed = start.elapsed();
+                    assert_eq!(matches.len(), count);
+                    println!("{label} {i} {:.3}", elapsed.as_secs_f64() * 1000.);
+                }
+            }
+        })
+        .await;
+}
+
 fn main() {
     // SAFETY: single threaded before the runtime starts
     unsafe { std::env::set_var("SPARES_TEST_MODE", "1") };
@@ -91,6 +175,7 @@ fn main() {
         let path = temp.path().join("review.sqlite");
         std::fs::copy(source, &path).unwrap();
         let db = fixture::server_pool(&path).await;
+        spares_core::collection::migrator().run(&db).await.unwrap();
         // Ensure both filters have enough due cards even after repeated ratings.
         sqlx::query("UPDATE card SET due = ?, state = 2 WHERE id < 201")
             .bind(fixture::now().timestamp())
@@ -158,5 +243,6 @@ fn main() {
             }
         }
         rematch(&db).await;
+        browsing(&db, temp.path()).await;
     });
 }

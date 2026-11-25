@@ -1,0 +1,457 @@
+workload,revision,run,sample,milliseconds
+normal fetch,baseline,1,0,264.291
+normal rating,baseline,1,0,9.588
+normal successor,baseline,1,0,49.743
+normal fetch,baseline,1,1,48.354
+normal rating,baseline,1,1,9.94
+normal successor,baseline,1,1,51.863
+normal fetch,baseline,1,2,49.855
+normal rating,baseline,1,2,9.795
+normal successor,baseline,1,2,51.256
+normal fetch,baseline,1,3,49.93
+normal rating,baseline,1,3,10.322
+normal successor,baseline,1,3,51.329
+normal fetch,baseline,1,4,49.945
+normal rating,baseline,1,4,9.459
+normal successor,baseline,1,4,51.451
+normal fetch,baseline,1,5,49.873
+normal rating,baseline,1,5,9.254
+normal successor,baseline,1,5,51.132
+normal fetch,baseline,1,6,50.519
+normal rating,baseline,1,6,10.378
+normal successor,baseline,1,6,51.798
+normal fetch,baseline,1,7,50.928
+normal rating,baseline,1,7,8.721
+normal successor,baseline,1,7,51.173
+normal fetch,baseline,1,8,51.401
+normal rating,baseline,1,8,10.271
+normal successor,baseline,1,8,50.963
+normal fetch,baseline,1,9,49.793
+normal rating,baseline,1,9,9.466
+normal successor,baseline,1,9,50.363
+narrow fetch,baseline,1,0,37.726
+narrow rating,baseline,1,0,8.215
+narrow successor,baseline,1,0,38.079
+narrow fetch,baseline,1,1,36.826
+narrow rating,baseline,1,1,8.357
+narrow successor,baseline,1,1,38.26
+narrow fetch,baseline,1,2,36.072
+narrow rating,baseline,1,2,8.502
+narrow successor,baseline,1,2,38.966
+narrow fetch,baseline,1,3,38.464
+narrow rating,baseline,1,3,7.852
+narrow successor,baseline,1,3,39.022
+narrow fetch,baseline,1,4,37.375
+narrow rating,baseline,1,4,6.869
+narrow successor,baseline,1,4,39.613
+narrow fetch,baseline,1,5,39.649
+narrow rating,baseline,1,5,7.058
+narrow successor,baseline,1,5,38.221
+narrow fetch,baseline,1,6,35.977
+narrow rating,baseline,1,6,7.611
+narrow successor,baseline,1,6,40.329
+narrow fetch,baseline,1,7,39.16
+narrow rating,baseline,1,7,10.415
+narrow successor,baseline,1,7,38.475
+narrow fetch,baseline,1,8,35.912
+narrow rating,baseline,1,8,9.544
+narrow successor,baseline,1,8,38.263
+narrow fetch,baseline,1,9,36.252
+narrow rating,baseline,1,9,8.172
+narrow successor,baseline,1,9,37.97
+manifest,baseline,1,0,9.454
+manifest,baseline,1,1,7.317
+manifest,baseline,1,2,7.841
+manifest,baseline,1,3,6.914
+manifest,baseline,1,4,10.06
+manifest,baseline,1,5,7.12
+manifest,baseline,1,6,7.071
+manifest,baseline,1,7,6.544
+manifest,baseline,1,8,6.433
+manifest,baseline,1,9,8.337
+manifest,baseline,1,10,7.388
+manifest,baseline,1,11,6.823
+preview,baseline,1,0,30.962
+preview,baseline,1,1,16.343
+preview,baseline,1,2,17.294
+preview,baseline,1,3,12.678
+preview,baseline,1,4,14.062
+preview,baseline,1,5,14.204
+preview,baseline,1,6,13.091
+preview,baseline,1,7,12.723
+preview,baseline,1,8,12.955
+preview,baseline,1,9,13.159
+preview,baseline,1,10,12.88
+preview,baseline,1,11,11.001
+numbered,baseline,1,0,12.48
+numberless,baseline,1,0,12.965
+numbered,baseline,1,1,11.699
+numberless,baseline,1,1,11.014
+numbered,baseline,1,2,11.053
+numberless,baseline,1,2,11.881
+numbered,baseline,1,3,9.972
+numberless,baseline,1,3,11.445
+numbered,baseline,1,4,10.516
+numberless,baseline,1,4,11.088
+numbered,baseline,1,5,11.079
+numberless,baseline,1,5,11.983
+numbered,baseline,1,6,10.265
+numberless,baseline,1,6,11.42
+numbered,baseline,1,7,10.317
+numberless,baseline,1,7,10.886
+numbered,baseline,1,8,10.328
+numberless,baseline,1,8,11.243
+numbered,baseline,1,9,10.639
+numberless,baseline,1,9,11.576
+numbered,baseline,1,10,9.79
+numberless,baseline,1,10,11.11
+numbered,baseline,1,11,10.322
+numberless,baseline,1,11,10.754
+normal fetch,baseline,2,0,255.756
+normal rating,baseline,2,0,9.012
+normal successor,baseline,2,0,60.462
+normal fetch,baseline,2,1,46.91
+normal rating,baseline,2,1,10.234
+normal successor,baseline,2,1,50.033
+normal fetch,baseline,2,2,46.988
+normal rating,baseline,2,2,8.089
+normal successor,baseline,2,2,49.923
+normal fetch,baseline,2,3,48.272
+normal rating,baseline,2,3,9.53
+normal successor,baseline,2,3,51.618
+normal fetch,baseline,2,4,49.496
+normal rating,baseline,2,4,8.008
+normal successor,baseline,2,4,50.716
+normal fetch,baseline,2,5,49.177
+normal rating,baseline,2,5,8.891
+normal successor,baseline,2,5,52.85
+normal fetch,baseline,2,6,49.336
+normal rating,baseline,2,6,8.673
+normal successor,baseline,2,6,49.327
+normal fetch,baseline,2,7,48.234
+normal rating,baseline,2,7,7.879
+normal successor,baseline,2,7,49.634
+normal fetch,baseline,2,8,49.133
+normal rating,baseline,2,8,9.529
+normal successor,baseline,2,8,49.787
+normal fetch,baseline,2,9,48.459
+normal rating,baseline,2,9,8.166
+normal successor,baseline,2,9,50.647
+narrow fetch,baseline,2,0,36.208
+narrow rating,baseline,2,0,8.92
+narrow successor,baseline,2,0,39.037
+narrow fetch,baseline,2,1,37.827
+narrow rating,baseline,2,1,8.744
+narrow successor,baseline,2,1,40.446
+narrow fetch,baseline,2,2,37.572
+narrow rating,baseline,2,2,10.178
+narrow successor,baseline,2,2,42.973
+narrow fetch,baseline,2,3,37.683
+narrow rating,baseline,2,3,8.304
+narrow successor,baseline,2,3,39.395
+narrow fetch,baseline,2,4,36.254
+narrow rating,baseline,2,4,6.937
+narrow successor,baseline,2,4,38.218
+narrow fetch,baseline,2,5,36.678
+narrow rating,baseline,2,5,8.628
+narrow successor,baseline,2,5,38.07
+narrow fetch,baseline,2,6,36.895
+narrow rating,baseline,2,6,8.313
+narrow successor,baseline,2,6,39.918
+narrow fetch,baseline,2,7,35.975
+narrow rating,baseline,2,7,9.159
+narrow successor,baseline,2,7,38.201
+narrow fetch,baseline,2,8,36.202
+narrow rating,baseline,2,8,9.469
+narrow successor,baseline,2,8,39.102
+narrow fetch,baseline,2,9,36.554
+narrow rating,baseline,2,9,8.505
+narrow successor,baseline,2,9,38.235
+manifest,baseline,2,0,8.996
+manifest,baseline,2,1,8.347
+manifest,baseline,2,2,8.152
+manifest,baseline,2,3,7.956
+manifest,baseline,2,4,8.83
+manifest,baseline,2,5,8.355
+manifest,baseline,2,6,8.329
+manifest,baseline,2,7,7.354
+manifest,baseline,2,8,7.587
+manifest,baseline,2,9,8.628
+manifest,baseline,2,10,8.542
+manifest,baseline,2,11,12.593
+preview,baseline,2,0,33.063
+preview,baseline,2,1,15.936
+preview,baseline,2,2,15.5
+preview,baseline,2,3,12.681
+preview,baseline,2,4,14.551
+preview,baseline,2,5,13.883
+preview,baseline,2,6,13.121
+preview,baseline,2,7,14.065
+preview,baseline,2,8,12.871
+preview,baseline,2,9,14.354
+preview,baseline,2,10,14.022
+preview,baseline,2,11,13.366
+numbered,baseline,2,0,11.487
+numberless,baseline,2,0,12.162
+numbered,baseline,2,1,11.359
+numberless,baseline,2,1,10.868
+numbered,baseline,2,2,11.249
+numberless,baseline,2,2,11.351
+numbered,baseline,2,3,10.595
+numberless,baseline,2,3,12.235
+numbered,baseline,2,4,11.094
+numberless,baseline,2,4,11.242
+numbered,baseline,2,5,10.571
+numberless,baseline,2,5,11.113
+numbered,baseline,2,6,10.665
+numberless,baseline,2,6,11.271
+numbered,baseline,2,7,10.893
+numberless,baseline,2,7,10.676
+numbered,baseline,2,8,11.47
+numberless,baseline,2,8,12.62
+numbered,baseline,2,9,10.649
+numberless,baseline,2,9,11.927
+numbered,baseline,2,10,10.942
+numberless,baseline,2,10,12.041
+numbered,baseline,2,11,11.274
+numberless,baseline,2,11,11.415
+normal fetch,optimized,1,0,254.267
+normal rating,optimized,1,0,9.339
+normal successor,optimized,1,0,23.433
+normal fetch,optimized,1,1,19.336
+normal rating,optimized,1,1,8.246
+normal successor,optimized,1,1,22.672
+normal fetch,optimized,1,2,20.569
+normal rating,optimized,1,2,10.16
+normal successor,optimized,1,2,23.893
+normal fetch,optimized,1,3,25.81
+normal rating,optimized,1,3,10.641
+normal successor,optimized,1,3,22.175
+normal fetch,optimized,1,4,20.532
+normal rating,optimized,1,4,8.632
+normal successor,optimized,1,4,23.224
+normal fetch,optimized,1,5,21.201
+normal rating,optimized,1,5,8.511
+normal successor,optimized,1,5,24.592
+normal fetch,optimized,1,6,21.225
+normal rating,optimized,1,6,9.298
+normal successor,optimized,1,6,23.783
+normal fetch,optimized,1,7,21.736
+normal rating,optimized,1,7,8.031
+normal successor,optimized,1,7,23.346
+normal fetch,optimized,1,8,21.431
+normal rating,optimized,1,8,10.587
+normal successor,optimized,1,8,23.755
+normal fetch,optimized,1,9,21.346
+normal rating,optimized,1,9,9.249
+normal successor,optimized,1,9,22.782
+narrow fetch,optimized,1,0,10.216
+narrow rating,optimized,1,0,10.122
+narrow successor,optimized,1,0,10.509
+narrow fetch,optimized,1,1,8.41
+narrow rating,optimized,1,1,9.904
+narrow successor,optimized,1,1,10.312
+narrow fetch,optimized,1,2,7.967
+narrow rating,optimized,1,2,9.681
+narrow successor,optimized,1,2,10.168
+narrow fetch,optimized,1,3,8.512
+narrow rating,optimized,1,3,10.029
+narrow successor,optimized,1,3,18.178
+narrow fetch,optimized,1,4,8.765
+narrow rating,optimized,1,4,6.939
+narrow successor,optimized,1,4,9.598
+narrow fetch,optimized,1,5,8.305
+narrow rating,optimized,1,5,7.621
+narrow successor,optimized,1,5,9.564
+narrow fetch,optimized,1,6,7.715
+narrow rating,optimized,1,6,8.626
+narrow successor,optimized,1,6,9.129
+narrow fetch,optimized,1,7,7.375
+narrow rating,optimized,1,7,9.815
+narrow successor,optimized,1,7,9.145
+narrow fetch,optimized,1,8,7.377
+narrow rating,optimized,1,8,9.595
+narrow successor,optimized,1,8,8.926
+narrow fetch,optimized,1,9,7.565
+narrow rating,optimized,1,9,8.815
+narrow successor,optimized,1,9,9.233
+manifest,optimized,1,0,13.158
+manifest,optimized,1,1,0.047
+manifest,optimized,1,2,0.024
+manifest,optimized,1,3,0.026
+manifest,optimized,1,4,0.023
+manifest,optimized,1,5,0.023
+manifest,optimized,1,6,0.023
+manifest,optimized,1,7,0.023
+manifest,optimized,1,8,0.023
+manifest,optimized,1,9,0.023
+manifest,optimized,1,10,0.023
+manifest,optimized,1,11,0.023
+preview,optimized,1,0,33.009
+preview,optimized,1,1,17.183
+preview,optimized,1,2,16.348
+preview,optimized,1,3,14.034
+preview,optimized,1,4,13.162
+preview,optimized,1,5,13.164
+preview,optimized,1,6,11.692
+preview,optimized,1,7,10.894
+preview,optimized,1,8,12.141
+preview,optimized,1,9,11.142
+preview,optimized,1,10,12.337
+preview,optimized,1,11,11.783
+numbered,optimized,1,0,10.699
+numberless,optimized,1,0,0.96
+numbered,optimized,1,1,0.126
+numberless,optimized,1,1,0.833
+numbered,optimized,1,2,0.051
+numberless,optimized,1,2,0.764
+numbered,optimized,1,3,0.081
+numberless,optimized,1,3,0.703
+numbered,optimized,1,4,0.074
+numberless,optimized,1,4,0.721
+numbered,optimized,1,5,0.047
+numberless,optimized,1,5,0.713
+numbered,optimized,1,6,0.066
+numberless,optimized,1,6,0.797
+numbered,optimized,1,7,0.131
+numberless,optimized,1,7,0.692
+numbered,optimized,1,8,0.06
+numberless,optimized,1,8,0.667
+numbered,optimized,1,9,0.058
+numberless,optimized,1,9,0.668
+numbered,optimized,1,10,0.065
+numberless,optimized,1,10,0.683
+numbered,optimized,1,11,0.049
+numberless,optimized,1,11,0.645
+normal fetch,optimized,2,0,237.261
+normal rating,optimized,2,0,9.065
+normal successor,optimized,2,0,23.741
+normal fetch,optimized,2,1,19.733
+normal rating,optimized,2,1,8.7
+normal successor,optimized,2,1,23.972
+normal fetch,optimized,2,2,21.656
+normal rating,optimized,2,2,9.095
+normal successor,optimized,2,2,22.003
+normal fetch,optimized,2,3,21.33
+normal rating,optimized,2,3,10.836
+normal successor,optimized,2,3,22.945
+normal fetch,optimized,2,4,21.342
+normal rating,optimized,2,4,7.955
+normal successor,optimized,2,4,23.093
+normal fetch,optimized,2,5,20.892
+normal rating,optimized,2,5,8.175
+normal successor,optimized,2,5,23.263
+normal fetch,optimized,2,6,21.568
+normal rating,optimized,2,6,8.878
+normal successor,optimized,2,6,22.227
+normal fetch,optimized,2,7,20.21
+normal rating,optimized,2,7,7.517
+normal successor,optimized,2,7,23.405
+normal fetch,optimized,2,8,21.372
+normal rating,optimized,2,8,10.045
+normal successor,optimized,2,8,23.554
+normal fetch,optimized,2,9,21.613
+normal rating,optimized,2,9,8.769
+normal successor,optimized,2,9,22.626
+narrow fetch,optimized,2,0,8.992
+narrow rating,optimized,2,0,8.903
+narrow successor,optimized,2,0,10.233
+narrow fetch,optimized,2,1,7.59
+narrow rating,optimized,2,1,8.963
+narrow successor,optimized,2,1,9.755
+narrow fetch,optimized,2,2,7.656
+narrow rating,optimized,2,2,9.253
+narrow successor,optimized,2,2,9.608
+narrow fetch,optimized,2,3,7.993
+narrow rating,optimized,2,3,8.414
+narrow successor,optimized,2,3,18.193
+narrow fetch,optimized,2,4,8.681
+narrow rating,optimized,2,4,7.013
+narrow successor,optimized,2,4,9.038
+narrow fetch,optimized,2,5,7.706
+narrow rating,optimized,2,5,8.501
+narrow successor,optimized,2,5,9.94
+narrow fetch,optimized,2,6,9.001
+narrow rating,optimized,2,6,10.774
+narrow successor,optimized,2,6,12.29
+narrow fetch,optimized,2,7,8.125
+narrow rating,optimized,2,7,9.267
+narrow successor,optimized,2,7,10.298
+narrow fetch,optimized,2,8,8.78
+narrow rating,optimized,2,8,11.419
+narrow successor,optimized,2,8,9.771
+narrow fetch,optimized,2,9,8.048
+narrow rating,optimized,2,9,9.524
+narrow successor,optimized,2,9,9.836
+manifest,optimized,2,0,12.135
+manifest,optimized,2,1,0.028
+manifest,optimized,2,2,0.025
+manifest,optimized,2,3,0.025
+manifest,optimized,2,4,0.024
+manifest,optimized,2,5,0.024
+manifest,optimized,2,6,0.024
+manifest,optimized,2,7,0.024
+manifest,optimized,2,8,0.024
+manifest,optimized,2,9,0.024
+manifest,optimized,2,10,0.024
+manifest,optimized,2,11,0.024
+preview,optimized,2,0,31.373
+preview,optimized,2,1,17.059
+preview,optimized,2,2,17.292
+preview,optimized,2,3,13.99
+preview,optimized,2,4,13.543
+preview,optimized,2,5,12.965
+preview,optimized,2,6,13.544
+preview,optimized,2,7,13.355
+preview,optimized,2,8,14.003
+preview,optimized,2,9,14.881
+preview,optimized,2,10,14.026
+preview,optimized,2,11,13.912
+numbered,optimized,2,0,13.126
+numberless,optimized,2,0,1.21
+numbered,optimized,2,1,0.084
+numberless,optimized,2,1,0.808
+numbered,optimized,2,2,0.067
+numberless,optimized,2,2,0.805
+numbered,optimized,2,3,0.078
+numberless,optimized,2,3,0.943
+numbered,optimized,2,4,0.135
+numberless,optimized,2,4,1.086
+numbered,optimized,2,5,0.161
+numberless,optimized,2,5,1.475
+numbered,optimized,2,6,0.113
+numberless,optimized,2,6,0.832
+numbered,optimized,2,7,0.059
+numberless,optimized,2,7,0.761
+numbered,optimized,2,8,0.091
+numberless,optimized,2,8,0.799
+numbered,optimized,2,9,0.059
+numberless,optimized,2,9,0.753
+numbered,optimized,2,10,0.09
+numberless,optimized,2,10,0.844
+numbered,optimized,2,11,0.114
+numberless,optimized,2,11,0.738
+browser rating to visible front,baseline,1,0,108.3
+browser rating to visible front,optimized,1,0,60.7
+browser rating to visible front,baseline,1,1,128.0
+browser rating to visible front,optimized,1,1,77.4
+browser rating to visible front,baseline,1,2,112.6
+browser rating to visible front,optimized,1,2,60.6
+browser rating to visible front,baseline,1,3,111.1
+browser rating to visible front,optimized,1,3,60.7
+browser rating to visible front,baseline,1,4,111.6
+browser rating to visible front,optimized,1,4,59.6
+browser rating to visible front,baseline,1,5,111.1
+browser rating to visible front,optimized,1,5,61.4
+browser rating to visible front,baseline,1,6,112.1
+browser rating to visible front,optimized,1,6,59.4
+browser rating to visible front,baseline,1,7,111.6
+browser rating to visible front,optimized,1,7,60.2
+browser rating to visible front,baseline,1,8,110.9
+browser rating to visible front,optimized,1,8,76.9
+browser rating to visible front,baseline,1,9,111.4
+browser rating to visible front,optimized,1,9,77.4
+browser rating to visible front,baseline,1,10,111.5
+browser rating to visible front,optimized,1,10,78.0
+browser rating to visible front,baseline,1,11,114.5
+browser rating to visible front,optimized,1,11,61.4
