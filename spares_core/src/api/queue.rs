@@ -242,6 +242,8 @@ fn subject_sql(config: &SparesExternalConfig) -> Option<String> {
             sql_string(&config.flagged_tag_name),
             sql_string(&config.leech.tag_name),
         )),
+        // The queue selects from `cards_with_preset`, which has each card's preset.
+        InterleaveBy::Preset => Some("c.preset".to_string()),
     }
 }
 
@@ -2908,6 +2910,40 @@ mod interleave_tests {
         assert_eq!(
             ordered(&pool, interleaved, now, &none, &sort).await,
             newest_first
+        );
+    }
+
+    /// With `interleave_by = "preset"`, presets are the subjects, even when every note shares a
+    /// top-level tag, and the cards of no preset are one more.
+    #[sqlx::test]
+    async fn presets_take_turns(pool: SqlitePool) {
+        let now = Utc::now();
+        let mut tags: Vec<&[&str]> = vec![&["math:prob"]; 4];
+        tags.extend([&["math:spdes"][..]; 2]);
+        tags.extend([&["math:other"][..]; 2]);
+        let ids = tagged_cards(&pool, &tags, now - Duration::days(10)).await;
+        for card in &ids {
+            set_card(&pool, *card, REVIEW, now - Duration::days(1), 5.0, 5.0).await;
+        }
+        let (p, rest) = ids.split_at(4);
+        let (sp, o) = rest.split_at(2);
+        let toml = |interleave_by: &str| {
+            format!(
+                "[queue]\ninterleave_by = \"{interleave_by}\"\n\
+                 [queue.presets.prob]\nquery = 'tag=\"math:prob\"'\n\
+                 [queue.presets.spdes]\ntags = [\"math:spdes\"]\n"
+            )
+        };
+        let none = QueueCaps::default();
+        // All `math`, so one subject by top-level tag
+        assert_eq!(
+            ordered(&pool, &toml("top_level_tag"), now, &none, &[]).await,
+            ids
+        );
+        let by_preset = ordered(&pool, &toml("preset"), now, &none, &[]).await;
+        assert_eq!(
+            by_preset,
+            [p[0], sp[0], o[0], p[1], p[2], sp[1], o[1], p[3]]
         );
     }
 

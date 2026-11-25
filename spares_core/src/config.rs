@@ -354,6 +354,9 @@ pub struct QueueConfig {
     /// - New cards and review cards are each mixed by subject, then combined as
     ///   [`Self::new_review_mix`] says.
     ///
+    /// [`InterleaveBy::TopLevelTag`] takes the subjects from the tags. When notes share a
+    /// top-level tag, like `math`, use [`InterleaveBy::Preset`] with a preset per subject.
+    ///
     /// It applies to group 2 of the list on [`QueueConfig`], new cards and reviews. Learning
     /// cards are left alone, so their steps are not stretched, and so is a review whose query
     /// sorts, since the sort asks for a different order. It is set for the whole queue, not by
@@ -855,6 +858,14 @@ pub enum InterleaveBy {
     /// they say how a note is doing rather than what it is about. Notes with no other tag are
     /// mixed in as a subject of their own.
     TopLevelTag,
+    /// `"preset"`: cards are mixed by their [preset](QueueConfig::presets), and the cards of no
+    /// preset are a subject of their own.
+    ///
+    /// The subjects are what you choose, rather than what tags happen to be first: with one
+    /// preset per course, each matching its course's tag or [query](QueuePreset::query), the
+    /// courses take turns even when every note is also tagged `math`, which
+    /// [`Self::TopLevelTag`] would see as one subject.
+    Preset,
 }
 
 /// The `[leech]` table of `config.toml`: cards you keep forgetting.
