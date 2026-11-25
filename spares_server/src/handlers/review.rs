@@ -75,14 +75,50 @@ pub(crate) async fn queue_positions_handler(
     Ok(Json(response))
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct SubmitRequest {
+    #[serde(flatten)]
+    action: SubmitStudyActionRequest,
+    next_review: Option<GetReviewCardRequest>,
+}
+
+#[derive(serde::Serialize)]
+struct NextReview {
+    card: Option<spares_core::schema::review::GetReviewCardResponse>,
+}
+
+#[derive(serde::Serialize)]
+struct SubmitResponse {
+    #[serde(flatten)]
+    action: spares_core::schema::review::SubmitStudyActionResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_review: Option<NextReview>,
+}
+
 pub(crate) async fn submit_study_action_handler(
     Coll(data): Coll,
-    Json(body): Json<SubmitStudyActionRequest>,
+    Json(body): Json<SubmitRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let submit_study_action_response = submit_study_action(&data.db, body, Utc::now())
+    let action = submit_study_action(&data.db, body.action, Utc::now())
         .await
         .map_err(error_to_response)?;
-    Ok(Json(submit_study_action_response))
+    // The rating has committed. If selecting its successor fails, the client
+    // can retry the read independently and still has the event ID for undo.
+    let next_review = if let Some(request) = body.next_review {
+        match get_review_card(&data.db, request, Utc::now(), &get_all_parsers()).await {
+            Ok(card) => Some(NextReview { card }),
+            Err(error) => {
+                log::warn!("Failed to fetch the next card after a study action: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    Ok(Json(SubmitResponse {
+        action,
+        next_review,
+    }))
 }
 
 pub(crate) async fn get_review_card_by_id_handler(

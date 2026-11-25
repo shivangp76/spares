@@ -140,10 +140,12 @@ export type StudyAction =
 export interface SubmitStudyActionRequest {
   scheduler_name: string;
   action: StudyAction;
+  next_review?: { filter?: ReviewFilter };
 }
 
 export interface SubmitStudyActionResponse {
   event_id: number | null;
+  next_review?: { card: GetReviewCardResponse | null };
 }
 
 // Externally-tagged serde enum

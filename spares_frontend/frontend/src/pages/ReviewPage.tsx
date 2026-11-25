@@ -647,7 +647,10 @@ export default function ReviewPage() {
       : null;
 
   const loadCard = useCallback(
-    async (filter: ReviewFilter | undefined) => {
+    async (
+      filter: ReviewFilter | undefined,
+      supplied?: GetReviewCardResponse | null,
+    ) => {
       const generation = ++loadGeneration.current;
       setPhase("loading");
       setFrontRendered(false);
@@ -657,7 +660,7 @@ export default function ReviewPage() {
       setDueDatePicker(null);
       setBuryUntilPicker(null);
       try {
-        const next = await postReview(filter);
+        const next = supplied === undefined ? await postReview(filter) : supplied;
         if (generation !== loadGeneration.current) return;
         if (!next) {
           const availableAt = await nextReviewAvailableAt(filter);
@@ -930,8 +933,12 @@ export default function ReviewPage() {
     const rateSeconds = msToSeconds(rateMs);
     if (!(await undoWentThrough())) return;
     try {
+      const generation = loadGeneration.current;
+      const timeboxDue =
+        config?.timebox && Date.now() - timebox.current.start >= config.timebox * 1000;
       const res = await submitAction({
         scheduler_name: credentials.schedulerName,
+        next_review: timeboxDue ? undefined : { filter: activeFilter },
         action: {
           Rate: {
             card_id: card.card_id,
@@ -977,7 +984,10 @@ export default function ReviewPage() {
         setPhase("timebox");
         return;
       }
-      loadCard(activeFilter);
+      loadCard(
+        activeFilter,
+        generation === loadGeneration.current ? res.next_review?.card : undefined,
+      );
     } catch (e) {
       setError(errorMessage(e));
       setPhase("error");
@@ -2661,6 +2671,7 @@ export default function ReviewPage() {
                   }}
                 >
                   <CardRenderer
+                    key={`${card.card_id}-${previousCard?.version ?? 0}`}
                     path={card.card_front_rendered_path}
                     source={card.browser_sources?.card_front}
                     deviceSource={card.device_sources?.card_front}
