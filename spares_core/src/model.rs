@@ -531,15 +531,14 @@ mod tests {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(
-            applied,
-            [
-                20_240_326_145_400,
-                20_261_104_130_000,
-                20_261_124_110_000,
-                20_261_125_010_000
-            ]
+        let mut expected = vec![20_240_326_145_400, 20_261_104_130_000];
+        expected.extend(
+            migrator
+                .iter()
+                .filter(|m| m.migration_type.is_up_migration())
+                .map(|m| m.version),
         );
+        assert_eq!(applied, expected);
     }
 
     /// The baseline gives the tag links of a collection made before they were unique their unique

@@ -153,6 +153,14 @@ async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredS
         .execute(&mut *tx)
         .await
         .map_err(sqlx_error)?;
+    // Discard the local pace cache as a unit. Enqueuing every deleted and
+    // incoming review would duplicate a full history in the dirty-day table.
+    sqlx::raw_sql(
+        "DELETE FROM study_day_cache; DELETE FROM study_day_dirty; DELETE FROM study_day;",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(sqlx_error)?;
     for table in DATA_TABLES.iter().rev() {
         sqlx::query(AssertSqlSafe(format!("DELETE FROM main.{table}")))
             .execute(&mut *tx)

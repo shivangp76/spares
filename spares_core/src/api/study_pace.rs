@@ -10,7 +10,6 @@ use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
-use crate::api::preset::preset_index;
 use crate::api::statistics::local_time::Zone;
 use crate::model::ReviewLogKind;
 use crate::model::StateId;
@@ -153,93 +152,161 @@ impl StudyPaces {
         if needed.is_empty() {
             return Ok(Self::default());
         }
-        // Independent indexed endpoints. A combined MIN/MAX visits every review.
-        let (first, last): (Option<i64>, Option<i64>) = sqlx::query_as(
-            "SELECT (SELECT MIN(reviewed_at) FROM review_log), (SELECT MAX(reviewed_at) FROM review_log)"
-        ).fetch_one(db).await.map_err(|source| Error::Sqlx {source})?;
-        let (Some(first), Some(last)) = (first, last) else {
-            return Ok(Self::default());
-        };
-        // Once every required group has 200 complete card-days, older days cannot affect its pace.
-        // Sparse histories and rare presets retain the full-history calculation.
-        if let Some(start) = chrono::DateTime::from_timestamp(last, 0)
-            .and_then(|at| zone.date(at).checked_sub_days(chrono::Days::new(14)))
-            .map(|date| zone.start_of(date).timestamp())
-            .filter(|&start| start > first)
-        {
-            let (recent, complete) =
-                Self::in_range(db, cards, zone, maximum_answer_seconds, start, last).await?;
-            if needed.is_subset(&complete) {
-                return Ok(recent);
+        let error = |source| Error::Sqlx { source };
+        // Most reads need no writer lock. If maintenance is needed, take the write
+        // lock and reread the metadata, since another request may have refreshed it.
+        for writable in [false, true] {
+            let mut tx = if writable {
+                db.begin_with("BEGIN IMMEDIATE").await
+            } else {
+                db.begin().await
+            }
+            .map_err(error)?;
+            let paces = Self::from_cache(
+                &mut tx,
+                cards,
+                zone,
+                maximum_answer_seconds,
+                needed,
+                writable,
+            )
+            .await
+            .map_err(error)?;
+            tx.commit().await.map_err(error)?;
+            if let Some(paces) = paces {
+                return Ok(paces);
             }
         }
-        Ok(
-            Self::in_range(db, cards, zone, maximum_answer_seconds, first, last)
-                .await?
-                .0,
-        )
+        unreachable!("a write transaction can refresh the cache")
     }
 
-    async fn in_range(
-        db: &SqlitePool,
+    async fn from_cache(
+        conn: &mut sqlx::SqliteConnection,
         cards: &str,
         zone: Zone,
-        maximum_answer_seconds: Option<i64>,
-        first: i64,
-        last: i64,
-    ) -> Result<(Self, HashSet<(Option<usize>, StateId)>), Error> {
-        let day = zone.clock(first, last).day("rl.reviewed_at");
-        let seconds = pace_answer_seconds("rl", maximum_answer_seconds);
+        maximum: Option<i64>,
+        needed: &HashSet<(Option<usize>, StateId)>,
+        writable: bool,
+    ) -> Result<Option<Self>, sqlx::Error> {
+        let (first, last): (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT (SELECT MIN(reviewed_at) FROM review_log), (SELECT MAX(reviewed_at) FROM review_log)"
+        ).fetch_one(&mut *conn).await?;
+        let (Some(first), Some(last)) = (first, last) else {
+            return Ok(Some(Self::default()));
+        };
+        // Include complete local days. A sync can add an earlier review to the
+        // oldest cached day, including when a zone or its day-start hour changes.
+        let start_of_day = |at| {
+            chrono::DateTime::from_timestamp(at, 0)
+                .map_or(at, |at| zone.start_of(zone.date(at)).timestamp())
+        };
+        let earliest = start_of_day(first);
+        let recent = chrono::DateTime::from_timestamp(last, 0)
+            .and_then(|at| zone.date(at).checked_sub_days(chrono::Days::new(14)))
+            .map_or(earliest, |day| zone.start_of(day).timestamp().max(earliest));
+        let mut stored: Option<(i64, String)> =
+            sqlx::query_as("SELECT since, rules FROM study_day_cache")
+                .fetch_optional(&mut *conn)
+                .await?;
+        let mut since = stored
+            .as_ref()
+            .map_or(recent, |(start, _)| recent.min(start_of_day(*start)));
+        let seconds = pace_answer_seconds("rl", maximum);
+        let mut dirty: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM study_day_dirty)")
+            .fetch_one(&mut *conn)
+            .await?;
+        loop {
+            // The actual local-clock expression includes DST transitions and the day-start hour.
+            let day = zone.clock(since, last).day("rl.reviewed_at");
+            let rules = format!("{day}/{seconds}");
+            let rebuild = stored
+                .as_ref()
+                .is_none_or(|(start, key)| *start != since || *key != rules);
+            if rebuild || dirty {
+                if !writable {
+                    return Ok(None);
+                }
+                Self::refresh_days(conn, since, &day, &seconds, rebuild).await?;
+                sqlx::query("INSERT OR REPLACE INTO study_day_cache VALUES (1, ?, ?)")
+                    .bind(since)
+                    .bind(&rules)
+                    .execute(&mut *conn)
+                    .await?;
+                stored = Some((since, rules));
+                dirty = false;
+            }
+            let mut paces = Self::default();
+            let mut complete = true;
+            for &(preset, state) in needed {
+                let filter = preset.map_or_else(
+                    || "AND c.preset IS NULL".to_owned(),
+                    |index| format!("AND c.preset = {index}"),
+                );
+                let (days, pace) = recent_pace(conn, cards, state, &filter).await?;
+                if days < RECENT_CARD_DAYS && since > first {
+                    complete = false;
+                    break;
+                }
+                if days >= MIN_PRESET_CARD_DAYS {
+                    paces.by_preset.insert((preset, state), pace);
+                } else if let std::collections::hash_map::Entry::Vacant(entry) =
+                    paces.by_state.entry(state)
+                {
+                    let (_, overall) = recent_pace(conn, cards, state, "").await?;
+                    entry.insert(overall);
+                }
+            }
+            if complete {
+                return Ok(Some(paces));
+            }
+            since = earliest;
+        }
+    }
+
+    async fn refresh_days(
+        conn: &mut sqlx::SqliteConnection,
+        since: i64,
+        day: &str,
+        seconds: &str,
+        rebuild: bool,
+    ) -> Result<(), sqlx::Error> {
+        let dirty_days = format!("SELECT rl.card_id, {day} FROM study_day_dirty rl");
+        let select = if rebuild {
+            sqlx::query("DELETE FROM study_day")
+                .execute(&mut *conn)
+                .await?;
+            String::new()
+        } else {
+            let remove = format!("DELETE FROM study_day WHERE (card_id, day) IN ({dirty_days})");
+            sqlx::query(AssertSqlSafe(remove))
+                .execute(&mut *conn)
+                .await?;
+            // The first condition lets SQLite seek into the card's review history;
+            // the second limits recomputation to the local days that actually changed.
+            format!(
+                "AND rl.card_id IN (SELECT card_id FROM study_day_dirty)
+                AND (rl.card_id, {day}) IN ({dirty_days})"
+            )
+        };
         let review = ReviewLogKind::Review as u8;
-        // The state and preset are the same for every review of a card's day
-        let query = format!(
-            r"WITH reviews AS (
+        let insert = format!(
+            "INSERT INTO study_day
+            SELECT card_id, day, state, COUNT(*), SUM(seconds) FROM (
                 SELECT rl.card_id, {day} AS day, {seconds} AS seconds,
                     FIRST_VALUE(rl.previous_state) OVER (
-                        PARTITION BY rl.card_id, {day} ORDER BY rl.reviewed_at
+                        PARTITION BY rl.card_id, {day} ORDER BY rl.reviewed_at, rl.id
                     ) AS state
-                FROM review_log rl
-                WHERE rl.kind = {review} AND rl.card_id IS NOT NULL AND rl.reviewed_at >= {first}
-            ),
-            card_days AS (
-                SELECT c.preset, r.state, r.day, COUNT(*) AS reviews, SUM(r.seconds) AS seconds
-                FROM reviews r JOIN {cards} c ON c.id = r.card_id
-                GROUP BY r.card_id, r.day
-            ),
-            ranked AS (
-                SELECT *,
-                    ROW_NUMBER() OVER (PARTITION BY preset, state ORDER BY day DESC) AS preset_rank,
-                    ROW_NUMBER() OVER (PARTITION BY state ORDER BY day DESC) AS state_rank
-                FROM card_days
-            )
-            SELECT 1, preset, state, COUNT(*), SUM(reviews), CAST(SUM(seconds) AS REAL) FROM ranked
-            WHERE preset_rank <= {RECENT_CARD_DAYS} GROUP BY preset, state
-            UNION ALL
-            SELECT 0, NULL, state, COUNT(*), SUM(reviews), CAST(SUM(seconds) AS REAL) FROM ranked
-            WHERE state_rank <= {RECENT_CARD_DAYS} GROUP BY state"
+                FROM review_log rl WHERE rl.kind = {review} AND rl.card_id IS NOT NULL
+                    AND rl.reviewed_at >= {since} {select}
+            ) GROUP BY card_id, day"
         );
-        let rows: Vec<(bool, Option<i64>, StateId, u32, u32, f64)> =
-            sqlx::query_as(AssertSqlSafe(query))
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-        let mut paces = Self::default();
-        let mut complete = HashSet::new();
-        for (of_preset, preset, state, days, reviews, seconds) in rows {
-            if of_preset && days >= RECENT_CARD_DAYS {
-                complete.insert((preset_index(preset), state));
-            }
-            let pace = StudyPace {
-                seconds_per_review: seconds / f64::from(reviews),
-                reviews_per_day: f64::from(reviews) / f64::from(days),
-            };
-            if !of_preset {
-                paces.by_state.insert(state, pace);
-            } else if days >= MIN_PRESET_CARD_DAYS {
-                paces.by_preset.insert((preset_index(preset), state), pace);
-            }
-        }
-        Ok((paces, complete))
+        sqlx::query(AssertSqlSafe(insert))
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("DELETE FROM study_day_dirty")
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
     }
 
     /// The pace of cards of `preset` in `state`: the preset's own, else that of every card in
@@ -251,6 +318,34 @@ impl StudyPaces {
             .copied()
             .unwrap_or_default()
     }
+}
+
+/// The index walks newest days first. A card ID breaks ties on the same day, as
+/// in the original grouping by card and day. Preset membership is always current.
+async fn recent_pace(
+    conn: &mut sqlx::SqliteConnection,
+    cards: &str,
+    state: StateId,
+    filter: &str,
+) -> Result<(u32, StudyPace), sqlx::Error> {
+    let sql = format!(
+        "SELECT COUNT(*), COALESCE(SUM(reviews), 0), CAST(COALESCE(SUM(seconds), 0) AS REAL) FROM (
+        SELECT d.reviews, d.seconds FROM study_day d JOIN {cards} c ON c.id = d.card_id
+        WHERE d.state = ? {filter} ORDER BY d.day DESC, d.card_id LIMIT {RECENT_CARD_DAYS})"
+    );
+    let (days, reviews, seconds): (u32, u32, f64) = sqlx::query_as(AssertSqlSafe(sql))
+        .bind(state)
+        .fetch_one(conn)
+        .await?;
+    let pace = if days == 0 {
+        StudyPace::default()
+    } else {
+        StudyPace {
+            seconds_per_review: seconds / f64::from(reviews),
+            reviews_per_day: f64::from(reviews) / f64::from(days),
+        }
+    };
+    Ok((days, pace))
 }
 
 #[cfg(test)]
@@ -363,6 +458,39 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(paces.of(Some(0), 2).seconds_per_review, 65.0);
+    }
+
+    #[sqlx::test]
+    async fn cached_days_follow_edits_deletions_and_day_boundaries(pool: SqlitePool) {
+        let at = DateTime::from_timestamp(1_767_225_600, 0).unwrap(); // Midnight UTC
+        let id = cards(&pool, &[&[]], at).await[0];
+        let load = async |hour, cap| {
+            StudyPaces::load(
+                &pool,
+                &cards_with_preset(&math()),
+                Zone::parse(Some("UTC"), hour).unwrap(),
+                cap,
+                &HashSet::from([(None, 2)]),
+            )
+            .await
+            .unwrap()
+            .of(None, 2)
+        };
+        review(&pool, id, at - Duration::minutes(10), 2, 10).await;
+        review(&pool, id, at + Duration::minutes(10), 2, 30).await;
+        assert_eq!(load(0, None).await.reviews_per_day, 1.);
+        assert_eq!(load(4, None).await.reviews_per_day, 2.);
+        assert_eq!(load(4, Some(10)).await.seconds_per_review, 10.);
+        sqlx::query("UPDATE review_log SET recall_duration=70 WHERE recall_duration=30")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(load(4, None).await.seconds_per_review, 40.);
+        sqlx::query("DELETE FROM review_log WHERE recall_duration=70")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(load(4, None).await.seconds_per_review, 10.);
     }
 
     /// The estimate of the cards due by `now`, with `presets`.
