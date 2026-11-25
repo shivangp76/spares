@@ -159,9 +159,64 @@ async fn browsing(db: &sqlx::SqlitePool, root: &std::path::Path) {
         .await;
 }
 
+/// Measures the default note list and graph against the same linked fixture.
+async fn note_views(db: &sqlx::SqlitePool) {
+    use spares_core::api::note::{get_note_graph, list_notes};
+    use spares_core::schema::{FilterOptions, note::NoteGraphRequest};
+
+    for sample in 0..12 {
+        let start = Instant::now();
+        let notes = list_notes(
+            db,
+            FilterOptions {
+                page: Some(1),
+                limit: Some(100),
+            },
+        )
+        .await
+        .unwrap();
+        let elapsed = start.elapsed();
+        assert_eq!(notes.len(), 100);
+        for (id, note) in (1_i64..).zip(&notes) {
+            assert_eq!(note.id.packed(), id);
+            assert_eq!(note.linked_notes.as_ref().unwrap().len(), 1);
+        }
+        let hash = blake3::hash(&serde_json::to_vec(&notes).unwrap());
+        println!(
+            "note_page {sample} {:.3} {hash}",
+            elapsed.as_secs_f64() * 1000.
+        );
+
+        let start = Instant::now();
+        let graph = get_note_graph(
+            db,
+            NoteGraphRequest {
+                query: String::new(),
+                max_score: Some(5.0),
+                max_nodes: 2000,
+                ancestor_depth: None,
+                descendant_depth: Some(0),
+                groups: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+        let elapsed = start.elapsed();
+        assert!(graph.truncated);
+        assert_eq!(graph.nodes.len(), 2000);
+        // Compare the complete ordered response between runs.
+        let hash = blake3::hash(&serde_json::to_vec(&graph).unwrap());
+        println!(
+            "note_graph {sample} {:.3} {hash}",
+            elapsed.as_secs_f64() * 1000.
+        );
+    }
+}
+
 fn main() {
     // SAFETY: single threaded before the runtime starts
     unsafe { std::env::set_var("SPARES_TEST_MODE", "1") };
+    env_logger::init();
     links();
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         let temp = tempfile::tempdir().unwrap();
@@ -182,6 +237,20 @@ fn main() {
             .execute(&db)
             .await
             .unwrap();
+        // Reopen a checkpointed copy. Schema upgrades and fixture preparation can otherwise
+        // prime the review-log pages and statement cache before the first measured fetch.
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&db)
+            .await
+            .unwrap();
+        db.close().await;
+        let reopened = temp.path().join("reopened.sqlite");
+        std::fs::copy(&path, &reopened).unwrap();
+        println!(
+            "database_bytes {}",
+            std::fs::metadata(&reopened).unwrap().len()
+        );
+        let db = fixture::server_pool(&reopened).await;
         let parsers = get_all_parsers();
         for narrow in [false, true] {
             for _ in 0..10 {
@@ -243,6 +312,7 @@ fn main() {
             }
         }
         rematch(&db).await;
+        note_views(&db).await;
         browsing(&db, temp.path()).await;
     });
 }

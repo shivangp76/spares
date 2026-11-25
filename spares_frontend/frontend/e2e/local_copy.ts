@@ -43,20 +43,29 @@ import {
   type BrowserContext,
   type Page,
 } from "playwright-core";
+import { forecastRequests, seedBrowsing, timeEditor } from "./browsing";
 import { formatNoteId } from "../src/utils";
 
 const ROOT = join(import.meta.dir, "../../..");
-const DIST = join(import.meta.dir, "../dist");
+const DIST =
+  process.env.SPARES_FRONTEND_DIST ?? join(import.meta.dir, "../dist");
 const PORT = Number(process.env.SPARES_E2E_PORT ?? 8796);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const USER = "e2e";
 const PASSWORD = "e2e-password";
 const ENGINES = { chromium, webkit, firefox };
 const TIMEOUT = 120_000;
+const browsingBenchmark = process.env.SPARES_BROWSING_BENCH === "1";
 
 const engines = (
-  process.argv.length > 2 ? process.argv.slice(2) : Object.keys(ENGINES)
+  process.argv.length > 2
+    ? process.argv.slice(2)
+    : browsingBenchmark
+      ? ["chromium"]
+      : Object.keys(ENGINES)
 ) as (keyof typeof ENGINES)[];
+if (browsingBenchmark && engines.some((engine) => engine !== "chromium"))
+  throw new Error("The typing benchmark uses Chromium performance counters");
 for (const engine of engines)
   if (!(engine in ENGINES)) throw new Error(`Unknown browser ${engine}`);
 if (!existsSync(join(DIST, "sw.js")))
@@ -125,11 +134,13 @@ for (const engine of engines) {
   );
   if (add.status !== 0) throw new Error(add.stderr);
 }
-const benchmark = process.env.SPARES_SEARCH_BENCH === "1";
+const benchmark = browsingBenchmark || process.env.SPARES_SEARCH_BENCH === "1";
 if (benchmark) {
   // Only the disposable host initialized above. Seed notes without renders to isolate search.
   const db = new Database(join(dir, `host/users/${USER}/collection.sqlite`));
-  db.exec(`BEGIN;
+  if (browsingBenchmark) seedBrowsing(db);
+  else
+    db.exec(`BEGIN;
     INSERT INTO parser(name) VALUES ('markdown');
     WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<10000)
     INSERT INTO note(id, data, custom_data, parser_id)
@@ -707,14 +718,18 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
           `${mode} 10,000-note search, submit to visible results (ms): ${samples.join(", ")}`,
         );
       }
-      await timeSearch("Native");
+      if (browsingBenchmark) {
+        await timeEditor(page, ORIGIN);
+        await forecastRequests(page, ORIGIN, false);
+      } else await timeSearch("Native");
       await page.goto(`${ORIGIN}/settings`);
       await page
         .getByRole("button", { name: "Keep a Copy on This Device" })
         .click();
       await see(page, /now keeps a copy of the collection/);
       await context.setOffline(true);
-      await timeSearch("Offline SQLite");
+      if (browsingBenchmark) await forecastRequests(page, ORIGIN, true);
+      else await timeSearch("Offline SQLite");
       return;
     }
     await firstReviewAndDrafts(page, engine);
