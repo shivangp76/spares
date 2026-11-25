@@ -484,6 +484,12 @@ mod tests {
 
     /// Rows of `_sqlx_migrations` as the migrations before the baseline left them, by version.
     async fn pretend_old_migrations_ran(pool: &SqlitePool, versions: &[i64]) {
+        // The fixtures start on the current schema. Roll back post-baseline migrations
+        // before simulating the ledger of an older collection.
+        crate::collection::migrator()
+            .undo(pool, 20_261_124_110_000)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM _sqlx_migrations")
             .execute(pool)
             .await
@@ -527,7 +533,12 @@ mod tests {
                 .unwrap();
         assert_eq!(
             applied,
-            [20_240_326_145_400, 20_261_104_130_000, 20_261_124_110_000]
+            [
+                20_240_326_145_400,
+                20_261_104_130_000,
+                20_261_124_110_000,
+                20_261_125_010_000
+            ]
         );
     }
 

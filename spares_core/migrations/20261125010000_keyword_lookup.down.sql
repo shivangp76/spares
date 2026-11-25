@@ -1,0 +1,1 @@
+DROP INDEX idx_note_keyword_note_keyword;

@@ -122,10 +122,19 @@ pub async fn search_page(
     };
     let limit = limit.clamp(1, MAX_PAGE_LIMIT);
     let offset = page.max(1).saturating_sub(1).saturating_mul(limit);
-    // Only the ids of every result are read, and then the page's items in full.
-    let in_list = |ids: &mut dyn Iterator<Item = i64>| {
-        ids.map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
+    let (total, ids) = match Evaluator::new(&sorted_query)
+        .ranked()
+        .page_ids(db, output_type, offset, limit)
+        .await
+    {
+        Ok(result) => result,
+        Err(error) => return Err(query_error(db, &query, &sorted_query, error).await),
     };
+    let ids_sql = ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
     match output_type {
         QueryReturnItemType::Notes => {
             #[derive(sqlx::FromRow)]
@@ -134,19 +143,20 @@ pub async fn search_page(
                 note: Note,
                 name: String,
                 last_reviewed: Option<i64>,
+                tags: Json<Vec<String>>,
+                keywords: Json<Vec<String>>,
+                card_count: i64,
             }
-            let ids = match Evaluator::new(&sorted_query).get_note_ids(db).await {
-                Ok(ids) => ids,
-                Err(e) => return Err(query_error(db, &query, &sorted_query, e).await),
-            };
-            let page_ids = ids.iter().skip(offset).take(limit).collect::<Vec<_>>();
+            let page_ids: Vec<_> = ids.into_iter().map(NoteId::from_packed).collect();
             let rows: Vec<NoteWithParser> = sqlx::query_as(AssertSqlSafe(format!(
                 "SELECT n.*, p.name,
+                   (SELECT json_group_array(t.name ORDER BY t.name) FROM tag t JOIN note_tag nt ON nt.tag_id = t.id WHERE nt.note_id = n.id) AS tags,
+                   (SELECT json_group_array(keyword ORDER BY keyword) FROM note_keyword WHERE note_id = n.id) AS keywords,
+                   (SELECT COUNT(*) FROM card WHERE note_id = n.id) AS card_count,
                    (SELECT MAX(rl.reviewed_at) FROM review_log rl JOIN card c ON c.id = rl.card_id
                      WHERE c.note_id = n.id AND rl.kind = {}) AS last_reviewed
-                 FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE n.id IN ({})",
-                ReviewLogKind::Review as u8,
-                in_list(&mut page_ids.iter().map(|id| id.packed()))
+                 FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE n.id IN ({ids_sql})",
+                ReviewLogKind::Review as u8
             )))
             .fetch_all(db)
             .await
@@ -157,13 +167,34 @@ pub async fn search_page(
                 .collect::<HashMap<_, _>>();
             let patterns = text_patterns(&query);
             let config = read_internal_config(db).await?;
+            let mut links = if config.linked_notes_generated {
+                get_note_links_map(db, &page_ids).await?
+            } else {
+                HashMap::new()
+            };
             let mut notes = Vec::with_capacity(page_ids.len());
             for id in page_ids {
                 // A note deleted since its id was read is left out.
-                let Some(row) = rows.remove(id) else { continue };
+                let Some(row) = rows.remove(&id) else {
+                    continue;
+                };
                 notes.push(NoteMatch {
                     matches: text_matches(&patterns, &row.note.data),
-                    note: enrich_note(db, &row.note, config.linked_notes_generated).await?,
+                    note: crate::schema::note::NoteResponse::new(
+                        &row.note,
+                        row.name.clone(),
+                        row.keywords.0,
+                        row.tags.0,
+                        config.linked_notes_generated.then(|| {
+                            links
+                                .remove(&id)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(crate::schema::note::LinkedNote::new)
+                                .collect()
+                        }),
+                        row.card_count as usize,
+                    ),
                     parser_name: row.name,
                     last_reviewed: row
                         .last_reviewed
@@ -171,27 +202,15 @@ pub async fn search_page(
                 });
             }
             Ok(SearchPageResponse {
-                total: ids.len(),
+                total,
                 items: SearchPageItems::Notes(notes),
             })
         }
         QueryReturnItemType::Cards => {
-            let ids = match Evaluator::new(&sorted_query)
-                .ranked()
-                .get_card_ids(db)
-                .await
-            {
-                Ok(ids) => ids,
-                Err(e) => return Err(query_error(db, &query, &sorted_query, e).await),
-            };
-            let page_ids = ids.iter().skip(offset).take(limit).collect::<Vec<_>>();
-            let mut rows = card_matches(db, &in_list(&mut page_ids.iter().map(|id| **id))).await?;
-            let cards = page_ids
-                .into_iter()
-                .filter_map(|id| rows.remove(id))
-                .collect();
+            let mut rows = card_matches(db, &ids_sql).await?;
+            let cards = ids.into_iter().filter_map(|id| rows.remove(&id)).collect();
             Ok(SearchPageResponse {
-                total: ids.len(),
+                total,
                 items: SearchPageItems::Cards(cards),
             })
         }
@@ -760,7 +779,28 @@ mod tests {
         );
         assert_eq!(notes[0].parser_name, "markdown");
 
+        let limited = search_page(
+            &pool,
+            SearchPageRequest {
+                query: "sort_by_desc=id limit=3".to_owned(),
+                output_type: QueryReturnItemType::Notes,
+                page: 2,
+                limit: 2,
+                sort: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(limited.total, 3);
+        let SearchPageItems::Notes(last) = limited.items else {
+            panic!("asked for notes")
+        };
+        assert_eq!(last.len(), 1);
+        assert_eq!(last[0].note.id.to_string(), "c");
+        assert_eq!(last[0].note.card_count, 1);
+
         let past_the_end = page(QueryReturnItemType::Notes, 4, 2).await;
+        assert_eq!(past_the_end.total, 5);
         assert!(matches!(past_the_end.items, SearchPageItems::Notes(n) if n.is_empty()));
 
         let cards = page(QueryReturnItemType::Cards, 1, 3).await;

@@ -39,6 +39,7 @@ use crate::schedulers::lapse_sql;
 use crate::schedulers::retrievability_key_sql;
 use crate::search::Atom;
 use crate::search::Op;
+use crate::search::QueryReturnItemType;
 use crate::search::RelativeDate;
 use crate::search::Span;
 use crate::search::TokenTree;
@@ -294,6 +295,68 @@ impl<'de> Evaluator<'de> {
         context.root_context = true;
         token_tree.evaluate(&mut context).map_err(to_error)?;
         Ok(context.order_by)
+    }
+
+    /// Count the complete search (including its own limits), returning only the requested
+    /// window to the caller. Cloze matching needs parsed note text and runs in Rust.
+    pub(crate) async fn page_ids(
+        self,
+        db: &SqlitePool,
+        item: QueryReturnItemType,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(usize, Vec<i64>), crate::Error> {
+        let tree = self
+            .parser
+            .parse_expression()
+            .map_err(search_error(self.query))?;
+        check_references_exist(self.query, &tree, db).await?;
+        let output = match item {
+            QueryReturnItemType::Cards if has_cloze_field(&tree) => {
+                let cards =
+                    Self::get_cards_cloze_path(&tree, self.query, self.scope.as_deref(), db)
+                        .await?;
+                return Ok((
+                    cards.len(),
+                    cards
+                        .into_iter()
+                        .skip(offset)
+                        .take(limit)
+                        .map(|(card, _)| card.id)
+                        .collect(),
+                ));
+            }
+            QueryReturnItemType::Cards => EvaluatorReturnItemType::CardIds,
+            QueryReturnItemType::Notes => EvaluatorReturnItemType::NoteIds,
+        };
+        let sql = Self::build_query_from_tree(
+            &tree,
+            output,
+            false,
+            self.scope.as_deref(),
+            self.rank_cards,
+        )
+        .map_err(search_error(self.query))?;
+        let error = |source| crate::Error::Sqlx { source };
+        let mut tx = db.begin().await.map_err(error)?;
+        let total: i64 = sqlx::query_scalar(AssertSqlSafe(format!("SELECT COUNT(*) FROM ({sql})")))
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(error)?;
+        let ids = if offset < total as usize {
+            sqlx::query_scalar(AssertSqlSafe(format!(
+                "SELECT id FROM ({sql}) LIMIT ? OFFSET ?"
+            )))
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(error)?
+        } else {
+            Vec::new()
+        };
+        tx.commit().await.map_err(error)?;
+        Ok((total as usize, ids))
     }
 
     pub(crate) async fn get_card_ids(self, db: &SqlitePool) -> Result<Vec<CardId>, crate::Error> {
