@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDataVersion } from "../dataVersion";
 import { useNavigate } from "react-router-dom";
 import { loginPath } from "../login";
@@ -27,7 +27,7 @@ import {
 } from "../components/charts/chartData";
 import Histogram from "../components/charts/Histogram";
 import RecentSearches from "../components/RecentSearches";
-import SearchInput, { type SearchInputError } from "../components/SearchInput";
+import SearchInput from "../components/SearchInput";
 import ReviewHeatmap from "../components/ReviewHeatmap";
 import { useAuth } from "../hooks/useAuth";
 import { useCardStates } from "../hooks/useCardStates";
@@ -37,7 +37,6 @@ import {
   type AnswerGroup,
   type OptimizeResponse,
   type PassFail,
-  type ReviewHistoryResponse,
   type StatisticsGraphsResponse,
   type StatisticsResponse,
   type StepsGroupKind,
@@ -1286,6 +1285,42 @@ function SchedulerSection({
   );
 }
 
+/** Each part of the page settles independently. Ignore an older response after a filter change. */
+function useStatisticsRequest<T>(
+  fetchData: () => Promise<T>,
+  enabled: boolean,
+  revision: number,
+) {
+  const [result, setResult] = useState<{
+    fetchData: typeof fetchData;
+    revision: number;
+    data: T | null;
+    error: unknown;
+  } | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    fetchData().then(
+      (data) => {
+        if (active) setResult({ fetchData, revision, data, error: null });
+      },
+      (error: unknown) => {
+        if (active) setResult({ fetchData, revision, data: null, error });
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [fetchData, enabled, revision]);
+  const loading =
+    result?.fetchData !== fetchData || result.revision !== revision;
+  return {
+    data: result?.data ?? null,
+    loading,
+    error: loading ? null : result.error,
+  };
+}
+
 export default function StatisticsPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
@@ -1299,21 +1334,11 @@ export default function StatisticsPage() {
 
   const [date, setDate] = useState(() => toDateInputValue(new Date()));
   const [queryInput, setQueryInput] = useState("");
-  // A query that can't be searched, marked in the box
-  const [queryError, setQueryError] = useState<SearchInputError | null>(null);
   const [view, setView] = useState<StatisticsView>({
     query: "",
     periodDays: 30,
     forecastDays: 30,
   });
-  const [statistics, setStatistics] = useState<StatisticsResponse | null>(null);
-  const [graphs, setGraphs] = useState<StatisticsGraphsResponse | null>(null);
-  const [history, setHistory] = useState<ReviewHistoryResponse | null>(null);
-  // The view and date the latest responses (or errors) are for; loading while it lags
-  const requestKey = JSON.stringify([view, date]);
-  const [loadedKey, setLoadedKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const loading = loadedKey !== requestKey;
   // Bumped to refetch after an action changes the schedule
   const [reloadCount, setReloadCount] = useState(0);
   // Fetch again after an undo, redo or sync elsewhere changed what is shown
@@ -1329,71 +1354,52 @@ export default function StatisticsPage() {
   const reload = () => setReloadCount((c) => c + 1);
 
   useEffect(() => {
-    if (!credentials) {
-      navigate(loginPath());
-      return;
-    }
-    if (!date) return;
-    let cancelled = false;
-    const key = JSON.stringify([view, date]);
-    const at = requestDate(date);
-    const query = view.query.trim() || null;
-    // Fetched apart, so the Today tiles do not wait for the heavier graphs
-    const statisticsFetch = getStatistics(credentials.schedulerName, at);
-    const graphsFetch = getStatisticsGraphs(credentials.schedulerName, {
-      query,
-      periodDays: view.periodDays,
-      forecastDays: view.forecastDays,
-      date: at,
-    });
-    const historyFetch = getReviewHistory(query);
-    statisticsFetch
-      .then((s) => {
-        if (!cancelled) setStatistics(s);
-      })
-      .catch(() => {});
-    graphsFetch
-      .then((g) => {
-        if (!cancelled) setGraphs(g);
-      })
-      .catch(() => {});
-    historyFetch
-      .then((h) => {
-        if (!cancelled) setHistory(h);
-      })
-      .catch(() => {});
-    Promise.allSettled([statisticsFetch, graphsFetch, historyFetch]).then(
-      ([s, g, h]) => {
-        if (cancelled) return;
-        const failed = [g, h].find((r) => r.status === "rejected") as
-          PromiseRejectedResult | undefined;
-        setQueryError(
-          query && failed?.reason instanceof ApiError && failed.reason.span
-            ? { query, span: failed.reason.span }
-            : null,
-        );
-        if (s.status === "fulfilled" && g.status === "fulfilled") {
-          setError(null);
-        } else {
-          const failure = [s, g, h].find(
-            (r) => r.status === "rejected",
-          ) as PromiseRejectedResult;
-          setError(errorMessage(failure.reason));
-          setStatistics(null);
-          setGraphs(null);
-        }
-        setLoadedKey(key);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [credentials, navigate, date, view, reloadCount, dataVersion]);
+    if (!credentials) navigate(loginPath());
+  }, [credentials, navigate]);
+
+  const query = view.query.trim() || null;
+  const scheduler = credentials?.schedulerName ?? "";
+  const enabled = Boolean(credentials && date);
+  const revision = reloadCount + dataVersion;
+  const todayRequest = useCallback(
+    () => getStatistics(scheduler, requestDate(date)),
+    [scheduler, date],
+  );
+  const graphsRequest = useCallback(
+    () =>
+      getStatisticsGraphs(scheduler, {
+        query,
+        periodDays: view.periodDays,
+        forecastDays: view.forecastDays,
+        date: requestDate(date),
+      }),
+    [scheduler, query, view.periodDays, view.forecastDays, date],
+  );
+  const historyRequest = useCallback(() => getReviewHistory(query), [query]);
+  const todayResult = useStatisticsRequest(todayRequest, enabled, revision);
+  const graphResult = useStatisticsRequest(graphsRequest, enabled, revision);
+  const historyResult = useStatisticsRequest(historyRequest, enabled, revision);
+  const loading =
+    todayResult.loading || graphResult.loading || historyResult.loading;
+  const failure = todayResult.error ?? graphResult.error;
+  const error = failure == null ? null : errorMessage(failure);
+  const searchFailure = graphResult.error ?? historyResult.error;
+  const queryError =
+    query && searchFailure instanceof ApiError && searchFailure.span
+      ? { query, span: searchFailure.span }
+      : null;
+  const statistics = todayResult.data;
+  const graphs = graphResult.data;
+  const history = historyResult.data;
 
   function applyQuery(query = queryInput) {
     const q = query.trim();
     setQueryInput(q);
     if (q) saveRecent(q);
+    if (q === view.query) {
+      reload();
+      return;
+    }
     setView((v) => ({ ...v, query: q }));
   }
 
