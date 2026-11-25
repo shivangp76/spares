@@ -26,6 +26,12 @@ import {
   legacyCopyKey,
   requireCopyAccount,
 } from "./copyScope";
+import {
+  openCheckpoints,
+  forgetCheckpoints,
+  type RenderedFile,
+  type FileListing,
+} from "./copyCheckpoint";
 import { useSyncExternalStore } from "react";
 import {
   clearCaches,
@@ -79,8 +85,7 @@ const DOWNLOAD_CONCURRENCY = 4;
 /** How often the bytes downloaded are shown while a file comes */
 const PROGRESS_MS = 250;
 
-// What has been downloaded, by path: a rendered file's mtime, and a render asset's hash. Only
-// `dropCopy` removes them, along with the caches they describe.
+// What has been downloaded in older builds. Migrated into IndexedDB on the first refresh.
 const FILES_KEY = copyKey("spares_copy_files");
 const ASSETS_KEY = copyKey("spares_copy_assets");
 // The server's rendered files as last listed (`FileListing`)
@@ -601,6 +606,7 @@ async function dropCopy(): Promise<void> {
   setLocalCopy(null);
   stopCopy();
   session += 1;
+  await forgetCheckpoints();
   localStorage.removeItem(FILES_KEY);
   localStorage.removeItem(ASSETS_KEY);
   localStorage.removeItem(LISTING_KEY);
@@ -668,43 +674,12 @@ async function disableHere(discardChanges: boolean): Promise<string | null> {
 
 // Files
 
-/** A file of `POST /api/sync/files/changed` (see `spares_core::sync::media`) */
-interface RenderedFile {
-  path: string;
-  size: number;
-  mtime: number;
-  bucket: string;
-}
-
-/**
- * The server's rendered files as last listed, and the digest of each bucket they're sorted into,
- * for buckets whose files have all been downloaded. The server sends again only the files of
- * buckets whose digest is another, so a refresh lists only the few files a sync changed, and still
- * sees the ones that are gone.
- */
-interface FileListing {
-  buckets: Record<string, string>;
-  files: Record<string, RenderedFile>;
-}
-
-function readListing(): FileListing {
-  try {
-    const listing = JSON.parse(
-      localStorage.getItem(LISTING_KEY) ?? "null",
-    ) as FileListing | null;
-    if (listing?.buckets && listing.files) return listing;
-  } catch {
-    // Listed again
-  }
-  return { buckets: {}, files: {} };
-}
-
 /** The server's rendered files, from the listing here and what changed on the server since. */
 async function listFiles(
   serverUrl: string,
   headers: Record<string, string>,
-): Promise<{ listing: FileListing; changed: Record<string, string> }> {
-  const listing = readListing();
+  listing: FileListing,
+): Promise<{ files: RenderedFile[]; changed: Record<string, string> }> {
   const res = await fetch(`${serverUrl}/api/sync/files/changed`, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
@@ -722,11 +697,10 @@ async function listFiles(
     if (listing.buckets[bucket] !== digest) changed[bucket] = digest;
   for (const bucket of Object.keys(listing.buckets))
     if (!(bucket in buckets)) changed[bucket] = "";
-  for (const [path, file] of Object.entries(listing.files)) {
-    if (file.bucket in changed) delete listing.files[path];
-  }
-  for (const file of files) listing.files[file.path] = file;
-  return { listing, changed };
+  const unchanged = Object.values(listing.files).filter(
+    (file) => !(file.bucket in changed) && file.bucket in buckets,
+  );
+  return { files: unchanged.concat(files), changed };
 }
 
 function readMap(key: string): Record<string, string | number> {
@@ -779,8 +753,40 @@ async function downloadFiles(): Promise<void> {
   const started = session;
   const { serverUrl, csrfToken } = copyCredentials();
   const headers = { "X-CSRF-Token": csrfToken };
-  const { listing, changed } = await listFiles(serverUrl, headers);
-  const files = Object.values(listing.files);
+  const checkpoint = await openCheckpoints();
+  let success = false;
+  try {
+    await refreshFromCheckpoint(checkpoint, started, serverUrl, headers);
+    success = session === started;
+  } finally {
+    checkpoint.close(success);
+  }
+}
+
+async function refreshFromCheckpoint(
+  checkpoint: Awaited<ReturnType<typeof openCheckpoints>>,
+  started: number,
+  serverUrl: string,
+  headers: Record<string, string>,
+) {
+  // Older copies kept full maps in localStorage. Re-list once and reuse their completed downloads.
+  const migrating = [FILES_KEY, ASSETS_KEY, LISTING_KEY].some(
+    (key) => localStorage.getItem(key) !== null,
+  );
+  const knownFiles: Record<string, string | number> = migrating
+    ? readMap(FILES_KEY)
+    : Object.create(null);
+  const knownAssets = migrating
+    ? { ...readMap(ASSETS_KEY), ...checkpoint.assets }
+    : checkpoint.assets;
+  for (const file of Object.values(checkpoint.listing.files))
+    knownFiles[file.path] = file.mtime;
+  const priorFiles = checkpoint.listing.files;
+  const { files, changed } = await listFiles(
+    serverUrl,
+    headers,
+    checkpoint.listing,
+  );
   const assets = await call<{ path: string; hash: string }[]>("render_assets");
 
   const [filesCache, assetsCache, pandocCache] = await Promise.all([
@@ -788,13 +794,12 @@ async function downloadFiles(): Promise<void> {
     caches.open(COPY_RENDER_ASSETS_CACHE),
     caches.open(COPY_PANDOC_CACHE),
   ]);
-  const knownFiles = readMap(FILES_KEY);
-  const knownAssets = readMap(ASSETS_KEY);
   const current = new Set(files.map((file) => file.path));
   for (const path of Object.keys(knownFiles)) {
     if (current.has(path)) continue;
     await filesCache.delete(fileUrl(path));
     delete knownFiles[path];
+    checkpoint.removeFile(path);
   }
   // Also those the device no longer needs, such as images of cards' image occlusions, which it makes itself
   const currentAssets = new Set(assets.map((asset) => asset.path));
@@ -804,25 +809,32 @@ async function downloadFiles(): Promise<void> {
     if (currentAssets.has(path)) continue;
     await assetsCache.delete(renderAssetUrl(path));
     delete knownAssets[path];
+    checkpoint.removeAsset(path);
     changedAssets.add(path);
   }
-  const save = () => {
-    if (session !== started) return;
-    localStorage.setItem(FILES_KEY, JSON.stringify(knownFiles));
-    localStorage.setItem(ASSETS_KEY, JSON.stringify(knownAssets));
-    // A bucket counts as seen once each of its files is here, so one that failed is listed again
-    const missing = new Set(
-      files
-        .filter((file) => knownFiles[file.path] !== file.mtime)
-        .map((file) => file.bucket),
-    );
-    for (const [bucket, digest] of Object.entries(changed)) {
-      if (!digest) delete listing.buckets[bucket];
-      else if (!missing.has(bucket)) listing.buckets[bucket] = digest;
-    }
-    localStorage.setItem(LISTING_KEY, JSON.stringify(listing));
-  };
-  save();
+  const missing = new Map<string, number>();
+  for (const file of files) {
+    const old = priorFiles[file.path];
+    if (old && old.size !== file.size) delete knownFiles[file.path];
+    if (knownFiles[file.path] !== file.mtime)
+      missing.set(file.bucket, (missing.get(file.bucket) ?? 0) + 1);
+    else if (migrating || file.bucket in changed) checkpoint.file(file);
+  }
+  if (migrating) {
+    for (const [path, hash] of Object.entries(knownAssets))
+      if (typeof hash === "string") checkpoint.asset(path, hash);
+  }
+  for (const [bucket, digest] of Object.entries(changed)) {
+    // Invalidate the old digest even if the refresh is interrupted and the server reverts.
+    checkpoint.bucket(bucket, missing.has(bucket) ? "" : digest);
+  }
+  const save = () =>
+    session === started ? checkpoint.save() : Promise.resolve();
+  await save();
+  if (migrating && session === started) {
+    for (const key of [FILES_KEY, ASSETS_KEY, LISTING_KEY])
+      localStorage.removeItem(key);
+  }
 
   let next = 0;
   let done = 0;
@@ -878,6 +890,11 @@ async function downloadFiles(): Promise<void> {
         if (!response.ok) return;
         await filesCache.put(url, counted(response));
         knownFiles[file.path] = file.mtime;
+        checkpoint.file(file);
+        const left = (missing.get(file.bucket) ?? 1) - 1;
+        missing.set(file.bucket, left);
+        if (left === 0 && changed[file.bucket])
+          checkpoint.bucket(file.bucket, changed[file.bucket]);
       }),
     ...assets
       .filter((asset) => knownAssets[asset.path] !== asset.hash)
@@ -892,6 +909,7 @@ async function downloadFiles(): Promise<void> {
         if (response.ok) {
           await assetsCache.put(url, counted(response));
           knownAssets[asset.path] = asset.hash;
+          checkpoint.asset(asset.path, asset.hash);
           changedAssets.add(asset.path);
         } else if (!(await assetsCache.match(url, { ignoreVary: true }))) {
           await assetsCache.put(url, response);
@@ -905,18 +923,20 @@ async function downloadFiles(): Promise<void> {
       await tasks[next++]();
       done += 1;
       showProgress();
-      if (done % 20 === 0) save();
+      if (done % 100 === 0) await save();
     }
   };
   try {
-    await Promise.all(
+    const results = await Promise.allSettled(
       Array.from(
         { length: Math.min(DOWNLOAD_CONCURRENCY, tasks.length) },
         worker,
       ),
     );
+    for (const result of results)
+      if (result.status === "rejected") throw result.reason;
   } finally {
-    save();
+    await save();
     if (changedAssets.size > 0) {
       await import("../typst/compiler")
         .then(({ forgetTypstFiles }) => forgetTypstFiles(changedAssets))
