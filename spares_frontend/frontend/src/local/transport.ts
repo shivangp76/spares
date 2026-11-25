@@ -28,6 +28,8 @@ export const COPY_RENDER_ASSETS_CACHE = "spares-copy-render-assets";
 
 /** The copy this device keeps, as set up in Settings. It syncs with the host that serves the page. */
 export interface LocalCopy {
+  /** The collection the copy was enrolled from, used to scope editor drafts. */
+  collectionId?: string;
   replica: number;
   /** Whether its first full download has finished. Until then, requests go to the server. */
   ready: boolean;

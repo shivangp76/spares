@@ -1,3 +1,4 @@
+import { getLocalCopy } from "./local/transport";
 import { getCredentials } from "./api/client";
 import { useEffect, useState } from "react";
 
@@ -69,12 +70,14 @@ function save<T>(key: string, value: T | null) {
 
 /** localStorage is already isolated by host origin. Capture the collection when an
  * editor opens, so a write from an old tab cannot acquire the next login's identity. */
-export function draftStore(owner: string | null) {
-  const prefix = JSON.stringify(["spares-drafts-v1", owner]) + ":";
+export function draftStore(owner: string | null, collection = owner) {
+  const prefix = JSON.stringify(["spares-drafts-v1", owner, collection]) + ":";
   function store<T>(key: string) {
     return {
-      load: () => owner === null ? null : load<T>(prefix + key),
-      save: (value: T | null) => { if (owner !== null) save(prefix + key, value); },
+      load: () => (owner === null ? null : load<T>(prefix + key)),
+      save: (value: T | null) => {
+        if (owner !== null) save(prefix + key, value);
+      },
     };
   }
   return {
@@ -89,7 +92,12 @@ export function useDraftStore() {
     try {
       const credentials = getCredentials();
       // An older login predates collection IDs. Keep its drafts separate from collections identified by ID.
-      return draftStore(credentials.accountId ?? "legacy-name:" + credentials.user);
+      const owner = credentials.accountId ?? "legacy-name:" + credentials.user;
+      const copy = getLocalCopy();
+      const collection = copy?.ready
+        ? (copy.collectionId ?? "legacy-copy:" + copy.replica)
+        : owner;
+      return draftStore(owner, collection);
     } catch {
       return draftStore(null);
     }

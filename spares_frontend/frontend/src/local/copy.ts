@@ -494,14 +494,15 @@ export async function enableLocalCopy(
   // Already enrolled when an earlier attempt stopped after it
   const replica =
     state.replica ?? (await call<number>("enroll", serverUrl, csrfToken, name));
-  setLocalCopy({ replica, ready: false });
+  const collectionId = existing ? existing.collectionId : getCredentials().accountId;
+  setLocalCopy({ replica, collectionId, ready: false });
   onStep("Downloading the collection");
   try {
     await call<SyncReport>("sync", serverUrl, csrfToken, "full_download");
   } finally {
     setStatus({ collection: null });
   }
-  setLocalCopy({ replica, ready: true });
+  setLocalCopy({ replica, collectionId, ready: true });
   clearCaches();
   await globalThis.caches
     ?.open(SERVICE_WORKER_MARKER)
