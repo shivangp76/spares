@@ -157,7 +157,7 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
         tags_value: Value,
         card_count: u32,
     }
-    // Single query to fetch notes with their tags, card counts, and note links in one go
+    // Fetch the page first so only its links need to be loaded.
     let limit = opts.limit.unwrap_or(10);
     let offset = (opts.page.unwrap_or(1).saturating_sub(1)) * limit;
 
@@ -186,7 +186,13 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
     .map_err(|e| Error::Sqlx { source: e })?;
 
     let config = read_internal_config(db).await?;
-    let mut responses = Vec::new();
+    let mut links = if config.linked_notes_generated {
+        let ids: Vec<_> = notes_data.iter().map(|row| row.note.id).collect();
+        Some(super::get_note_links_map(db, &ids).await?)
+    } else {
+        None
+    };
+    let mut responses = Vec::with_capacity(notes_data.len());
     for ListNotesRow {
         note,
         parser_name,
@@ -195,23 +201,14 @@ pub async fn list_notes(db: &SqlitePool, opts: FilterOptions) -> Result<Vec<Note
         card_count,
     } in notes_data
     {
-        // Get linked_notes
-        let linked_notes_arg = if config.linked_notes_generated {
-            let note_links: Vec<NoteLink> =
-                sqlx::query_as(r"SELECT * FROM note_link WHERE parent_note_id = ?")
-                    .bind(note.id)
-                    .fetch_all(db)
-                    .await
-                    .map_err(|e| Error::Sqlx { source: e })?;
-            Some(
-                note_links
-                    .into_iter()
-                    .map(LinkedNote::new)
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            None
-        };
+        let linked_notes_arg = links.as_mut().map(|by_note| {
+            by_note
+                .remove(&note.id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(LinkedNote::new)
+                .collect()
+        });
         let keywords: Vec<String> = value_to_string_vec(&keywords_value);
         let mut tags: Vec<String> = value_to_string_vec(&tags_value);
         tags.sort();

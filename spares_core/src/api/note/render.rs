@@ -371,26 +371,29 @@ pub async fn get_note_links_map(
     db: &SqlitePool,
     note_ids: &[NoteId],
 ) -> Result<HashMap<NoteId, Vec<NoteLink>>, Error> {
-    // Note that the query sorts by order, so we don't need to do this after
-    let query_str = format!(
-        "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
-        placeholders(note_ids.len())
-    );
-    let mut query = sqlx::query_as(AssertSqlSafe(query_str));
-    for note_id in note_ids {
-        query = query.bind(note_id);
-    }
-    let all_note_links: Vec<NoteLink> = query
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-
     let mut all_note_links_map: HashMap<NoteId, Vec<NoteLink>> = HashMap::new();
-    for note_link in all_note_links {
-        all_note_links_map
-            .entry(note_link.parent_note_id)
-            .or_default()
-            .push(note_link);
+    // Keep even an unbounded CLI list below SQLite's bind parameter limit.
+    for note_ids in note_ids.chunks(5000) {
+        // Note that the query sorts by order, so we don't need to do this after
+        let query_str = format!(
+            "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
+            placeholders(note_ids.len())
+        );
+        let mut query = sqlx::query_as(AssertSqlSafe(query_str));
+        for note_id in note_ids {
+            query = query.bind(note_id);
+        }
+        let all_note_links: Vec<NoteLink> = query
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+
+        for note_link in all_note_links {
+            all_note_links_map
+                .entry(note_link.parent_note_id)
+                .or_default()
+                .push(note_link);
+        }
     }
     Ok(all_note_links_map)
 }

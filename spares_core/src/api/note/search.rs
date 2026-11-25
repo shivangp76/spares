@@ -510,8 +510,10 @@ pub async fn get_note_graph(
         Some(score) => score,
         None => read_external_config()?.queue.linked_note_max_score,
     };
+    let max_nodes = max_nodes.clamp(1, MAX_GRAPH_NODES);
     let found: Vec<NoteId> = if query.trim().is_empty() {
-        sqlx::query_scalar(r"SELECT id FROM note ORDER BY id")
+        sqlx::query_scalar(r"SELECT id FROM note ORDER BY id LIMIT ?")
+            .bind((max_nodes + 1) as u32)
             .fetch_all(db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?
@@ -520,7 +522,7 @@ pub async fn get_note_graph(
     };
     let mut walk = GraphWalk {
         max_score,
-        max_nodes: max_nodes.clamp(1, MAX_GRAPH_NODES),
+        max_nodes,
         truncated: false,
         reached: HashMap::new(),
         order: Vec::new(),
@@ -629,6 +631,10 @@ impl GraphWalk {
         relation: GraphRelation,
         max_depth: Option<u32>,
     ) -> Result<(), Error> {
+        // A full walk with a known omitted node cannot add anything or change truncation.
+        if self.truncated {
+            return Ok(());
+        }
         let mut level = start.to_vec();
         let mut depth = 0;
         while !level.is_empty() && max_depth.is_none_or(|max| depth < max) {
