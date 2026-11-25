@@ -10,8 +10,8 @@ use sqlx::types::Json;
 
 use crate::Error;
 use crate::LibraryError;
+use crate::api::note::KeywordMatcher;
 use crate::api::note::get_note_links_map;
-use crate::api::note::match_keyword;
 use crate::api::placeholders;
 use crate::config::read_external_config;
 use crate::config::read_internal_config;
@@ -56,6 +56,7 @@ use crate::search::evaluator::lapses_sql;
 use crate::search::evaluator::reps_sql;
 use crate::search::evaluator::text_matches;
 use crate::search::evaluator::text_patterns;
+use std::sync::Arc;
 
 pub async fn get_keywords(db: &SqlitePool) -> Result<Vec<(NoteId, String)>, Error> {
     let keywords_data: Vec<(NoteId, String)> =
@@ -249,7 +250,7 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
         #[sqlx(flatten)]
         card: Card,
         name: String,
-        note_data: String,
+        note_preview: String,
         note_tags: Json<Vec<String>>,
         card_tags: Json<Vec<String>>,
         interval_days: Option<f64>,
@@ -258,8 +259,12 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
         last_reviewed: Option<i64>,
         scheduler_name: Option<String>,
     }
+    // SQLite text substr stops at NUL. Keep Rust's character semantics for that rare
+    // case, checking only the bytes that could belong to the preview.
+    let preview_bytes = CARD_NOTE_PREVIEW_CHARS * 4;
     let rows: Vec<CardWithParser> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT c.*, p.name, n.data AS note_data,
+        "SELECT c.*, p.name, CASE WHEN instr(substr(CAST(n.data AS BLOB), 1, {preview_bytes}), x'00') > 0
+             THEN n.data ELSE substr(n.data, 1, {CARD_NOTE_PREVIEW_CHARS}) END AS note_preview,
            COALESCE((SELECT JSON_GROUP_ARRAY(t.name) FROM note_tag nt JOIN tag t ON t.id = nt.tag_id
              WHERE nt.note_id = n.id), '[]') AS note_tags,
            COALESCE((SELECT JSON_GROUP_ARRAY(name) FROM (SELECT t.name FROM card_tag ct
@@ -312,14 +317,16 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
                     .filter(|recall| recall.is_finite())
             }
         };
+        let mut preview = row.note_preview;
+        if preview.len() > CARD_NOTE_PREVIEW_CHARS
+            && let Some((end, _)) = preview.char_indices().nth(CARD_NOTE_PREVIEW_CHARS)
+        {
+            preview.truncate(end);
+        }
         let card_match = CardMatch {
             card: CardResponse::new(&row.card),
             parser_name: row.name,
-            note_preview: row
-                .note_data
-                .chars()
-                .take(CARD_NOTE_PREVIEW_CHARS)
-                .collect(),
+            note_preview: preview,
             note_tags: row.note_tags.0,
             card_tags: row.card_tags.0,
             stats: CardStats {
@@ -373,6 +380,38 @@ fn sorted_query(query: &str, sort: &SearchSort) -> Result<String, Error> {
     })
 }
 
+/// The token and keywords are read from one SQLite snapshot. Every keyword mutation
+/// replaces the token, including changes made by other processes or full sync.
+#[derive(Default)]
+pub(crate) struct KeywordCache(tokio::sync::Mutex<Option<(Vec<u8>, Arc<KeywordMatcher<'static>>)>>);
+
+impl KeywordCache {
+    async fn matcher(&self, db: &SqlitePool) -> Result<Arc<KeywordMatcher<'static>>, Error> {
+        let mut cached = self.0.lock().await;
+        let error = |source| Error::Sqlx { source };
+        let mut tx = db.begin().await.map_err(error)?;
+        let version: Vec<u8> = sqlx::query_scalar("SELECT token FROM keyword_version")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(error)?;
+        if let Some((token, matcher)) = &*cached
+            && *token == version
+        {
+            tx.commit().await.map_err(error)?;
+            return Ok(Arc::clone(matcher));
+        }
+        let keywords = sqlx::query_as("SELECT note_id, keyword FROM note_keyword")
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(error)?;
+        tx.commit().await.map_err(error)?;
+        let matcher =
+            crate::helpers::run_blocking(move || Arc::new(KeywordMatcher::owned(keywords))).await;
+        *cached = Some((version, Arc::clone(&matcher)));
+        Ok(matcher)
+    }
+}
+
 pub async fn search_keyword(
     db: &SqlitePool,
     body: SearchKeywordRequest,
@@ -380,18 +419,18 @@ pub async fn search_keyword(
     let SearchKeywordRequest {
         keyword: searched_keyword,
     } = body;
-    let keywords = get_keywords(db).await?;
-    let mut matched_keyword_data = match_keyword(searched_keyword.as_str(), keywords.as_ref());
-
-    // Sort by score (ascending - lower scores are better matches)
-    matched_keyword_data.sort_by(|a, b| {
-        a.score
-            .partial_cmp(&b.score)
-            // NaNs to sort last (so valid scores come first)
-            .unwrap_or(std::cmp::Ordering::Greater)
-    });
-
-    Ok(matched_keyword_data)
+    let matcher = if let Some(collection) = crate::collection::current() {
+        collection.state.keywords.matcher(db).await?
+    } else {
+        // Standalone library callers need only a pool and have no collection-owned cache.
+        KeywordCache::default().matcher(db).await?
+    };
+    Ok(crate::helpers::run_blocking(move || {
+        let mut ranked = matcher.matches(&searched_keyword);
+        ranked.sort_by(|a, b| a.score.total_cmp(&b.score));
+        ranked
+    })
+    .await)
 }
 
 pub async fn get_unmatched_keywords(
@@ -894,6 +933,75 @@ mod tests {
 
     fn note_ids(cards: &[CardMatch]) -> Vec<String> {
         cards.iter().map(|m| m.card.note_id.to_string()).collect()
+    }
+
+    #[sqlx::test]
+    async fn preview_preserves_unicode_and_embedded_nul(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = sort_pool(pool_options, options).await;
+        for prefix in ["", "abc\0def"] {
+            let text = format!("{prefix}{}", "🦀".repeat(250));
+            sqlx::query("UPDATE note SET data=?")
+                .bind(&text)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let cards = card_page(&pool, "", None).await;
+            assert_eq!(cards.len(), 3);
+            let expected: String = text.chars().take(CARD_NOTE_PREVIEW_CHARS).collect();
+            assert!(cards.iter().all(|card| card.note_preview == expected));
+        }
+    }
+
+    #[sqlx::test]
+    async fn cached_keywords_follow_committed_changes(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = sort_pool(pool_options, options).await;
+        let cache = KeywordCache::default();
+        let empty = cache.matcher(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("INSERT INTO note_keyword SELECT id, 'Chapter 2', 0 FROM note")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        assert!(Arc::ptr_eq(&empty, &cache.matcher(&pool).await.unwrap()));
+        sqlx::query("INSERT INTO note_keyword SELECT id, 'Chapter 2', 0 FROM note")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let matcher = cache.matcher(&pool).await.unwrap();
+        assert_eq!(matcher.matches("chapter 2").len(), 3);
+        assert!(matcher.matches("Chapter 3").is_empty());
+        sqlx::query("UPDATE note_keyword SET keyword='Chapter 3'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            cache
+                .matcher(&pool)
+                .await
+                .unwrap()
+                .matches("chapter 3")
+                .len(),
+            3
+        );
+        sqlx::query("DELETE FROM note_keyword")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            cache
+                .matcher(&pool)
+                .await
+                .unwrap()
+                .matches("chapter 3")
+                .is_empty()
+        );
     }
 
     #[sqlx::test]

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -60,16 +61,34 @@ pub struct RenderNoteData {
 /// Keywords of all notes, normalized once so that many searched keywords can be matched
 /// against them.
 pub struct KeywordMatcher<'a> {
-    keywords: Vec<(NoteId, &'a str, NormalizedKeyword)>,
+    keywords: Vec<(NoteId, Cow<'a, str>, NormalizedKeyword)>,
     exact: HashMap<String, Vec<usize>>,
     by_numbers: HashMap<Vec<String>, Vec<usize>>,
 }
 
 impl<'a> KeywordMatcher<'a> {
     pub fn new(keywords: &'a [(NoteId, String)]) -> Self {
-        let keywords: Vec<_> = keywords
-            .par_iter()
-            .map(|(id, keyword)| (*id, keyword.as_str(), NormalizedKeyword::new(keyword)))
+        Self::build(
+            keywords
+                .par_iter()
+                .map(|(id, key)| (*id, Cow::Borrowed(key.as_str()))),
+        )
+    }
+
+    pub(super) fn owned(keywords: Vec<(NoteId, String)>) -> Self {
+        Self::build(
+            keywords
+                .into_par_iter()
+                .map(|(id, key)| (id, Cow::Owned(key))),
+        )
+    }
+
+    fn build(entries: impl IndexedParallelIterator<Item = (NoteId, Cow<'a, str>)>) -> Self {
+        let keywords: Vec<_> = entries
+            .map(|(id, key)| {
+                let normalized = NormalizedKeyword::new(&key);
+                (id, key, normalized)
+            })
             .collect();
         let mut exact = HashMap::<_, Vec<_>>::new();
         let mut by_numbers = HashMap::<_, Vec<_>>::new();
@@ -86,12 +105,16 @@ impl<'a> KeywordMatcher<'a> {
 
     pub fn matches(&self, searched_keyword: &str) -> Vec<MatchedKeywordResponse> {
         let searched = NormalizedKeyword::new(searched_keyword);
-        self.keywords
+        let Some(candidates) = self.by_numbers.get(&searched.numbers) else {
+            return Vec::new();
+        };
+        candidates
             .par_iter()
-            .filter_map(|(id, keyword, key)| {
+            .filter_map(|&i| {
+                let (id, keyword, key) = &self.keywords[i];
                 keyword_distance(&searched, key).map(|score| MatchedKeywordResponse {
                     note_id: *id,
-                    matched_keyword: (*keyword).to_owned(),
+                    matched_keyword: keyword.to_string(),
                     score,
                 })
             })
@@ -123,7 +146,7 @@ impl<'a> KeywordMatcher<'a> {
         let (note_id, keyword, _) = &self.keywords[i];
         Some(MatchedKeywordResponse {
             note_id: *note_id,
-            matched_keyword: (*keyword).to_owned(),
+            matched_keyword: keyword.to_string(),
             score,
         })
     }
@@ -708,7 +731,18 @@ mod tests {
             "école",
             "Missing",
         ] {
-            let expected = matcher.matches(text).into_iter().min_by(|a, b| {
+            let exhaustive = super::match_keyword(text, &keywords);
+            let scores = |hits: &[super::MatchedKeywordResponse]| {
+                hits.iter()
+                    .map(|hit| (hit.note_id, hit.matched_keyword.clone(), hit.score))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                scores(&matcher.matches(text)),
+                scores(&exhaustive),
+                "{text}"
+            );
+            let expected = exhaustive.into_iter().min_by(|a, b| {
                 a.score
                     .total_cmp(&b.score)
                     .then_with(|| (a.matched_keyword != text).cmp(&(b.matched_keyword != text)))
