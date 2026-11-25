@@ -373,6 +373,34 @@ impl<'de> Evaluator<'de> {
         Ok(card_ids)
     }
 
+    /// The SQL selecting the ids of the cards matching the query, to run inside another query,
+    /// as a [preset](crate::config::QueuePreset)'s query runs inside the queue's. `config` is
+    /// used for the fields that read it, like `c.waiting_on_links` or `today`, so this can run
+    /// while the config is being read. The query can't sort, limit or use `c.cloze`, since none of
+    /// them can be done inside another query.
+    pub(crate) fn card_ids_sql(self, config: &SparesExternalConfig) -> Result<String, String> {
+        let query = self.query;
+        let token_tree = self
+            .parser
+            .parse_expression()
+            .map_err(|e| render_error(query, &e))?;
+        if tree_has_modifier(&token_tree) {
+            return Err("it can't sort or limit".to_string());
+        }
+        if has_cloze_field(&token_tree) {
+            return Err(
+                "it can't use `c.cloze`, which is matched after the database query".to_string(),
+            );
+        }
+        let mut context = EvaluationContext::new(EvaluatorReturnItemType::CardIds, None);
+        context.root_context = true;
+        context.config = Arc::new(OnceLock::from(Ok(config.clone())));
+        token_tree
+            .evaluate(&mut context)
+            .map_err(|e| render_error(query, &e))?;
+        Ok(context.build_query(EvaluatorReturnItemType::CardIds))
+    }
+
     /// Cloze path: convert the query tree to DNF, then for each disjunct run SQL +
     /// optional in-memory cloze filtering, and union the results.
     async fn visit_cloze_cards(

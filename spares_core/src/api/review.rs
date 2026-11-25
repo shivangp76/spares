@@ -38,6 +38,7 @@ use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
 use crate::api::note::update_notes;
 use crate::api::preset::CardConfigs;
+use crate::api::preset::resolve_preset_queries;
 use crate::api::preset::PresetLimitsLeft;
 use crate::api::preset::cap_counts;
 use crate::api::preset::cards_with_preset;
@@ -428,6 +429,7 @@ pub(crate) async fn daily_limits_left_with(
     config: &SparesExternalConfig,
     requested_date: DateTime<Utc>,
 ) -> Result<DailyLimitsLeft, Error> {
+    resolve_preset_queries(db, config).await?;
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date, config.zone());
     // The preset is only needed for the presets' own limits
     let preset = limited_preset_sql(&config.queue);
@@ -793,6 +795,7 @@ pub(crate) async fn build_review_filter_query(
     requested_date: DateTime<Utc>,
     learn_ahead: bool,
 ) -> Result<Option<ReviewFilterQuery>, Error> {
+    resolve_preset_queries(db, config).await?;
     let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.zone());
     let limits_left = daily_limits_left_with(db, config, requested_date).await?;
     let cards = cards_with_preset(&config.queue.presets);

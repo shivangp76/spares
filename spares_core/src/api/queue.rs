@@ -2498,6 +2498,7 @@ mod preset_tests {
     fn invalid_presets_are_rejected() {
         let error = invalid("[queue.presets.empty]\nnew_cards_daily_limit = 5\n");
         assert!(error.contains("queue.presets.empty.tags"), "{error}");
+        assert!(error.contains("queue.presets.empty.query"), "{error}");
         let error = invalid("[queue.presets.steps]\ntags = [\"a\"]\nlearning_steps = [600, 60]\n");
         assert!(
             error.contains("queue.presets.steps.learning_steps"),
@@ -2540,6 +2541,55 @@ mod preset_tests {
             (0..ids.len()).map(of).collect::<Vec<_>>(),
             [Some(0), Some(0), Some(1), Some(0), None, None]
         );
+    }
+
+    /// A preset's query picks cards as a search does, alone or along with its tags, and presets
+    /// are still tried in order.
+    #[sqlx::test]
+    async fn presets_match_cards_by_query(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(
+            &pool,
+            &[
+                &["exam:a"],
+                &["exam:b"],
+                &["lang"],
+                &["math"],
+                &["lang", "exam:b"],
+                &[],
+            ],
+            now,
+        )
+        .await;
+        let config = parse(
+            r#"
+            [queue.presets.languages]
+            tags = ["lang"]
+
+            [queue.presets.exam]
+            query = 'tag="exam:a" or tag="exam:b"'
+
+            [queue.presets.both]
+            tags = ["math"]
+            query = "-tag=lang -tag=exam -tag=math"
+            "#,
+        );
+        let presets = card_presets(&pool, &preset_sql(&config.queue.presets))
+            .await
+            .unwrap();
+        let of = |i: usize| presets.get(&ids[i]).copied();
+        assert_eq!(
+            (0..ids.len()).map(of).collect::<Vec<_>>(),
+            [Some(1), Some(1), Some(0), Some(2), Some(0), Some(2)]
+        );
+        let error = invalid("[queue.presets.bad]\nquery = \"tag=a limit=2\"\n");
+        assert!(error.contains("queue.presets.bad.query"), "{error}");
+        let error = invalid("[queue.presets.bad]\nquery = \"c.cloze~x\"\n");
+        assert!(error.contains("c.cloze"), "{error}");
+        let error = invalid("[queue.presets.bad]\nquery = \"nofield=3\"\n");
+        assert!(error.contains("queue.presets.bad.query"), "{error}");
+        let error = invalid("[queue.presets.bad]\nquery = \" \"\n");
+        assert!(error.contains("must not be empty"), "{error}");
     }
 
     /// Each preset's limits cap its own cards, and the top-level limits the total.

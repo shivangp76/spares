@@ -1,6 +1,7 @@
 //! Which [preset](crate::config::QueuePreset) each card uses, and what that changes.
 //!
-//! A card's preset is the first of [`QueueConfig::presets`] that matches one of its note's tags.
+//! A card's preset is the first of [`QueueConfig::presets`] that matches one of its note's tags,
+//! or whose [query](QueuePreset::query) matches the card.
 //! It is found in SQL ([`preset_sql`]), so the queue can sort, filter and count by it without
 //! loading cards, and read back in Rust where a card is rated ([`CardConfigs`]).
 //!
@@ -56,6 +57,9 @@ pub(crate) fn preset_sql(presets: &IndexMap<String, QueuePreset>) -> String {
     if presets.is_empty() {
         return "NULL".to_string();
     }
+    if presets.values().any(|preset| preset.query_sql.is_some()) {
+        return preset_sql_with_queries(presets);
+    }
     let whens = presets
         .values()
         .enumerate()
@@ -80,6 +84,72 @@ pub(crate) fn preset_sql(presets: &IndexMap<String, QueuePreset>) -> String {
         "(SELECT MIN(CASE {whens} END) FROM note_tag nt JOIN tag t ON t.id = nt.tag_id \
          WHERE nt.note_id = c.note_id)"
     )
+}
+
+/// [`preset_sql`] when some preset has a [query](QueuePreset::query): each preset in turn, by
+/// whether one of the note's tags matches it or the card is among its query's cards. The query is
+/// not correlated with `c`, so SQLite runs it once per statement rather than once per card.
+fn preset_sql_with_queries(presets: &IndexMap<String, QueuePreset>) -> String {
+    let whens = presets
+        .values()
+        .enumerate()
+        .map(|(index, preset)| {
+            let mut conditions = Vec::new();
+            if !preset.tags.is_empty() {
+                let tags = preset
+                    .tags
+                    .iter()
+                    .map(|tag| {
+                        let prefix = format!("{tag}:");
+                        format!(
+                            "t.name = {} OR substr(t.name, 1, {}) = {}",
+                            sql_string(tag),
+                            prefix.chars().count(),
+                            sql_string(&prefix)
+                        )
+                    })
+                    .join(" OR ");
+                conditions.push(format!(
+                    "EXISTS (SELECT 1 FROM note_tag nt JOIN tag t ON t.id = nt.tag_id \
+                     WHERE nt.note_id = c.note_id AND ({tags}))"
+                ));
+            }
+            if let Some(query_sql) = &preset.query_sql {
+                // The ids looked up for this request, else the search itself
+                let cards = preset.query_ids.0.get().unwrap_or(query_sql);
+                conditions.push(format!("c.id IN ({cards})"));
+            }
+            format!("WHEN {} THEN {index}", conditions.join(" OR "))
+        })
+        .join(" ");
+    format!("(CASE {whens} END)")
+}
+
+/// Looks up the cards of each preset's [query](QueuePreset::query) once, for the queries `config`
+/// is used for after this, which then compare card ids rather than search again. Without it,
+/// [`preset_sql`] runs each preset's search in every query that needs a card's preset, which
+/// SQLite can repeat several times a query.
+///
+/// Call it where a request starts using presets. The cards are those of the moment it runs, which
+/// is what a request needs: a config is read for each one.
+pub(crate) async fn resolve_preset_queries(
+    db: &sqlx::SqlitePool,
+    config: &SparesExternalConfig,
+) -> Result<(), Error> {
+    for preset in config.queue.presets.values() {
+        let Some(query_sql) = &preset.query_sql else {
+            continue;
+        };
+        if preset.query_ids.0.get().is_some() {
+            continue;
+        }
+        let ids: Vec<CardId> = sqlx::query_scalar(AssertSqlSafe(query_sql.clone()))
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        let _ = preset.query_ids.0.set(ids.iter().join(","));
+    }
+    Ok(())
 }
 
 /// The `card` table with each card's preset ([`preset_sql`]) as a `preset` column, to select

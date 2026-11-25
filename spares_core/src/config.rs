@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use chrono::DateTime;
 use chrono::Duration;
@@ -635,6 +636,24 @@ impl Default for TagBuriedConfig {
 /// are in. Changing a note's tags changes its cards' preset right away, for the counts of what was
 /// studied today too (see [`Self::new_cards_daily_limit`]).
 ///
+/// A preset can instead, or also, match cards by a search, its [`Self::query`]. One preset per
+/// subject, each with a query and a new-card limit, studies several subjects side by side at a
+/// pace of their own:
+///
+/// ```toml
+/// [queue.presets.probability]
+/// query = 'tag="probability:grad"'
+/// new_cards_daily_limit = 5
+/// new_order = "random_note"
+///
+/// [queue.presets.spdes]
+/// query = 'tag=spdes or prerequisite_of=(tag=spdes via=(tag=functional-analysis))'
+/// new_cards_daily_limit = 8
+/// ```
+///
+/// Since presets are tried in order, a card of both uses `probability`. A query's `tag=` also
+/// matches the filtered tags of cards, unlike [`Self::tags`].
+///
 /// # What a preset can set
 ///
 /// Each setting left out is taken from the top level. A preset can set:
@@ -653,8 +672,29 @@ impl Default for TagBuriedConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct QueuePreset {
-    /// The tags whose notes use this preset, along with their child tags. Must not be empty.
+    /// The tags whose notes use this preset, along with their child tags. This or
+    /// [`Self::query`] must be set.
     pub tags: Vec<String>,
+    /// A search whose cards use this preset, as in `query = "tag=spdes or
+    /// prerequisite_of=(tag=spdes depth<=2)"`, for a set of cards tags don't describe, like an
+    /// exam's notes and what they build on. With [`Self::tags`] too, a card uses the preset if
+    /// either matches it. Unset by default.
+    ///
+    /// It is a search of cards, as `spares card search` runs, so a card field like
+    /// `c.state=new` makes some cards of a note use the preset and not others. It can't sort,
+    /// limit, or use `c.cloze`.
+    ///
+    /// A query is slower than tags, since it runs on every queue query: prefer tags when they
+    /// say the same thing.
+    pub query: Option<String>,
+    /// [`Self::query`] compiled to the SQL of its card ids, by
+    /// [`SparesExternalConfig::validate`].
+    #[serde(skip)]
+    pub(crate) query_sql: Option<String>,
+    /// The ids of [`Self::query`]'s cards, comma-separated, once
+    /// [`resolve_preset_queries`](crate::api::preset::resolve_preset_queries) has looked them up.
+    #[serde(skip)]
+    pub(crate) query_ids: ResolvedIds,
     /// The most new cards of this preset to study each day. Like
     /// [`SparesExternalConfig::new_cards_daily_limit`], which still caps the total.
     ///
@@ -700,6 +740,18 @@ pub struct QueuePreset {
     /// Whether rating a card of this preset buries its note's review cards due today, in place
     /// of [`QueueConfig::bury_review_siblings`].
     pub bury_review_siblings: Option<bool>,
+}
+
+/// The card ids a [`QueuePreset::query`] found, looked up once per config read, so the queries of
+/// a request share them. Clones of a config share them too. Always equal, since they are derived
+/// from the query.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ResolvedIds(pub(crate) std::sync::Arc<OnceLock<String>>);
+
+impl PartialEq for ResolvedIds {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
 }
 
 impl QueuePreset {
@@ -1123,26 +1175,31 @@ impl Default for SparesExternalConfig {
 }
 
 impl SparesExternalConfig {
-    pub(crate) fn validate(&mut self) -> Result<(), String> {
-        validate_steps("learning_steps", &self.learning_steps)?;
-        validate_steps("relearning_steps", &self.relearning_steps)?;
-        if self.day_starts_at > 23 {
-            return Err(format!(
-                "`day_starts_at` must be an hour from 0 to 23, not {}.",
-                self.day_starts_at
-            ));
-        }
-        if let Some(name) = &self.time_zone {
-            Zone::parse(Some(name), self.day_starts_at).map_err(|e| format!("`time_zone`: {e}"))?;
-        }
-        for (name, preset) in &self.queue.presets {
+    /// Checks [`QueueConfig::presets`], and compiles their queries.
+    fn validate_presets(&mut self) -> Result<(), String> {
+        // A preset's query is compiled with the config it is in, for the fields that read it.
+        let compile_config = self.clone();
+        for (name, preset) in &mut self.queue.presets {
             let key = |setting: &str| format!("queue.presets.{name}.{setting}");
-            if preset.tags.is_empty() {
+            if preset.tags.is_empty() && preset.query.is_none() {
                 return Err(format!(
-                    "`{}` must list at least one tag, or the preset applies to no card.",
-                    key("tags")
+                    "`{}` must list at least one tag, or `{}` be set, or the preset applies to no \
+                     card.",
+                    key("tags"),
+                    key("query")
                 ));
             }
+            preset.query_sql = match &preset.query {
+                Some(query) if query.trim().is_empty() => {
+                    return Err(format!("`{}` must not be empty.", key("query")));
+                }
+                Some(query) => Some(
+                    crate::search::evaluator::Evaluator::new(query)
+                        .card_ids_sql(&compile_config)
+                        .map_err(|e| format!("`{}`: {e}", key("query")))?,
+                ),
+                None => None,
+            };
             if preset.tags.iter().any(|tag| tag.trim().is_empty()) {
                 return Err(format!("`{}` must not have empty tags.", key("tags")));
             }
@@ -1155,6 +1212,22 @@ impl SparesExternalConfig {
                 }
             }
         }
+        Ok(())
+    }
+
+    pub(crate) fn validate(&mut self) -> Result<(), String> {
+        validate_steps("learning_steps", &self.learning_steps)?;
+        validate_steps("relearning_steps", &self.relearning_steps)?;
+        if self.day_starts_at > 23 {
+            return Err(format!(
+                "`day_starts_at` must be an hour from 0 to 23, not {}.",
+                self.day_starts_at
+            ));
+        }
+        if let Some(name) = &self.time_zone {
+            Zone::parse(Some(name), self.day_starts_at).map_err(|e| format!("`time_zone`: {e}"))?;
+        }
+        self.validate_presets()?;
         if self
             .maximum_answer_time
             .is_some_and(|maximum| maximum <= Duration::zero())
