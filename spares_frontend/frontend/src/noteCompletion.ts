@@ -16,7 +16,6 @@ import {
   type Extension,
   keymap,
   Prec,
-  type Range,
   StateEffect,
   ViewPlugin,
   type ViewUpdate,
@@ -27,6 +26,7 @@ import {
   listKeywords,
   searchNotesPage,
 } from "./api/client";
+import { keywordRanges, type KeywordRanges, visibleKeywordMarks, keywordOwners } from "./keywordDecorations";
 import { inheritAt, linkAt } from "./typstRefs";
 import { formatNoteId, parseNoteId } from "./utils";
 
@@ -41,14 +41,17 @@ import { formatNoteId, parseNoteId } from "./utils";
 
 // Every keyword, fetched once and again after a while, as notes gain keywords while writing
 const KEYWORDS_MAX_AGE_MS = 30_000;
-let keywords: { at: number; list: Promise<[number, string][]> } | null = null;
+function indexKeywords(list: [number, string][]) {
+  return { list, owners: keywordOwners(list) };
+}
+let keywords: { at: number; list: Promise<ReturnType<typeof indexKeywords>> } | null = null;
 
-function allKeywords(): Promise<[number, string][]> {
+function allKeywords() {
   if (!keywords || Date.now() - keywords.at > KEYWORDS_MAX_AGE_MS) {
-    const list = listKeywords().catch(() => {
+    const list = listKeywords().then(indexKeywords).catch(() => {
       // Offline or failed: none, and asked again next time
       keywords = null;
-      return [] as [number, string][];
+      return indexKeywords([]);
     });
     keywords = { at: Date.now(), list };
   }
@@ -61,7 +64,7 @@ async function linkCompletions(
   const line = context.state.doc.lineAt(context.pos);
   const at = linkAt(line.text.slice(0, context.pos - line.from));
   if (!at) return null;
-  const list = await allKeywords();
+  const { list } = await allKeywords();
   if (context.aborted) return null;
   // One entry per keyword, naming each note that has it
   const notes = new Map<string, { keyword: string; ids: number[] }>();
@@ -166,43 +169,16 @@ const keywordsLoaded = StateEffect.define<null>();
 
 /** Underlines each `#key[…]` keyword that a note other than `noteId` already has. */
 function duplicateKeywords(noteId: number | null): Extension {
-  const build = (
-    view: EditorView,
-    list: [number, string][] | null,
-  ): DecorationSet => {
-    if (!list) return Decoration.none;
-    const owners = new Map<string, number[]>();
-    for (const [id, keyword] of list) {
-      if (id === noteId) continue;
-      const key = keyword.trim().toLowerCase();
-      owners.set(key, [...(owners.get(key) ?? []), id]);
-    }
-    const marks: Range<Decoration>[] = [];
-    const text = view.state.doc.toString();
-    for (const match of text.matchAll(/#key\(?\[([^[\]]+)\]/g)) {
-      const ids = owners.get(match[1].trim().toLowerCase());
-      if (!ids) continue;
-      const from = match.index + match[0].indexOf("[") + 1;
-      marks.push(
-        Decoration.mark({
-          class: "cm-duplicate-keyword",
-          attributes: {
-            title: `Note ${ids.map(formatNoteId).join(", ")} already has this keyword, so links to it find both`,
-          },
-        }).range(from, from + match[1].length),
-      );
-    }
-    return Decoration.set(marks, true);
-  };
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet = Decoration.none;
-      list: [number, string][] | null = null;
+      owners: Map<string, number[]> | null = null;
+      ranges: KeywordRanges | null = null;
       destroyed = false;
       constructor(view: EditorView) {
-        void allKeywords().then((list) => {
+        void allKeywords().then(({ owners }) => {
           if (this.destroyed) return;
-          this.list = list;
+          this.owners = owners;
           view.dispatch({ effects: keywordsLoaded.of(null) });
         });
       }
@@ -210,11 +186,16 @@ function duplicateKeywords(noteId: number | null): Extension {
         this.destroyed = true;
       }
       update(update: ViewUpdate) {
-        if (
-          update.docChanged ||
-          update.transactions.some((t) => t.effects.some((e) => e.is(keywordsLoaded)))
-        )
-          this.decorations = build(update.view, this.list);
+        if (!this.owners) return;
+        const loaded = update.transactions.some(t => t.effects.some(e => e.is(keywordsLoaded)));
+        if (loaded || update.docChanged) {
+          this.ranges = keywordRanges(update.state.doc, this.owners, noteId,
+            loaded || !this.ranges ? undefined : { ranges: this.ranges, changes: update.changes });
+        }
+        if (this.ranges && (loaded || update.docChanged || update.viewportChanged)) {
+          const { from, to } = update.view.viewport;
+          this.decorations = visibleKeywordMarks(this.ranges, from, to);
+        }
       }
     },
     { decorations: (v) => v.decorations },
