@@ -82,6 +82,7 @@ libc = "0.2.191"
 typst-render = ["dep:typst", "dep:typst-kit", "dep:typst-layout", "dep:typst-pdf", "dep:typst-svg"]
 
 [dev-dependencies]
+tempfile = "3"
 criterion = { version = "0.8", features = ["async_futures"] }
 insta = "1.49.0"
 pretty_assertions = "1.4.1"
@@ -105,4 +106,8 @@ workspace = true
 
 [[bench]]
 name = "statistics"
+harness = false
+
+[[bench]]
+name = "review_and_links"
 harness = false
