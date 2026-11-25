@@ -1456,11 +1456,20 @@ pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
 
 /// Parse and validate collection settings without opening or modifying the collection.
 pub fn parse_external_config(file_contents: &str) -> Result<SparesExternalConfig, Error> {
-    let doc = file_contents
-        .parse::<DocumentMut>()
-        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.message().to_owned())))?;
-    let mut config: SparesExternalConfig = toml_edit::de::from_document(doc)
-        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.message().to_owned())))?;
+    let mut config: SparesExternalConfig = toml_edit::de::from_str(file_contents).map_err(|e| {
+        let line = e.span().map(|span| {
+            file_contents[..file_contents.floor_char_boundary(span.start)]
+                .bytes()
+                .filter(|b| *b == b'\n')
+                .count()
+                + 1
+        });
+        let message = match line {
+            Some(line) => format!("config.toml line {line}: {}", e.message()),
+            None => e.message().to_owned(),
+        };
+        Error::Library(LibraryError::InvalidConfig(message))
+    })?;
     let () = &mut config
         .validate()
         .map_err(|x| Error::Library(LibraryError::InvalidConfig(x)))?;

@@ -42,10 +42,21 @@ async fn start_server(args: Args) -> Result<(), String> {
             }
             _ => {}
         }
-        let collection = host
-            .collection(&user.id)
-            .await
-            .map_err(|e| format!("Failed to open the collection of {}: {e}", user.id))?;
+        let collection = match host.collection(&user.id).await {
+            Ok(collection) => collection,
+            Err(
+                error @ spares_core::Error::Library(spares_core::LibraryError::InvalidConfig(_)),
+            ) => {
+                host.sync.record_start_error(&user.id, &error);
+                continue;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Failed to open the collection of {}: {error}",
+                    user.id
+                ));
+            }
+        };
         collection
             .scope(async {
                 info!(
