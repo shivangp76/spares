@@ -469,27 +469,32 @@ pub fn get_cards_main(
     Ok(cards)
 }
 
-/// Returns the note data substring for the cloze group corresponding to `card_order` (1-based),
-/// prefixed with up to `CONTEXT_CHARS` bytes of preceding note data.
-///
-/// The prefix allows callers to match patterns that appear just before the cloze (e.g.
-/// `#proof[\n\s+#cl[`). Returns `None` when `card_order` is 0 or out of range.
-pub(crate) fn get_cloze_context_for_card_order(
+/// UTF-8 byte ranges of cloze contexts, with the sequential fallback for unannotated orders.
+#[derive(Default)]
+pub(crate) struct ClozeContexts {
+    sequential: Vec<Range<usize>>,
+    annotated: std::collections::HashMap<usize, usize>,
+}
+
+impl ClozeContexts {
+    pub(crate) fn get(&self, order: u32) -> Option<Range<usize>> {
+        let order = order as usize;
+        let index = order.checked_sub(1)?;
+        self.sequential
+            .get(*self.annotated.get(&order).unwrap_or(&index))
+            .cloned()
+    }
+}
+
+pub(crate) fn cloze_contexts(
     parser: &dyn Parseable,
     data: &str,
-    card_order: u32,
-) -> Result<Option<String>, LibraryError> {
-    const CONTEXT_CHARS: usize = 500;
-
-    if card_order == 0 {
-        return Ok(None);
-    }
-
+) -> Result<ClozeContexts, LibraryError> {
+    const CONTEXT_BYTES: usize = 500;
     let cloze_matches = parser.get_clozes(data)?;
     if cloze_matches.is_empty() {
-        return Ok(None);
+        return Ok(ClozeContexts::default());
     }
-
     let note_settings_keys = parser.note_settings_keys();
     let cloze_settings_keys = parser.cloze_settings_keys();
     let mut current_grouping_number = 1u32;
@@ -523,44 +528,38 @@ pub(crate) fn get_cloze_context_for_card_order(
 
     let (cards_raw, _) = group_clozes(&mut all_clozes, data)?;
 
-    let card_order_usize = card_order as usize;
+    let mut contexts = ClozeContexts::default();
+    for card_clozes in &cards_raw {
+        if let Some(orders) = &card_clozes[settings_cloze_position(card_clozes)].1.orders {
+            for order in orders {
+                contexts
+                    .annotated
+                    .entry(*order)
+                    .or_insert(contexts.sequential.len());
+            }
+        }
+        let cloze_start = card_clozes
+            .iter()
+            .filter(|(_, gs)| !gs.skip_serialization)
+            .map(|(cd, _)| cd.start_delim.start)
+            .min()
+            .unwrap_or(0);
+        let cloze_end = card_clozes
+            .iter()
+            .filter(|(_, gs)| !gs.skip_serialization)
+            .map(|(cd, _)| cd.end_delim.end)
+            .max()
+            .unwrap_or(data.len());
 
-    // Prefer matching by stored `[o:N]` annotations; fall back to sequential index.
-    let card_clozes = cards_raw
-        .iter()
-        .find(|clozes| {
-            clozes[settings_cloze_position(clozes)]
-                .1
-                .orders
-                .as_ref()
-                .is_some_and(|orders| orders.contains(&card_order_usize))
-        })
-        .or_else(|| cards_raw.get(card_order_usize - 1));
+        // Subtract context bytes and snap forward to a UTF-8 char boundary.
+        let mut context_start = cloze_start.saturating_sub(CONTEXT_BYTES);
+        while context_start < data.len() && !data.is_char_boundary(context_start) {
+            context_start += 1;
+        }
 
-    let Some(card_clozes) = card_clozes else {
-        return Ok(None);
-    };
-
-    let cloze_start = card_clozes
-        .iter()
-        .filter(|(_, gs)| !gs.skip_serialization)
-        .map(|(cd, _)| cd.start_delim.start)
-        .min()
-        .unwrap_or(0);
-    let cloze_end = card_clozes
-        .iter()
-        .filter(|(_, gs)| !gs.skip_serialization)
-        .map(|(cd, _)| cd.end_delim.end)
-        .max()
-        .unwrap_or(data.len());
-
-    // Subtract context bytes and snap forward to a UTF-8 char boundary.
-    let mut context_start = cloze_start.saturating_sub(CONTEXT_CHARS);
-    while context_start < data.len() && !data.is_char_boundary(context_start) {
-        context_start += 1;
+        contexts.sequential.push(context_start..cloze_end);
     }
-
-    Ok(Some(data[context_start..cloze_end].to_string()))
+    Ok(contexts)
 }
 
 pub fn add_order_to_note_data(

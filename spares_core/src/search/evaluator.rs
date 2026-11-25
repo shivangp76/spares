@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -5,6 +6,7 @@ use std::sync::OnceLock;
 
 use chrono::NaiveDate;
 use chrono::Utc;
+use futures::TryStreamExt;
 use itertools::Itertools;
 use log::info;
 use miette::Error;
@@ -26,13 +28,12 @@ use crate::helpers::get_start_end_local_date;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::NEW_CARD_STATE;
-use crate::model::Note;
 use crate::model::NoteId;
 use crate::model::ReviewLogKind;
 use crate::model::StateId;
+use crate::parsers::cloze_contexts;
 use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
-use crate::parsers::get_cloze_context_for_card_order;
 use crate::schedulers::RetrievabilityKey;
 use crate::schedulers::all_states;
 use crate::schedulers::lapse_sql;
@@ -138,43 +139,6 @@ impl<'de> Evaluator<'de> {
         Ok(context.build_query(internal_output_type))
     }
 
-    pub(crate) async fn get_notes(
-        self,
-        db: &SqlitePool,
-    ) -> Result<Vec<(Note, String)>, crate::Error> {
-        #[derive(sqlx::FromRow)]
-        struct EnrichedNote {
-            #[sqlx(flatten)]
-            note: Note,
-            #[sqlx(rename = "name")]
-            parser_name: String,
-        }
-        let query = self.query;
-        let token_tree = self
-            .parser
-            .parse_expression()
-            .map_err(search_error(query))?;
-        check_references_exist(query, &token_tree, db).await?;
-        let query_str = Self::build_query_from_tree(
-            &token_tree,
-            EvaluatorReturnItemType::Notes,
-            true,
-            self.scope.as_deref(),
-            self.rank_cards,
-        )
-        .map_err(search_error(query))?;
-        info!("{}", query_str);
-        let enriched_cards: Vec<EnrichedNote> = sqlx::query_as(AssertSqlSafe(query_str))
-            .fetch_all(db)
-            .await
-            .map_err(|e| crate::Error::Sqlx { source: e })?;
-        let result = enriched_cards
-            .into_iter()
-            .map(|x| (x.note, x.parser_name))
-            .collect::<Vec<_>>();
-        Ok(result)
-    }
-
     pub(crate) async fn get_note_ids(self, db: &SqlitePool) -> Result<Vec<NoteId>, crate::Error> {
         let query = self.query;
         let token_tree = self
@@ -218,7 +182,18 @@ impl<'de> Evaluator<'de> {
         check_references_exist(query, &token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
-            return Self::get_cards_cloze_path(&token_tree, query, self.scope.as_deref(), db).await;
+            let mut cards = Vec::new();
+            Self::visit_cloze_cards(
+                &token_tree,
+                query,
+                self.scope.as_deref(),
+                db,
+                |_, card, parser| {
+                    cards.push((card, parser));
+                },
+            )
+            .await?;
+            return Ok(cards);
         }
 
         let query_str = Self::build_query_from_tree(
@@ -313,18 +288,20 @@ impl<'de> Evaluator<'de> {
         check_references_exist(self.query, &tree, db).await?;
         let output = match item {
             QueryReturnItemType::Cards if has_cloze_field(&tree) => {
-                let cards =
-                    Self::get_cards_cloze_path(&tree, self.query, self.scope.as_deref(), db)
-                        .await?;
-                return Ok((
-                    cards.len(),
-                    cards
-                        .into_iter()
-                        .skip(offset)
-                        .take(limit)
-                        .map(|(card, _)| card.id)
-                        .collect(),
-                ));
+                let mut ids = Vec::new();
+                let total = Self::visit_cloze_cards(
+                    &tree,
+                    self.query,
+                    self.scope.as_deref(),
+                    db,
+                    |index, card, _| {
+                        if index >= offset && ids.len() < limit {
+                            ids.push(card.id);
+                        }
+                    },
+                )
+                .await?;
+                return Ok((total, ids));
             }
             QueryReturnItemType::Cards => EvaluatorReturnItemType::CardIds,
             QueryReturnItemType::Notes => EvaluatorReturnItemType::NoteIds,
@@ -368,13 +345,16 @@ impl<'de> Evaluator<'de> {
         check_references_exist(query, &token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
-            return Ok(
-                Self::get_cards_cloze_path(&token_tree, query, self.scope.as_deref(), db)
-                    .await?
-                    .into_iter()
-                    .map(|(card, _)| card.id)
-                    .collect(),
-            );
+            let mut ids = Vec::new();
+            Self::visit_cloze_cards(
+                &token_tree,
+                query,
+                self.scope.as_deref(),
+                db,
+                |_, card, _| ids.push(card.id),
+            )
+            .await?;
+            return Ok(ids);
         }
 
         let query_str = Self::build_query_from_tree(
@@ -395,92 +375,76 @@ impl<'de> Evaluator<'de> {
 
     /// Cloze path: convert the query tree to DNF, then for each disjunct run SQL +
     /// optional in-memory cloze filtering, and union the results.
-    async fn get_cards_cloze_path(
+    async fn visit_cloze_cards(
         token_tree: &TokenTree<'_>,
         query: &str,
         scope: Option<&str>,
         db: &SqlitePool,
-    ) -> Result<Vec<(Card, String)>, crate::Error> {
+        mut visit: impl FnMut(usize, Card, String),
+    ) -> Result<usize, crate::Error> {
         #[derive(sqlx::FromRow)]
-        struct EnrichedCardWithNoteData {
+        struct Candidate {
             #[sqlx(flatten)]
             card: Card,
             #[sqlx(rename = "name")]
             parser_name: String,
-            note_data: String,
+            #[sqlx(default)]
+            note_data: Option<String>,
         }
-
-        #[derive(sqlx::FromRow)]
-        struct EnrichedCard {
-            #[sqlx(flatten)]
-            card: Card,
-            #[sqlx(rename = "name")]
-            parser_name: String,
-        }
-
         let disjuncts = to_dnf(token_tree.clone());
         let mut seen_ids: HashSet<CardId> = HashSet::new();
-        let mut result: Vec<(Card, String)> = Vec::new();
-
+        let mut contexts = HashMap::new();
+        let all_parsers = get_all_parsers();
+        // Cached byte ranges must refer to the same note text across OR branches.
+        let error = |source| crate::Error::Sqlx { source };
+        let mut tx = db.begin().await.map_err(error)?;
         for disjunct in &disjuncts {
-            if has_cloze_field(disjunct) {
-                // Cloze disjunct: fetch with note_data, then post-filter in memory.
-                let cloze_patterns = extract_cloze_patterns(disjunct);
-                let query_str = Self::build_query_from_tree(
-                    disjunct,
-                    EvaluatorReturnItemType::Cards,
-                    true,
-                    scope,
-                    false,
-                )
-                .map_err(search_error(query))?;
-                info!("{}", query_str);
-                let candidates: Vec<EnrichedCardWithNoteData> =
-                    sqlx::query_as(AssertSqlSafe(query_str))
-                        .fetch_all(db)
-                        .await
-                        .map_err(|e| crate::Error::Sqlx { source: e })?;
-                let all_parsers = get_all_parsers();
-                for candidate in candidates {
-                    if seen_ids.contains(&candidate.card.id) {
+            let patterns = extract_cloze_patterns(disjunct);
+            let sql = Self::build_query_from_tree(
+                disjunct,
+                EvaluatorReturnItemType::Cards,
+                true,
+                scope,
+                false,
+            )
+            .map_err(search_error(query))?;
+            info!("{}", sql);
+            let mut candidates = sqlx::query_as::<_, Candidate>(AssertSqlSafe(sql)).fetch(&mut *tx);
+            while let Some(candidate) = candidates.try_next().await.map_err(error)? {
+                if seen_ids.contains(&candidate.card.id) {
+                    continue;
+                }
+                if let Some(data) = candidate.note_data {
+                    if candidate.card.order == 0 {
                         continue;
                     }
-                    let parser = find_parser(&candidate.parser_name, &all_parsers)?;
-                    if let Some(ctx) = get_cloze_context_for_card_order(
-                        parser.as_ref(),
-                        &candidate.note_data,
-                        candidate.card.order,
-                    )
-                    .map_err(crate::Error::Library)?
-                        && cloze_patterns.iter().all(|p| p.matches(&ctx))
+                    let context = match contexts.entry(candidate.card.note_id) {
+                        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            let parser = find_parser(&candidate.parser_name, &all_parsers)?;
+                            entry.insert(
+                                cloze_contexts(parser.as_ref(), &data)
+                                    .map_err(crate::Error::Library)?,
+                            )
+                        }
+                    };
+                    let Some(range) = context.get(candidate.card.order) else {
+                        continue;
+                    };
+                    if !patterns
+                        .iter()
+                        .all(|pattern| pattern.matches(&data[range.clone()]))
                     {
-                        seen_ids.insert(candidate.card.id);
-                        result.push((candidate.card, candidate.parser_name));
+                        continue;
                     }
                 }
-            } else {
-                // No cloze in this disjunct — pure SQL path, no note_data needed.
-                let query_str = Self::build_query_from_tree(
-                    disjunct,
-                    EvaluatorReturnItemType::Cards,
-                    true,
-                    scope,
-                    false,
-                )
-                .map_err(search_error(query))?;
-                info!("{}", query_str);
-                let cards: Vec<EnrichedCard> = sqlx::query_as(AssertSqlSafe(query_str))
-                    .fetch_all(db)
-                    .await
-                    .map_err(|e| crate::Error::Sqlx { source: e })?;
-                for c in cards {
-                    if seen_ids.insert(c.card.id) {
-                        result.push((c.card, c.parser_name));
-                    }
-                }
+                let index = seen_ids.len();
+                seen_ids.insert(candidate.card.id);
+                visit(index, candidate.card, candidate.parser_name);
             }
         }
-        Ok(result)
+        tx.commit().await.map_err(error)?;
+        Ok(seen_ids.len())
     }
 }
 

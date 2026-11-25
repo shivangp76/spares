@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use chrono::DateTime;
 use chrono::Utc;
 use indoc::formatdoc;
+use itertools::Itertools;
 use log::warn;
 use sqlx::AssertSqlSafe;
 use sqlx::FromRow;
@@ -209,12 +210,26 @@ const NOTE_PREVIEW_CHARS: usize = 100;
 
 /// The start of `data` on one line, at most [`NOTE_PREVIEW_CHARS`] long, with `…` where it is cut.
 fn note_preview(data: &str) -> String {
-    let text = data.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.chars().count() <= NOTE_PREVIEW_CHARS {
-        return text;
+    let mut preview = String::new();
+    let mut length = 0;
+    let mut space = false;
+    for ch in data.chars() {
+        if ch.is_whitespace() {
+            space = length > 0;
+            continue;
+        }
+        if space && length < NOTE_PREVIEW_CHARS {
+            preview.push(' ');
+            length += 1;
+        }
+        if length == NOTE_PREVIEW_CHARS {
+            preview.push('…');
+            break;
+        }
+        preview.push(ch);
+        length += 1;
+        space = false;
     }
-    let mut preview: String = text.chars().take(NOTE_PREVIEW_CHARS).collect();
-    preview.push('…');
     preview
 }
 
@@ -235,19 +250,22 @@ async fn add_note_previews(
     }
     let ids = cards
         .iter()
-        .map(|card| card.card_id.to_string())
-        .collect::<Vec<_>>()
+        .map(|card| card.note_id.packed())
+        .unique()
         .join(", ");
-    let notes: Vec<(CardId, String)> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT c.id, n.data FROM card c JOIN note n ON c.note_id = n.id WHERE c.id IN ({ids})"
+    let notes: Vec<(NoteId, String)> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT id, data FROM note WHERE id IN ({ids})"
     )))
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let data: HashMap<CardId, String> = notes.into_iter().collect();
+    let previews: HashMap<_, _> = notes
+        .into_iter()
+        .map(|(id, data)| (id, note_preview(&data)))
+        .collect();
     for card in cards {
-        if let Some(data) = data.get(&card.card_id) {
-            card.note_preview = note_preview(data);
+        if let Some(preview) = previews.get(&card.note_id) {
+            card.note_preview.clone_from(preview);
         }
     }
     Ok(())
@@ -563,6 +581,12 @@ mod tests {
         assert_eq!(
             note_preview("# Title\n\nSome  {{text}}\n"),
             "# Title Some {{text}}"
+        );
+        let exact = "é".repeat(NOTE_PREVIEW_CHARS);
+        assert_eq!(note_preview(&format!(" {exact}\n\t")), exact);
+        assert_eq!(
+            note_preview(&format!("{exact}\u{2003}x")),
+            format!("{exact}…")
         );
         let long = "é".repeat(150);
         let preview = note_preview(&long);

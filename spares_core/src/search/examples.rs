@@ -73,11 +73,14 @@ mod tests {
 
     use super::*;
     use crate::api::note::create_notes;
+    use crate::api::note::search_notes;
     use crate::api::parser::tests::create_parser_helper;
     use crate::model::NoteId;
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
     use crate::schema::note::CreateNotesRequest;
+    use crate::schema::note::{SearchNotesRequest, SearchNotesResponse};
+    use crate::search::QueryReturnItemType;
     use crate::search::evaluator::Evaluator;
     use crate::search::fields;
 
@@ -105,9 +108,18 @@ mod tests {
 
     /// The text of the notes `query` finds, sorted.
     async fn found(pool: &SqlitePool, query: &str) -> Vec<String> {
-        let notes = Evaluator::new(query).get_notes(pool).await;
+        let SearchNotesResponse::Notes(notes) = search_notes(
+            pool,
+            SearchNotesRequest {
+                query: query.to_owned(),
+                output_type: QueryReturnItemType::Notes,
+            },
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{query}: {e}")) else {
+            unreachable!()
+        };
         let mut found = notes
-            .unwrap_or_else(|e| panic!("{query}: {e}"))
             .into_iter()
             .map(|(note, _)| note.data.split(" {{").next().unwrap().to_string())
             .collect::<Vec<_>>();

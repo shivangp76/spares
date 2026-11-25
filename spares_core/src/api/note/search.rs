@@ -8,7 +8,6 @@ use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
 use sqlx::types::Json;
 
-use super::enrich_note;
 use crate::Error;
 use crate::LibraryError;
 use crate::api::note::get_note_links_map;
@@ -53,9 +52,7 @@ use crate::schema::note::UnmatchedKeywordResponse;
 use crate::schema::note::UnmatchedLink;
 use crate::search::QueryReturnItemType;
 use crate::search::evaluator::Evaluator;
-use crate::search::evaluator::interval_sql;
 use crate::search::evaluator::lapses_sql;
-use crate::search::evaluator::last_rated_sql;
 use crate::search::evaluator::reps_sql;
 use crate::search::evaluator::text_matches;
 use crate::search::evaluator::text_patterns;
@@ -86,14 +83,12 @@ pub async fn search_notes(
             Ok(SearchNotesResponse::Cards(card_responses))
         }
         crate::search::QueryReturnItemType::Notes => {
-            let notes = evaluator.get_notes(db).await?;
-            let mut note_responses = Vec::new();
+            let ids = evaluator.get_note_ids(db).await?;
             let config = read_internal_config(db).await?;
-            for (note, parser_name) in notes {
-                note_responses.push((
-                    enrich_note(db, &note, config.linked_notes_generated).await?,
-                    parser_name,
-                ));
+            let mut note_responses = Vec::with_capacity(ids.len());
+            for chunk in ids.chunks(MAX_PAGE_LIMIT) {
+                let matches = note_matches(db, chunk, None, config.linked_notes_generated).await?;
+                note_responses.extend(matches.into_iter().map(|row| (row.note, row.parser_name)));
             }
             Ok(SearchNotesResponse::Notes(note_responses))
         }
@@ -130,83 +125,23 @@ pub async fn search_page(
         Ok(result) => result,
         Err(error) => return Err(query_error(db, &query, &sorted_query, error).await),
     };
-    let ids_sql = ids
-        .iter()
-        .map(i64::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
     match output_type {
         QueryReturnItemType::Notes => {
-            #[derive(sqlx::FromRow)]
-            struct NoteWithParser {
-                #[sqlx(flatten)]
-                note: Note,
-                name: String,
-                last_reviewed: Option<i64>,
-                tags: Json<Vec<String>>,
-                keywords: Json<Vec<String>>,
-                card_count: i64,
-            }
             let page_ids: Vec<_> = ids.into_iter().map(NoteId::from_packed).collect();
-            let rows: Vec<NoteWithParser> = sqlx::query_as(AssertSqlSafe(format!(
-                "SELECT n.*, p.name,
-                   (SELECT json_group_array(t.name ORDER BY t.name) FROM tag t JOIN note_tag nt ON nt.tag_id = t.id WHERE nt.note_id = n.id) AS tags,
-                   (SELECT json_group_array(keyword ORDER BY keyword) FROM note_keyword WHERE note_id = n.id) AS keywords,
-                   (SELECT COUNT(*) FROM card WHERE note_id = n.id) AS card_count,
-                   (SELECT MAX(rl.reviewed_at) FROM review_log rl JOIN card c ON c.id = rl.card_id
-                     WHERE c.note_id = n.id AND rl.kind = {}) AS last_reviewed
-                 FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE n.id IN ({ids_sql})",
-                ReviewLogKind::Review as u8
-            )))
-            .fetch_all(db)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-            let mut rows = rows
-                .into_iter()
-                .map(|row| (row.note.id, row))
-                .collect::<HashMap<_, _>>();
-            let patterns = text_patterns(&query);
             let config = read_internal_config(db).await?;
-            let mut links = if config.linked_notes_generated {
-                get_note_links_map(db, &page_ids).await?
-            } else {
-                HashMap::new()
-            };
-            let mut notes = Vec::with_capacity(page_ids.len());
-            for id in page_ids {
-                // A note deleted since its id was read is left out.
-                let Some(row) = rows.remove(&id) else {
-                    continue;
-                };
-                notes.push(NoteMatch {
-                    matches: text_matches(&patterns, &row.note.data),
-                    note: crate::schema::note::NoteResponse::new(
-                        &row.note,
-                        row.name.clone(),
-                        row.keywords.0,
-                        row.tags.0,
-                        config.linked_notes_generated.then(|| {
-                            links
-                                .remove(&id)
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(crate::schema::note::LinkedNote::new)
-                                .collect()
-                        }),
-                        row.card_count as usize,
-                    ),
-                    parser_name: row.name,
-                    last_reviewed: row
-                        .last_reviewed
-                        .and_then(|at| DateTime::from_timestamp(at, 0)),
-                });
-            }
+            let notes =
+                note_matches(db, &page_ids, Some(&query), config.linked_notes_generated).await?;
             Ok(SearchPageResponse {
                 total,
                 items: SearchPageItems::Notes(notes),
             })
         }
         QueryReturnItemType::Cards => {
+            let ids_sql = ids
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
             let mut rows = card_matches(db, &ids_sql).await?;
             let cards = ids.into_iter().filter_map(|id| rows.remove(&id)).collect();
             Ok(SearchPageResponse {
@@ -215,6 +150,95 @@ pub async fn search_page(
             })
         }
     }
+}
+
+/// Loads one batch in the order of the supplied IDs. A page also needs highlights and review times.
+async fn note_matches(
+    db: &SqlitePool,
+    page_ids: &[NoteId],
+    page_query: Option<&str>,
+    include_links: bool,
+) -> Result<Vec<NoteMatch>, Error> {
+    #[derive(sqlx::FromRow)]
+    struct NoteWithParser {
+        #[sqlx(flatten)]
+        note: Note,
+        name: String,
+        last_reviewed: Option<i64>,
+        tags: Json<Vec<String>>,
+        keywords: Json<Vec<String>>,
+        card_count: i64,
+    }
+
+    // Only the paginated response includes review history and text highlights.
+    let last_reviewed = if page_query.is_some() {
+        format!(
+            "(SELECT MAX(rl.reviewed_at) FROM review_log rl JOIN card c ON c.id = rl.card_id
+                     WHERE c.note_id = n.id AND rl.kind = {})",
+            ReviewLogKind::Review as u8
+        )
+    } else {
+        "NULL".to_string()
+    };
+    let ids_sql = page_ids
+        .iter()
+        .map(|id| id.packed().to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let rows: Vec<NoteWithParser> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT n.*, p.name,
+           (SELECT json_group_array(t.name ORDER BY t.name) FROM tag t JOIN note_tag nt ON nt.tag_id = t.id WHERE nt.note_id = n.id) AS tags,
+           (SELECT json_group_array(keyword ORDER BY keyword) FROM note_keyword WHERE note_id = n.id) AS keywords,
+           (SELECT COUNT(*) FROM card WHERE note_id = n.id) AS card_count,
+           {last_reviewed} AS last_reviewed
+         FROM note n LEFT JOIN parser p ON n.parser_id = p.id WHERE n.id IN ({ids_sql})"
+    )))
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let mut rows = rows
+        .into_iter()
+        .map(|row| (row.note.id, row))
+        .collect::<HashMap<_, _>>();
+    let patterns = page_query.map(text_patterns);
+    let mut links = if include_links {
+        get_note_links_map(db, page_ids).await?
+    } else {
+        HashMap::new()
+    };
+    let mut notes = Vec::with_capacity(page_ids.len());
+    for id in page_ids {
+        // A note deleted since its id was read is left out.
+        let Some(row) = rows.remove(id) else {
+            continue;
+        };
+        notes.push(NoteMatch {
+            matches: patterns
+                .as_ref()
+                .map(|patterns| text_matches(patterns, &row.note.data))
+                .unwrap_or_default(),
+            note: crate::schema::note::NoteResponse::new(
+                &row.note,
+                row.name.clone(),
+                row.keywords.0,
+                row.tags.0,
+                include_links.then(|| {
+                    links
+                        .remove(id)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(crate::schema::note::LinkedNote::new)
+                        .collect()
+                }),
+                row.card_count as usize,
+            ),
+            parser_name: row.name,
+            last_reviewed: row
+                .last_reviewed
+                .and_then(|at| DateTime::from_timestamp(at, 0)),
+        });
+    }
+    Ok(notes)
 }
 
 /// The cards `ids_sql`, a list of ids for `IN`, with their notes' text and tags and what their
@@ -241,15 +265,15 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
            COALESCE((SELECT JSON_GROUP_ARRAY(name) FROM (SELECT t.name FROM card_tag ct
              JOIN tag t ON t.id = ct.tag_id WHERE ct.card_id = c.id AND t.query IS NULL
              ORDER BY t.name)), '[]') AS card_tags,
-           {} AS interval_days, {} AS reps, {} AS lapses, {} AS last_reviewed,
-           (SELECT rl.scheduler_name FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {}
-             ORDER BY rl.reviewed_at DESC, rl.id DESC LIMIT 1) AS scheduler_name
+           CASE WHEN c.state != {NEW_CARD_STATE} THEN (c.due - latest.reviewed_at) / 86400.0 END AS interval_days,
+           {} AS reps, {} AS lapses, latest.reviewed_at AS last_reviewed, latest.scheduler_name
         FROM card c LEFT JOIN note n ON n.id = c.note_id LEFT JOIN parser p ON n.parser_id = p.id
+        LEFT JOIN review_log latest ON latest.id = (
+            SELECT rl.id FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {}
+            ORDER BY rl.reviewed_at DESC, rl.id DESC LIMIT 1)
         WHERE c.id IN ({ids_sql})",
-        interval_sql(),
         reps_sql(),
         lapses_sql(),
-        last_rated_sql(),
         ReviewLogKind::Review as u8,
     )))
     .fetch_all(db)
@@ -873,6 +897,38 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn cloze_pages_count_overlapping_branches_once(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = sort_pool(pool_options, options).await;
+        sqlx::query("UPDATE note SET data = '{{ answer }}' WHERE data != 'dog c'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let query = "c.cloze~missing or c.cloze~answer or c.id>0";
+        for (page, expected) in [(1, vec!["b", "a"]), (2, vec!["c"]), (3, vec![])] {
+            let result = search_page(
+                &pool,
+                SearchPageRequest {
+                    query: query.into(),
+                    output_type: QueryReturnItemType::Cards,
+                    page,
+                    limit: 2,
+                    sort: None,
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.total, 3);
+            let SearchPageItems::Cards(cards) = result.items else {
+                unreachable!()
+            };
+            assert_eq!(note_ids(&cards), expected);
+        }
+    }
+
+    #[sqlx::test]
     async fn sorts_by_a_column_before_the_query(
         pool_options: sqlx::sqlite::SqlitePoolOptions,
         options: sqlx::sqlite::SqliteConnectOptions,
@@ -950,11 +1006,11 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        // A pass, then a lapse a day before the card is due, and a cram, which is left out.
+        // The lapse wins the timestamp tie with the pass, so FSRS supplies the curve. A later cram is excluded.
         sqlx::query(
             r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
                scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-               VALUES (?1, 10, 0, 3, 'fsrs', 0, 1, 1, 2, '{}'),
+               VALUES (?1, 300000 - 86400, 0, 3, 'unknown', 0, 1, 1, 2, '{}'),
                       (?1, 300000 - 86400, 0, 1, 'fsrs', 0, 1, 1, 2, '{}'),
                       (?1, 250000, 16, 3, 'fsrs', 0, 1, 1, 2, '{}')",
         )
@@ -1147,6 +1203,48 @@ mod tests {
             .into_iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect()
+    }
+
+    #[sqlx::test]
+    async fn bulk_search_matches_individual_notes_in_query_order(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = graph_pool(pool_options, options).await;
+        for links in ["true", "false"] {
+            sqlx::query(
+                "INSERT OR REPLACE INTO app_state(key,value) VALUES('linked_notes_generated',?)",
+            )
+            .bind(links)
+            .execute(&pool)
+            .await
+            .unwrap();
+            let SearchNotesResponse::Notes(rows) = search_notes(
+                &pool,
+                SearchNotesRequest {
+                    query: "sort_by_desc=id".into(),
+                    output_type: QueryReturnItemType::Notes,
+                },
+            )
+            .await
+            .unwrap() else {
+                unreachable!()
+            };
+            assert_eq!(
+                rows.iter()
+                    .map(|(note, _)| note.id.to_string())
+                    .collect::<Vec<_>>(),
+                ["e", "d", "c", "b", "a"]
+            );
+            for (note, name) in rows {
+                let expected = crate::api::note::get_note(&pool, note.id).await.unwrap();
+                assert_eq!(name, expected.parser_name);
+                assert_eq!(
+                    serde_json::to_value(note).unwrap(),
+                    serde_json::to_value(expected).unwrap()
+                );
+            }
+        }
     }
 
     #[sqlx::test]
