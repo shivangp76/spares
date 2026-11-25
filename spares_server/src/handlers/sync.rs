@@ -452,6 +452,7 @@ pub(crate) async fn sync_run_handler(
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SyncStatusResponse {
+    auto_sync_error: Option<String>,
     replica: u8,
     /// The collection's upstream, if this copy has one. Without one, it is the root.
     sync_url: Option<String>,
@@ -461,12 +462,47 @@ pub(crate) struct SyncStatusResponse {
     state: LocalSyncState,
 }
 
+/// Opening the collection requires valid replica settings. Its owner can still see
+/// why automatic sync stopped and the last successful sync, using a read-only connection.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) async fn unavailable_status(
+    paths: &spares_core::collection::CollectionPaths,
+    message: String,
+) -> axum::response::Response {
+    use sqlx::Connection;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(paths.database())
+        .read_only(true);
+    let last_sync_at = match sqlx::SqliteConnection::connect_with(&options).await {
+        Ok(mut db) => sqlx::query_scalar::<_, String>("SELECT value FROM app_state WHERE key = ?")
+            .bind(spares_core::sync::LAST_SYNC_AT_KEY)
+            .fetch_optional(&mut db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse::<i64>().ok()),
+        Err(_) => None,
+    };
+    Json(json!({ "auto_sync_error": message, "last_sync_at": last_sync_at })).into_response()
+}
+
 pub(crate) async fn sync_status_handler(
     Coll(data): Coll,
+    #[cfg(not(target_family = "wasm"))] host: Option<
+        axum::Extension<std::sync::Arc<crate::host::Host>>,
+    >,
 ) -> Result<impl IntoResponse, HandlerError> {
     let state = local_state(&data.db).await.map_err(error_to_response)?;
-    let config = read_external_config().ok();
+    let result = read_external_config();
+    let config = result.as_ref().ok();
+    let auto_sync_error = result.as_ref().err().map(|e| {
+        format!("Cannot read config.toml. Correct the settings and restart the host. {e}")
+    });
+    #[cfg(not(target_family = "wasm"))]
+    let auto_sync_error =
+        auto_sync_error.or_else(|| host.and_then(|host| host.sync.start_error(&data.id)));
     Ok(Json(SyncStatusResponse {
+        auto_sync_error,
         replica: get_replica().map_err(error_to_response)?.number(),
         sync_url: config.as_ref().and_then(|c| c.sync.url.clone()),
         sync_token_set: config.as_ref().is_some_and(|c| c.sync.token.is_some()),

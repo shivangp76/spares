@@ -54,6 +54,7 @@ const UNREACHABLE_WARN_AFTER: Duration = Duration::from_mins(5);
 #[derive(Debug)]
 pub struct Scheduler {
     at_once: Arc<Semaphore>,
+    errors: std::sync::Mutex<HashMap<String, String>>,
     running: std::sync::Mutex<HashMap<String, JoinHandle<()>>>,
 }
 
@@ -61,6 +62,7 @@ impl Scheduler {
     pub fn new(at_once: usize) -> Self {
         Self {
             at_once: Arc::new(Semaphore::new(at_once.max(1))),
+            errors: std::sync::Mutex::default(),
             running: std::sync::Mutex::default(),
         }
     }
@@ -74,6 +76,19 @@ impl Scheduler {
         let handle = collection
             .scope(async move { spawn_current(inner, at_once) })
             .await;
+        let handle = match handle {
+            Ok(handle) => {
+                self.errors
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&id);
+                handle
+            }
+            Err(error) => {
+                self.record_start_error(&id, &error);
+                None
+            }
+        };
         let previous = {
             let mut running = self
                 .running
@@ -89,8 +104,31 @@ impl Scheduler {
         }
     }
 
+    pub fn record_start_error(&self, id: &str, error: &Error) {
+        let message = format!(
+            "Automatic sync could not start. Check config.toml and restart the host. {error}"
+        );
+        warn!("{id}: {message}");
+        self.errors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.to_owned(), message);
+    }
+
+    pub fn start_error(&self, id: &str) -> Option<String> {
+        self.errors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(id)
+            .cloned()
+    }
+
     /// Stops a user's automatic sync, e.g. when their account goes.
     pub fn stop(&self, id: &str) {
+        self.errors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(id);
         let handle = self
             .running
             .lock()
@@ -117,16 +155,29 @@ impl Scheduler {
 
 /// Whether the collection in `paths` syncs automatically, from its config file, without opening
 /// it.
-pub fn syncs_automatically(paths: &spares_core::collection::CollectionPaths) -> bool {
-    let Ok(contents) = std::fs::read_to_string(paths.config_file()) else {
-        return false;
+pub fn syncs_automatically(
+    paths: &spares_core::collection::CollectionPaths,
+) -> Result<bool, Error> {
+    let path = paths.config_file();
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(Error::Io {
+                description: format!("Read {}", path.display()),
+                source,
+            });
+        }
     };
-    toml_edit::de::from_str::<spares_core::config::SparesExternalConfig>(&contents)
-        .is_ok_and(|config| config.sync.url.is_some() && config.sync.interval_minutes > 0)
+    let config = spares_core::config::parse_external_config(&contents)?;
+    Ok(config.sync.url.is_some() && config.sync.interval_minutes > 0)
 }
 
-fn spawn_current(collection: Arc<Collection>, at_once: Arc<Semaphore>) -> Option<JoinHandle<()>> {
-    let config = read_external_config().ok()?;
+fn spawn_current(
+    collection: Arc<Collection>,
+    at_once: Arc<Semaphore>,
+) -> Result<Option<JoinHandle<()>>, Error> {
+    let config = read_external_config()?;
     let SyncConfig {
         url: Some(url),
         interval_minutes,
@@ -134,10 +185,10 @@ fn spawn_current(collection: Arc<Collection>, at_once: Arc<Semaphore>) -> Option
         ..
     } = config.sync
     else {
-        return None;
+        return Ok(None);
     };
     if interval_minutes == 0 {
-        return None;
+        return Ok(None);
     }
     let who = &collection.id;
     if push_delay_seconds == 0 {
@@ -151,11 +202,11 @@ fn spawn_current(collection: Arc<Collection>, at_once: Arc<Semaphore>) -> Option
     let interval = Duration::from_secs(interval_minutes * 60);
     let push_delay = (push_delay_seconds > 0).then(|| Duration::from_secs(push_delay_seconds));
     let db = collection.db.clone();
-    Some(spares_core::collection::spawn(async move {
+    Ok(Some(spares_core::collection::spawn(async move {
         // Held, so the collection stays open while it syncs automatically
         let _collection = collection;
         run(db, interval, push_delay, at_once).await;
-    }))
+    })))
 }
 
 async fn run(

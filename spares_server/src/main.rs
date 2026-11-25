@@ -33,10 +33,15 @@ async fn start_server(args: Args) -> Result<(), String> {
     // automatically, which stay open. A host with one account opens it now, so a problem with it
     // shows at once.
     let only = users.len() == 1;
-    for user in users
-        .iter()
-        .filter(|user| only || spares_server::auto_sync::syncs_automatically(&host.paths(&user.id)))
-    {
+    for user in &users {
+        match spares_server::auto_sync::syncs_automatically(&host.paths(&user.id)) {
+            Ok(false) if !only => continue,
+            Err(error) => {
+                host.sync.record_start_error(&user.id, &error);
+                continue;
+            }
+            _ => {}
+        }
         let collection = host
             .collection(&user.id)
             .await

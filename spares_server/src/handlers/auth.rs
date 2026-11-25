@@ -128,6 +128,13 @@ pub(crate) async fn authenticate(
     }
     let collection = match host.collection(&auth.user.id).await {
         Ok(collection) => collection,
+        Err(_)
+            if path == "/api/sync/status"
+                && method == Method::GET
+                && let Some(message) = host.sync.start_error(&auth.user.id) =>
+        {
+            return super::sync::unavailable_status(&host.paths(&auth.user.id), message).await;
+        }
         Err(e) => return error_to_response(e).into_response(),
     };
     collection.state.renders_at_once.store(

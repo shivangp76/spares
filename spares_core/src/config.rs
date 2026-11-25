@@ -1451,11 +1451,16 @@ pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
         description: format!("Failed to read {}.", config_file_path.display()),
         source: e,
     })?;
+    parse_external_config(&file_contents)
+}
+
+/// Parse and validate collection settings without opening or modifying the collection.
+pub fn parse_external_config(file_contents: &str) -> Result<SparesExternalConfig, Error> {
     let doc = file_contents
         .parse::<DocumentMut>()
-        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
+        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.message().to_owned())))?;
     let mut config: SparesExternalConfig = toml_edit::de::from_document(doc)
-        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
+        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.message().to_owned())))?;
     let () = &mut config
         .validate()
         .map_err(|x| Error::Library(LibraryError::InvalidConfig(x)))?;

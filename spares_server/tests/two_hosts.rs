@@ -429,3 +429,64 @@ async fn a_host_whose_upstream_is_itself_refuses_the_loop() {
     drop(collection);
     root.host.close_all().await;
 }
+
+#[tokio::test]
+async fn invalid_sync_settings_keep_the_last_success_visible() {
+    let host = host("invalid-settings").await;
+    let collection = host.host.collection("me").await.unwrap();
+    sqlx::query("INSERT OR REPLACE INTO app_state (key, value) VALUES ('last_sync_at', '42')")
+        .execute(&collection.db)
+        .await
+        .unwrap();
+    let path = host.host.paths("me").config_file();
+    let saved = std::fs::read(&path).unwrap();
+    std::fs::write(&path, "day_starts_at = 50\n").unwrap();
+    let error = spares_server::auto_sync::syncs_automatically(&host.host.paths("me")).unwrap_err();
+    assert!(error.to_string().contains("day_starts_at"));
+    host.host.sync.start(Arc::clone(&collection)).await;
+    let (_, token) = spares_server::host::auth::create_token(
+        &host.host.accounts,
+        "me",
+        "sync status",
+        Scope::All,
+    )
+    .await
+    .unwrap();
+    let status = async || {
+        reqwest::Client::new()
+            .get(format!("{}/api/sync/status", host.url))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()
+    };
+    let failed = status().await;
+    assert!(
+        failed["auto_sync_error"]
+            .as_str()
+            .unwrap()
+            .contains("day_starts_at")
+    );
+    assert_eq!(failed["last_sync_at"], 42);
+    // A fresh request cannot open the collection at all while the invalid file is on disk.
+    host.host.close("me").await;
+    let unavailable = status().await;
+    assert_eq!(unavailable["last_sync_at"], 42);
+    assert!(
+        unavailable["auto_sync_error"]
+            .as_str()
+            .unwrap()
+            .contains("day_starts_at")
+    );
+    std::fs::write(path, saved).unwrap();
+    host.host
+        .sync
+        .start(host.host.collection("me").await.unwrap())
+        .await;
+    assert!(status().await["auto_sync_error"].is_null());
+}
