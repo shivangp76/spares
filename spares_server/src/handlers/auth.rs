@@ -100,7 +100,9 @@ pub(crate) async fn authenticate(
                     Method::GET | Method::HEAD | Method::OPTIONS
                 );
                 let sent = headers.get(auth::CSRF_HEADER).and_then(|v| v.to_str().ok());
-                if !safe && !sent.is_some_and(|sent| auth::constant_time_eq(sent, &csrf_token)) {
+                if (!safe || headers.contains_key(auth::CSRF_HEADER))
+                    && !sent.is_some_and(|sent| auth::constant_time_eq(sent, &csrf_token))
+                {
                     return forbidden("missing or wrong CSRF token; reload the page");
                 }
                 Auth { user, device: None }

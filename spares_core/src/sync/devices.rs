@@ -101,7 +101,7 @@ pub async fn enroll(db: &SqlitePool, request: EnrollRequest) -> Result<EnrollRes
         return Err(Error::Sync("a device needs a name".to_string()));
     }
     let own = crate::config::get_replica()?.number();
-    let mut tx = db.begin().await.map_err(sqlx_error)?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await.map_err(sqlx_error)?;
     let enrolled: Vec<i64> = sqlx::query_scalar("SELECT replica FROM sync_device")
         .fetch_all(&mut *tx)
         .await

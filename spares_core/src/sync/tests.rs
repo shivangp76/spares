@@ -1466,6 +1466,24 @@ async fn the_server_drops_render_assets_the_laptop_no_longer_has() {
 }
 
 #[tokio::test]
+async fn simultaneous_enrollments_get_distinct_replicas() {
+    let replicas = Replicas::new().await;
+    let enroll = |name: &str| {
+        on_server_enroll(
+            &replicas.server,
+            super::devices::EnrollRequest {
+                name: name.to_owned(),
+                ..Default::default()
+            },
+        )
+    };
+    let (phone, tablet) = tokio::try_join!(enroll("phone"), enroll("tablet")).unwrap();
+    let mut numbers = [phone.replica, tablet.replica];
+    numbers.sort();
+    assert_eq!(numbers, [2, 3]);
+}
+
+#[tokio::test]
 #[allow(clippy::too_many_lines, reason = "one scenario")]
 async fn a_device_has_to_enroll_and_its_number_is_its_own() {
     use super::devices::EnrollRequest;

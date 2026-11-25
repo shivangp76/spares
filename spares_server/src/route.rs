@@ -1195,6 +1195,16 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        // A background download from a previous session cannot use a newer session cookie.
+        let (status, _, _) = send(
+            &router,
+            get("/files/mine.pdf")
+                .header(COOKIE, &cookie)
+                .header("x-csrf-token", "stale"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
         for path in ["/files/theirs.pdf", "/files/../../other/files/theirs.pdf"] {
             let (status, _, _) = send(&router, get(path).header(COOKIE, &cookie), None).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
