@@ -67,6 +67,43 @@ pub fn migrator() -> sqlx::migrate::Migrator {
     migrator
 }
 
+/// Upgrades a collection, including ones opened with the early November 25 migrations.
+pub async fn migrate(db: &SqlitePool) -> Result<(), sqlx::migrate::MigrateError> {
+    use sqlx::migrate::Migrate;
+
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    tx.ensure_migrations_table("_sqlx_migrations").await?;
+
+    // The keyword migration moved without changing its SQL. Keep its existing token and triggers.
+    sqlx::query(
+        "UPDATE OR IGNORE _sqlx_migrations SET version = 20261125040000
+         WHERE version = 20261125020000 AND success
+         AND checksum = x'fb7ae23949ea6c2fe4b0645cc3ebfea37b93e5c5a1f41685d69a92c2ed8211e539e0dfcbf543bc61dee158ac80e8b51e'",
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // The first study-day migration tracked dirty cards without review timestamps. Its down
+    // migration drops only derived tables and their triggers. Reapply the current up migration
+    // so study pace rebuilds from the review log on first use.
+    let old_study_days = sqlx::query(
+        "DELETE FROM _sqlx_migrations WHERE version = 20261125030000 AND success
+         AND checksum = x'c51dd4e398d0a2ac51a61476cc018b0bfdc3f5b25f4accdeb10fc6fa489cce24131040873ebac25ef9f3a4a5b036415b'",
+    )
+    .execute(&mut *tx)
+    .await?;
+    if old_study_days.rows_affected() == 1 {
+        sqlx::raw_sql(include_str!(
+            "../migrations/20261125030000_study_days.down.sql"
+        ))
+        .execute(&mut *tx)
+        .await?;
+    }
+    migrator().run_direct(None, &mut *tx, false).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// The directories of a collection (see the [module docs](self)).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CollectionPaths {

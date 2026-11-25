@@ -470,15 +470,12 @@ pub async fn open_collection(
                 paths.database().display()
             ))
         })?;
-    spares_core::collection::migrator()
-        .run(&db)
-        .await
-        .map_err(|e| {
-            Error::Sync(format!(
-                "Failed to migrate {}: {e}",
-                paths.database().display()
-            ))
-        })?;
+    spares_core::collection::migrate(&db).await.map_err(|e| {
+        Error::Sync(format!(
+            "Failed to migrate {}: {e}",
+            paths.database().display()
+        ))
+    })?;
     let collection = Arc::new(Collection::new(id, db, paths));
     collection
         .scope(async {

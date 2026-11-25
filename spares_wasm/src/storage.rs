@@ -165,8 +165,7 @@ pub(crate) async fn open(directory: &str) -> Result<Opened, JsValue> {
             .map_err(sqlx_error)?;
     }
     let db = connect(DB_FILE).await?;
-    spares_core::collection::migrator()
-        .run(&db)
+    spares_core::collection::migrate(&db)
         .await
         .map_err(|e| js_error(&format!("failed to migrate the copy: {e}")))?;
     // The device's one collection, current everywhere in the worker

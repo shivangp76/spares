@@ -507,6 +507,91 @@ mod tests {
         }
     }
 
+    #[sqlx::test(migrations = false)]
+    async fn migration_upgrades_legacy_study_days_and_keyword_version(pool: SqlitePool) {
+        use sqlx::SqlSafeStr;
+        use sqlx::migrate::Migration;
+        use sqlx::migrate::MigrationType;
+        use sqlx::migrate::Migrator;
+
+        crate::collection::migrator()
+            .run_to(20_261_125_010_000, &pool)
+            .await
+            .unwrap();
+        let old = [
+            (
+                20_261_125_020_000,
+                "keyword version",
+                include_str!("../migrations/20261125040000_keyword_version.up.sql"),
+            ),
+            (
+                20_261_125_030_000,
+                "study days",
+                include_str!("../tests/fixtures/legacy_study_days.sql"),
+            ),
+        ];
+        Migrator::with_migrations(
+            old.into_iter()
+                .map(|(version, name, sql)| {
+                    Migration::new(
+                        version,
+                        name.into(),
+                        MigrationType::ReversibleUp,
+                        sql.into_sql_str(),
+                        false,
+                    )
+                })
+                .collect(),
+        )
+        .set_ignore_missing(true)
+        .run(&pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql(
+            "UPDATE keyword_version SET token = x'0102';
+             INSERT INTO study_day_cache VALUES (1, 0, 'old rules');
+             INSERT INTO study_day_dirty VALUES (1);
+             INSERT INTO review_log (id, reviewed_at, rating, scheduler_name, previous_state, custom_data)
+             VALUES (7, 123, 3, 'fsrs', 2, '{}');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        crate::collection::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO study_day_dirty (card_id, reviewed_at) VALUES (1, 456)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        crate::collection::migrate(&pool).await.unwrap();
+
+        let result: (String, i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT hex(token) FROM keyword_version),
+                    (SELECT count(*) FROM study_day_cache),
+                    (SELECT reviewed_at FROM study_day_dirty WHERE card_id = 1),
+                    (SELECT reviewed_at FROM review_log WHERE id = 7)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(result, ("0102".to_owned(), 0, 456, 123));
+    }
+
+    #[sqlx::test(migrations = false)]
+    async fn migration_rejects_unknown_study_days_checksum(pool: SqlitePool) {
+        crate::collection::migrate(&pool).await.unwrap();
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = x'00' WHERE version = 20261125030000")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            crate::collection::migrate(&pool).await,
+            Err(sqlx::migrate::MigrateError::VersionMismatch(
+                20_261_125_030_000
+            ))
+        ));
+    }
+
     /// A database the migrations before the baseline made has its schema already: the baseline
     /// changes nothing there, and the migrations after it run.
     #[sqlx::test(migrations = false)]
