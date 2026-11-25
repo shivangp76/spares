@@ -84,6 +84,12 @@
 //!   `c.retrievability<0.8`. Cards of a scheduler with no forgetting curve have none. Sorting
 //!   orders cards by it only among those of the same scheduler.
 //!
+//!   With a time in brackets, it is how likely you are to recall the card then, if it isn't
+//!   reviewed before: `c.retrievability[2027-05-01]<0.9` finds the cards you would likely have
+//!   forgotten by an exam on May 1, 2027, and `c.retrievability[today+14d]<0.8` those that slip
+//!   below 80% in the next two weeks. A date stands for the start of that day, and a time before
+//!   the card's last review for the review itself. Only `c.retrievability` now can be sorted by.
+//!
 //! A time in brackets after `c.rated` limits it to the reviews at that time: a date, which means
 //! any time in it, or a comparison with a date, written with no spaces. With no value, it is any
 //! rating:

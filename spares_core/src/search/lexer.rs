@@ -357,7 +357,12 @@ impl Lexer<'_> {
     fn eat_rated_time(&mut self, start: usize) -> Result<bool, Error> {
         if !(matches!(
             self.s.from(start),
-            "c.rated" | "card.rated" | "c.postponed" | "card.postponed"
+            "c.rated"
+                | "card.rated"
+                | "c.postponed"
+                | "card.postponed"
+                | "c.retrievability"
+                | "card.retrievability"
         ) && self.s.eat_if('['))
         {
             return Ok(false);

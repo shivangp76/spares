@@ -31,6 +31,7 @@ const EXAMPLES: &[QueryExample] = &[
     example("Examples", "c.due<=today", "Cards due by the end of today"),
     example("Examples", "c.state=new created_at>=today-7d", "New cards of notes created this week"),
     example("Examples", "c.rated[>=today-7d]=1", "Cards forgotten this week"),
+    example("Examples", "c.retrievability[today+30d]<0.85", "Cards that will be below 85% recall in 30 days, unless reviewed"),
     example("Examples", "sort_by_asc=c.retrievability limit=20", "The 20 cards you are least likely to recall"),
     example("Examples", "linked_to_note=(tag=history)", "Notes linking to a note tagged `history`"),
     example("Examples", "prerequisite_of=(tag=history depth<=2)", "Notes that notes tagged `history` build on, up to two links away"),

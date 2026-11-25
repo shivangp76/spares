@@ -642,7 +642,9 @@ enum CardField {
     Reps,
     Lapses,
     Interval,
-    Retrievability,
+    /// How likely the card is to be recalled, now, or at the time written in brackets, like the
+    /// `2027-05-01` of `c.retrievability[2027-05-01]`, as SQL for its Unix time.
+    Retrievability(Option<String>),
     /// When a review in `review_log rl` was, for the brackets of `c.rated[…]`. It can't be
     /// written in a query.
     ReviewedAt,
@@ -702,7 +704,7 @@ pub(crate) const FIELDS: [FieldDoc; 39] = [
     doc("c.lapses", "c.lapses>=3", "How many times the card was forgotten after it had been learned"),
     doc("c.leech", "c.leech", "Whether the card lapsed at least `lapses_threshold` times, as for leeches"),
     doc("c.interval", "c.interval>=30", "Days from the card's last review to when it is due"),
-    doc("c.retrievability", "c.retrievability<0.8", "How likely you are to recall the card now, from 0 to 1, as its scheduler predicts"),
+    doc("c.retrievability", "c.retrievability<0.8", "How likely you are to recall the card now, or at a time in brackets as in `c.retrievability[2027-05-01]`, from 0 to 1, as its scheduler predicts"),
     doc("c.count", "c.count>=2", "How many cards the note has"),
     doc("c.cloze", "c.cloze~Paris", "The text of the card's cloze"),
     doc("sort_by_asc", "sort_by_asc=c.due", "Sorts by a field, smallest first"),
@@ -888,6 +890,14 @@ impl Field {
         {
             return Ok(Field::Card(CardField::Rated(Some(range.to_string()))));
         }
+        if let Some(time) = normalized_value_str
+            .strip_prefix("c.retrievability[")
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            return Ok(Field::Card(CardField::Retrievability(Some(
+                point_in_time_sql("c.retrievability", time)?,
+            ))));
+        }
         if let Some(range) = normalized_value_str
             .strip_prefix("c.postponed[")
             .and_then(|rest| rest.strip_suffix(']'))
@@ -943,7 +953,7 @@ impl Field {
             "c.lapses" => Ok(Field::Card(CardField::Lapses)),
             "c.leech" => Ok(Field::Card(CardField::Leech)),
             "c.interval" => Ok(Field::Card(CardField::Interval)),
-            "c.retrievability" => Ok(Field::Card(CardField::Retrievability)),
+            "c.retrievability" => Ok(Field::Card(CardField::Retrievability(None))),
             "c.count" => Ok(Field::Card(CardField::Count)),
             "c.cloze" => Ok(Field::Card(CardField::Cloze)),
             "sort_by_asc" => Ok(Field::SortAsc(String::new())),
@@ -1064,7 +1074,7 @@ impl Field {
                 CardField::Lapses => with_op(&lapses_sql()),
                 CardField::Interval => never_null(&interval_sql()),
                 // `value_str` is the whole comparison, see `retrievability_sql`.
-                CardField::Retrievability => format!("COALESCE({value_str}, 0)"),
+                CardField::Retrievability(_) => format!("COALESCE({value_str}, 0)"),
                 CardField::ReviewedAt => with_op("rl.reviewed_at"),
                 CardField::Count => {
                     with_op("(SELECT COUNT(*) FROM card c2 WHERE c2.note_id = n.id)")
@@ -1135,7 +1145,7 @@ impl Field {
                 | CardField::Difficulty
                 | CardField::DesiredRetention
                 | CardField::Interval
-                | CardField::Retrievability => FieldType::Float,
+                | CardField::Retrievability(_) => FieldType::Float,
                 CardField::Suspended
                 | CardField::UserBuried
                 | CardField::SchedulerBuried
@@ -1200,9 +1210,12 @@ impl Field {
                 CardField::Lapses => Ok(lapses_sql()),
                 CardField::Interval => Ok(interval_sql()),
                 // The key falls as retrievability rises.
-                CardField::Retrievability => {
+                CardField::Retrievability(None) => {
                     Ok(format!("-{}", retrievability_sql(|key| key.sql.clone())?))
                 }
+                CardField::Retrievability(Some(_)) => Err(miette!(
+                    "only `c.retrievability` now can be sorted by, not at a time"
+                )),
                 // Unsupported types
                 // A card can have many ratings, so there is none to sort by.
                 CardField::Rated(_) => Err(miette!("a card can have many ratings")),
@@ -2328,7 +2341,9 @@ fn evaluate_comparison(
             // Cards with no value, like new cards for `c.retrievability`, come last either way.
             if matches!(
                 target_field,
-                Field::Card(CardField::Reviewed | CardField::Interval | CardField::Retrievability)
+                Field::Card(
+                    CardField::Reviewed | CardField::Interval | CardField::Retrievability(_)
+                )
             ) {
                 context.order_by.push(format!("({order_expr}) IS NULL ASC"));
             }
@@ -2385,12 +2400,16 @@ fn evaluate_comparison(
                         like_pattern(&name),
                         like_pattern(&format!("{name}:%")),
                     ));
-                } else if matches!(field, Field::Card(CardField::Retrievability))
+                } else if let Field::Card(CardField::Retrievability(at)) = field
                     && let Ok(value) = value_param.parse::<f64>()
                 {
+                    let elapsed = match at {
+                        Some(at) => retrievability_elapsed_at_sql(at),
+                        None => retrievability_elapsed_sql(),
+                    };
                     value_context.params.push(retrievability_key_sql(
                         context.config()?,
-                        &retrievability_elapsed_sql(),
+                        &elapsed,
                         |key| format!("{} {}", key.sql, key_bound(op, value, &key.at)),
                     ));
                 } else if matches!(field_type, FieldType::Float)
@@ -2526,6 +2545,35 @@ fn retrievability_sql(sql_for: impl Fn(&RetrievabilityKey) -> String) -> Result<
         &retrievability_elapsed_sql(),
         sql_for,
     ))
+}
+
+/// Seconds from the card's last review to `at`, SQL for a Unix time, for
+/// [`retrievability_key_sql`]. A time before the last review counts as the review itself.
+fn retrievability_elapsed_at_sql(at: &str) -> String {
+    format!("MAX(({at}) - {}, 0)", last_rated_sql())
+}
+
+/// The SQL for the Unix time written in `field`'s brackets, like the `2027-05-01` of
+/// `c.retrievability[2027-05-01]`: a date stands for the start of that local day, and a time or a
+/// relative date like `now+30d` or `today+30d` for itself (`today` is the start of today).
+fn point_in_time_sql(field: &str, time: &str) -> Result<String, Error> {
+    let invalid = || {
+        miette!(
+            help = format!(
+                "Write a date or a time in the brackets, as in `{field}[2027-05-01]` or `{field}[today+30d]`"
+            ),
+            "`{field}[{time}]` doesn't say when",
+        )
+    };
+    if time.starts_with(['<', '>', '=']) {
+        return Err(invalid());
+    }
+    // `c.reviewed>=time` compiles to `rl.reviewed_at >= <the start of the time>`.
+    let condition = review_time_sql(field, &format!(">={time}")).map_err(|_| invalid())?;
+    condition
+        .strip_prefix("rl.reviewed_at >= ")
+        .map(str::to_string)
+        .ok_or_else(invalid)
 }
 
 /// Seconds since the card's last review, for [`retrievability_key_sql`]
@@ -3952,6 +4000,35 @@ mod tests {
             .await,
             [1]
         );
+        // At a later time, as FSRS would predict it then: 28 days on is 30 days after the review
+        let later = crate::schedulers::fsrs::utils::retrievability(
+            30.0,
+            10.0,
+            crate::schedulers::fsrs::utils::decay(&config),
+        );
+        assert!(later < recall - 0.05);
+        assert_eq!(
+            search(&format!(
+                "c.retrievability[now+28d]>{} c.retrievability[now+28d]<{}",
+                later - 0.001,
+                later + 0.001
+            ))
+            .await,
+            [1]
+        );
+        // A day stands for its start, and a time before the last review for the review itself.
+        assert_eq!(search("c.retrievability[today+400d]<0.6").await, [2, 1]);
+        assert_eq!(search("c.retrievability[2000-01-01]>0.999").await, [2, 1]);
+        for bad in [
+            "c.retrievability[soon]<0.5",
+            "c.retrievability[>=today]<0.5",
+            "c.retrievability[]<0.5",
+        ] {
+            assert!(
+                Evaluator::new(bad).get_card_ids(&pool).await.is_err(),
+                "{bad} should be an error"
+            );
+        }
         // Cards with no retrievability come last.
         assert_eq!(search("sort_by_asc=c.retrievability").await, [2, 1, 3]);
         assert_eq!(search("sort_by_desc=c.retrievability").await, [1, 2, 3]);
