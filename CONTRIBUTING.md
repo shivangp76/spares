@@ -67,6 +67,13 @@ bunx playwright-core install chromium-headless-shell webkit firefox  # once
 bun run build && bun run e2e
 ```
 
+Pull requests run the native tests, frontend unit tests, and WASM compile check. The browser suite runs weekly and on manual dispatch. To time a broad keyword search on 10,000 notes through the host and through an offline Chromium copy, run this after building the frontend:
+
+```sh
+cd spares_frontend/frontend
+SPARES_SEARCH_BENCH=1 bun e2e/local_copy.ts chromium
+```
+
 ## Documentation
 
 Document things where they are implemented, so the docs change with the code:

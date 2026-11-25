@@ -32,6 +32,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { Database } from "bun:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -112,17 +113,43 @@ writeFileSync(
 const userConfig = join(dir, `host/users/${USER}/config/config.toml`);
 mkdirSync(join(dir, `host/users/${USER}/config`), { recursive: true });
 writeFileSync(userConfig, "render_browser_parsers = false\n");
+for (const engine of engines) {
+  const add = spawnSync(
+    SERVER_BIN,
+    ["host", "add-user", `first-${engine}`, "--password-stdin"],
+    {
+      env,
+      input: PASSWORD + "\n",
+      encoding: "utf8",
+    },
+  );
+  if (add.status !== 0) throw new Error(add.stderr);
+}
+const benchmark = process.env.SPARES_SEARCH_BENCH === "1";
+if (benchmark) {
+  // Only the disposable host initialized above. Seed notes without renders to isolate search.
+  const db = new Database(join(dir, `host/users/${USER}/collection.sqlite`));
+  db.exec(`BEGIN;
+    INSERT INTO parser(name) VALUES ('markdown');
+    WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<10000)
+    INSERT INTO note(id, data, custom_data, parser_id)
+      SELECT n, 'Search benchmark ' || n, '{}', (SELECT id FROM parser WHERE name='markdown') FROM seq;
+    INSERT INTO note_keyword(note_id, keyword, embedded) SELECT id, 'bench', 0 FROM note;
+    COMMIT;`);
+  db.close();
+}
 const server = spawn(SERVER_BIN, [], { env, stdio: "inherit" });
 
 /** Logs `page`'s browser in, as the login page does: the session's cookie, and its CSRF token with the credentials. */
-async function logIn(page: Page): Promise<void> {
+async function logIn(page: Page, user = USER): Promise<void> {
   const res = await page.request.post(`${ORIGIN}/api/auth/login`, {
-    data: { user: USER, password: PASSWORD },
+    data: { user, password: PASSWORD },
   });
   if (!res.ok())
     throw new Error(`Logging in: ${res.status()} ${await res.text()}`);
-  const { csrf_token: csrfToken } = (await res.json()) as {
+  const { csrf_token: csrfToken, user: account } = (await res.json()) as {
     csrf_token: string;
+    user: { id: string };
   };
   const schedulers = await api<string[]>("GET", "/api/schedulers");
   await page.evaluate(
@@ -131,7 +158,7 @@ async function logIn(page: Page): Promise<void> {
       // Typed into the editor as into a plain one
       localStorage.setItem("spares_vim_keybindings", "false");
     },
-    { csrfToken, user: USER, schedulerName: schedulers[0] },
+    { csrfToken, user, accountId: account.id, schedulerName: schedulers[0] },
   );
 }
 
@@ -577,6 +604,65 @@ async function dropImage(
   );
 }
 
+async function firstReviewAndDrafts(page: Page, engine: string) {
+  await page.goto(`${ORIGIN}/notes`);
+  await startNote(page, "markdown", "Private unfinished draft");
+  await logIn(page, `first-${engine}`);
+  await page.goto(`${ORIGIN}/review`);
+  await page.getByRole("button", { name: "Create your first note" }).click();
+  const editor = page.locator(".cm-content").first();
+  await see(page, /The capital of France is/);
+  check(
+    "a fresh account opens its own starter",
+    !(await editor.innerText()).includes("Private unfinished"),
+  );
+  await typeInto(page, editor, "Invalid {{}}");
+  await page
+    .getByRole("button", { name: "Create and review", exact: true })
+    .click();
+  await page.locator(".cm-lintRange-error").first().waitFor();
+  await typeInto(page, editor, "First card: {{ Paris }}");
+  await page
+    .getByRole("button", { name: "Create and review", exact: true })
+    .click();
+  const answer = page.getByRole("button", { name: /Show Answer/ });
+  await answer.waitFor();
+  const notice = page.getByRole("dialog").getByRole("button").last();
+  if (await notice.isVisible()) await notice.click();
+  await answer.click();
+  // Drop the response only after the host has committed. Retry on this screen
+  // should refetch the queue; replaying a rating is deferred work.
+  await page.evaluate(() => {
+    const original = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await original(...args);
+      if (response.url.endsWith("/api/review/submit") && response.ok) {
+        document.documentElement.dataset.submissions = String(
+          Number(document.documentElement.dataset.submissions ?? 0) + 1,
+        );
+        throw new TypeError("Lost rating response");
+      }
+      return response;
+    };
+  });
+  await page.getByRole("button", { name: /\(1\)/ }).first().click();
+  await page.getByRole("button", { name: "Retry" }).click();
+  await answer.waitFor();
+  check(
+    "recovering a lost response fetches the queue once without resubmitting",
+    (await page.locator("html").getAttribute("data-submissions")) === "1",
+  );
+  await logIn(page);
+  await page.goto(`${ORIGIN}/notes`);
+  await page.getByRole("button", { name: "New note", exact: true }).click();
+  await see(page, "Private unfinished draft");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  const discard = page
+    .getByRole("dialog")
+    .getByRole("button", { name: /discard/i });
+  if (await discard.isVisible()) await discard.click();
+}
+
 async function run(engine: keyof typeof ENGINES): Promise<void> {
   console.log(`\n${engine}`);
   const profile = mkdtempSync(join(dir, `${engine}-`));
@@ -604,6 +690,34 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await page.goto(`${ORIGIN}/login`);
     await page.getByRole("heading", { name: "Spares" }).waitFor();
     await logIn(page);
+    if (benchmark) {
+      async function timeSearch(mode: string) {
+        const samples: number[] = [];
+        for (let trial = 0; trial < 5; trial++) {
+          // A fresh page clears the app's memoized search pages for each trial.
+          await page.goto(`${ORIGIN}/notes`);
+          const input = page.getByPlaceholder(/^Search notes/);
+          await input.fill("keyword=bench");
+          const start = performance.now();
+          await input.press("Enter");
+          await see(page, /10000 results for/);
+          samples.push(Math.round(performance.now() - start));
+        }
+        console.log(
+          `${mode} 10,000-note search, submit to visible results (ms): ${samples.join(", ")}`,
+        );
+      }
+      await timeSearch("Native");
+      await page.goto(`${ORIGIN}/settings`);
+      await page
+        .getByRole("button", { name: "Keep a Copy on This Device" })
+        .click();
+      await see(page, /now keeps a copy of the collection/);
+      await context.setOffline(true);
+      await timeSearch("Offline SQLite");
+      return;
+    }
+    await firstReviewAndDrafts(page, engine);
     // Controlled by the service worker from here on, so the app opens offline
     await page.evaluate(() => navigator.serviceWorker.ready);
     // A card's image occlusion without masks, from the server
@@ -853,6 +967,13 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       (await page.getByText("Offline", { exact: true }).count()) === 0,
     );
     await page.goto(`${ORIGIN}/conflicts`);
+    await page.getByRole("button", { name: "Edit…" }).click();
+    await page.getByRole("textbox", { name: "Merged note" }).waitFor();
+    await page
+      .locator(".conflict-passages ins")
+      .filter({ hasText: `Server edit for ${engine}` })
+      .waitFor();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByRole("button", { name: "Keep This Side" }).click();
     await see(page, /Resolved the conflict/);
     await page.getByRole("button", { name: /^Sync/ }).click();
@@ -1083,6 +1204,10 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     );
     await context.setOffline(false);
 
+    // Finish the offline edit before inspecting the host or enrolling another device.
+    await page.getByRole("button", { name: /^Sync/ }).click();
+    await see(page, /Synced: received|Already in sync/);
+
     // 4. The server's collection
     const deviceNotes = await serverNotes(engine);
     const texts = deviceNotes.map((note) => note.data);
@@ -1226,9 +1351,19 @@ async function privateWindow(): Promise<void> {
 }
 
 try {
-  await seed();
+  if (benchmark) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await api("GET", "/api/healthcheck");
+        break;
+      } catch (error) {
+        if (attempt >= 100) throw error;
+        await Bun.sleep(100);
+      }
+    }
+  } else await seed();
   for (const engine of engines) await run(engine);
-  if (engines.includes("webkit")) await privateWindow();
+  if (!benchmark && engines.includes("webkit")) await privateWindow();
 } finally {
   server.kill();
 }

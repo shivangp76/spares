@@ -1,0 +1,83 @@
+name: Checks
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
+env:
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_INCREMENTAL: 0
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap libasound2-dev
+      - name: Install the Typst CLI used by render tests
+        run: |
+          version=$(python3 -c 'import tomllib; print(next(p["version"] for p in tomllib.load(open("Cargo.lock", "rb"))["package"] if p["name"] == "typst"))')
+          archive=typst-x86_64-unknown-linux-musl
+          curl -fsSL "https://github.com/typst/typst/releases/download/v$version/$archive.tar.xz" -o "$RUNNER_TEMP/typst.tar.xz"
+          tar -xJf "$RUNNER_TEMP/typst.tar.xz" -C "$RUNNER_TEMP" "$archive/typst"
+          sudo install "$RUNNER_TEMP/$archive/typst" /usr/local/bin/typst
+      - run: cargo test --locked --workspace --exclude spares_wasm
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - working-directory: spares_frontend/frontend
+        run: bun install --frozen-lockfile && bun run test
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo check --locked -p spares_wasm --target wasm32-unknown-unknown
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+
+  offline:
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit, firefox]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spares_frontend/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: oven-sh/setup-bun@v2
+      - name: Install server render tools
+        run: |
+          version=$(sed -n 's/^PANDOC_VERSION="\(.*\)"/\1/p' ../../scripts/setup_vps.sh)
+          curl -fsSL "https://github.com/jgm/pandoc/releases/download/$version/pandoc-$version-1-amd64.deb" -o "$RUNNER_TEMP/pandoc.deb"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "$RUNNER_TEMP/pandoc.deb" bubblewrap libasound2-dev latexmk texlive-latex-extra texlive-fonts-recommended texlive-xetex texlive-fonts-extra lmodern inkscape
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright-core install --with-deps ${{ matrix.browser == 'chromium' && 'chromium-headless-shell' || matrix.browser }}
+      - run: bun run build
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+      - name: Compare browser and server Markdown rendering
+        if: matrix.browser == 'chromium'
+        run: bun test ./src/local/pandocWasm.test.ts
+      - run: bun run e2e ${{ matrix.browser }}
