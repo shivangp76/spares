@@ -54,6 +54,46 @@ pub struct ConflictView {
     pub local: Option<String>,
     /// The other side's text, or `None` if it deleted the note.
     pub remote: Option<String>,
+    #[serde(default)]
+    pub local_changes: Option<Vec<ChangedPassage>>,
+    #[serde(default)]
+    pub remote_changes: Option<Vec<ChangedPassage>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ChangedPassage {
+    /// First affected line in the base, one-based (zero for an insertion at the beginning).
+    pub line: usize,
+    pub removed: String,
+    pub added: String,
+}
+
+fn changed_passages(base: Option<&str>, text: Option<&str>) -> Option<Vec<ChangedPassage>> {
+    let patch = diffy::DiffOptions::new()
+        .set_context_len(0)
+        .create_patch(base?, text?);
+    Some(
+        patch
+            .hunks()
+            .iter()
+            .map(|hunk| {
+                let mut removed = String::new();
+                let mut added = String::new();
+                for line in hunk.lines() {
+                    match line {
+                        diffy::Line::Delete(line) => removed.push_str(line),
+                        diffy::Line::Insert(line) => added.push_str(line),
+                        diffy::Line::Context(_) => {}
+                    }
+                }
+                ChangedPassage {
+                    line: hunk.old_range().start(),
+                    removed,
+                    added,
+                }
+            })
+            .collect(),
+    )
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -164,6 +204,8 @@ pub async fn list_conflicts(db: &SqlitePool) -> Result<Vec<ConflictView>, Error>
             note_id: row.note_id,
             kind,
             created_at: row.created_at,
+            local_changes: changed_passages(base.as_deref(), local.as_deref()),
+            remote_changes: changed_passages(base.as_deref(), remote.as_deref()),
             base,
             local,
             remote,

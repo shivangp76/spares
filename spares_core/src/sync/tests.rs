@@ -1224,6 +1224,10 @@ async fn conflicts_resolve_with_either_text_and_keep_their_cards() {
     assert_eq!(conflicts.len(), 2);
     let text = conflicts.iter().find(|c| c.note_id == ids[0]).unwrap();
     assert_eq!(text.kind, ConflictKind::Text);
+    let changes = text.remote_changes.as_ref().unwrap();
+    assert_eq!(changes.len(), 1);
+    assert!(changes[0].removed.contains("Line three"));
+    assert!(changes[0].added.contains("(phone)"));
     let remote = text.remote.clone().unwrap();
     assert!(
         remote.contains("(phone)") && remote.contains("o:c"),

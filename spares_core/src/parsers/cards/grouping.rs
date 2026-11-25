@@ -80,34 +80,20 @@ pub(super) fn group_clozes(
         .collect::<Vec<_>>();
     // Validate grouped clozes
     for clozes in &cards_raw {
-        let flattened_matches = clozes
+        // Several occlusion shapes can share the same source block. Among distinct
+        // blocks, an opening before the previous close identifies overlapping clozes.
+        let overlapping = clozes
             .iter()
-            .flat_map(|(cd, _)| {
-                // The end points are not inclusive so they should be removed.
-                [
-                    cd.start_delim.start,
-                    cd.start_delim.end - 1,
-                    cd.end_delim.start,
-                    cd.end_delim.end - 1,
-                ]
-            })
-            // One image occlusion can have 2 clozes that are a part of the same card. In this case, we will have 2 `ClozeData`s with the same `start_delim` and `end_delim` that are consecutive. Calling `.unique()` removes these duplicates, while preserving order.
-            .unique()
-            .collect::<Vec<_>>();
-        // Not strictly increasing because image occlusion clozes have the same value for `start_delim.start` and `start_delim.end`.
-        let not_increasing = flattened_matches
-            .iter()
+            .map(|(cloze, _)| cloze)
+            .unique_by(|cloze| (cloze.start_delim.start, cloze.end_delim.end))
             .tuple_windows()
-            .find(|(cur, next)| cur > next);
-        if let Some((cur, next)) = not_increasing {
-            debug_assert!(!(*cur < 3 || *next + 3 >= data.len()));
+            .find(|(first, second)| first.end_delim.end > second.start_delim.start);
+        if let Some((first, second)) = overlapping {
             return Err(LibraryError::Card(
                 CardErrorKind::SameGroupingNestedClozes {
                     src: data.to_string(),
-                    // This is start_delim.start to end_delim.end of the outside cloze
-                    cloze_1: (*cur - 3..*cur).into(),
-                    // This is start_delim.start to end_delim.end of the intside cloze
-                    cloze_2: (*next..*next + 3).into(),
+                    cloze_1: first.start_delim.clone().into(),
+                    cloze_2: second.start_delim.clone().into(),
                 },
             ));
         }
