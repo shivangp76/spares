@@ -200,6 +200,8 @@ impl CollectionPaths {
 #[derive(Default)]
 pub struct CollectionState {
     replica: RwLock<Option<Replica>>,
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) manifest: Mutex<Option<crate::sync::media::Manifest>>,
     pub(crate) keywords: crate::api::note::KeywordCache,
     pub(crate) renders: Mutex<crate::parsers::RunningRenders>,
     /// Its turns at rendering (see [`crate::render`])

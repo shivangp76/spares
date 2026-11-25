@@ -47,6 +47,11 @@ use crate::config::get_files_dir;
 use crate::parsers::audio::is_audio_path;
 use crate::parsers::image_occlusion::get_image_occlusion_directory;
 
+#[cfg(not(target_family = "wasm"))]
+mod manifest;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use manifest::Manifest;
+
 /// Directories in the files directory that hold the server's own state rather than rendered
 /// files: sync's snapshots.
 const INTERNAL_DIRS: [&str; 1] = ["sync"];
@@ -91,13 +96,16 @@ pub struct ChangedFilesResponse {
 
 /// The rendered files in the files directory, by path.
 pub fn rendered_files() -> Result<Vec<RenderedFile>, Error> {
-    let root = get_files_dir();
-    let entries = std::fs::read_dir(&root).map_err(|e| Error::Io {
+    rendered_files_in(&get_files_dir())
+}
+
+fn rendered_files_in(root: &Path) -> Result<Vec<RenderedFile>, Error> {
+    let entries = std::fs::read_dir(root).map_err(|e| Error::Io {
         description: format!("Failed to list {}", root.display()),
         source: e,
     })?;
     let mut files = Vec::new();
-    add_rendered_files(&root, entries, &mut files);
+    add_rendered_files(root, entries, &mut files);
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
 }
@@ -106,6 +114,16 @@ pub fn rendered_files() -> Result<Vec<RenderedFile>, Error> {
 pub fn changed_rendered_files(
     request: &ChangedFilesRequest,
 ) -> Result<ChangedFilesResponse, Error> {
+    #[cfg(not(target_family = "wasm"))]
+    if let Some(collection) = crate::collection::current() {
+        let mut cache = crate::collection::lock(&collection.state.manifest);
+        if cache.is_none() {
+            *cache = Manifest::watch(&collection.paths.files)?;
+        }
+        if let Some(manifest) = cache.as_mut() {
+            return manifest.changed(request);
+        }
+    }
     let mut by_bucket: BTreeMap<String, Vec<RenderedFile>> = BTreeMap::new();
     for file in rendered_files()? {
         by_bucket.entry(file.bucket.clone()).or_default().push(file);
@@ -119,6 +137,20 @@ pub fn changed_rendered_files(
         response.buckets.insert(bucket, digest);
     }
     Ok(response)
+}
+
+/// Make an in-process render or removal visible even before the operating
+/// system delivers its watch event. External writers are picked up by the watcher.
+pub(crate) fn rendered_path_changed(path: &Path) {
+    #[cfg(not(target_family = "wasm"))]
+    if let Some(collection) = crate::collection::current()
+        && let Ok(relative) = path.strip_prefix(&collection.paths.files)
+        && let Some(manifest) = crate::collection::lock(&collection.state.manifest).as_ref()
+    {
+        manifest.mark(relative);
+    }
+    #[cfg(target_family = "wasm")]
+    let _ = path;
 }
 
 /// The bucket of a file at `path` (see [`FILE_BUCKETS`]).
@@ -158,11 +190,7 @@ fn add_rendered_files(root: &Path, entries: std::fs::ReadDir, files: &mut Vec<Re
             }
             continue;
         }
-        let rendered = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| RENDERED_EXTENSIONS.contains(&e.to_lowercase().as_str()));
-        if !rendered {
+        if !is_rendered(&path) {
             continue;
         }
         let relative = path
@@ -177,6 +205,16 @@ fn add_rendered_files(root: &Path, entries: std::fs::ReadDir, files: &mut Vec<Re
             mtime: mtime(&metadata),
         });
     }
+}
+
+fn is_rendered(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+            RENDERED_EXTENSIONS
+                .iter()
+                .any(|s| ext.eq_ignore_ascii_case(s))
+        })
 }
 
 fn mtime(metadata: &std::fs::Metadata) -> i64 {

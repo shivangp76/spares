@@ -317,12 +317,13 @@ pub(crate) async fn sync_files_handler() -> Result<impl IntoResponse, HandlerErr
 
 /// The rendered files a device can show offline that changed since it last asked
 /// (`spares_core::sync::media`).
-#[allow(clippy::unused_async, reason = "an axum handler")]
 pub(crate) async fn sync_changed_files_handler(
     Json(request): Json<ChangedFilesRequest>,
 ) -> Result<impl IntoResponse, HandlerError> {
     Ok(Json(
-        media::changed_rendered_files(&request).map_err(error_to_response)?,
+        spares_core::collection::run_blocking(move || media::changed_rendered_files(&request))
+            .await
+            .map_err(error_to_response)?,
     ))
 }
 

@@ -659,6 +659,10 @@ fn create_raw_and_rendered_file(
                 .any(|part| matches!(part, NotePart::ImageOcclusion { .. }))
             && let Some(dependencies) = reuse.copy(key, &output_rendered_filepath)
         {
+            crate::sync::media::rendered_path_changed(&output_rendered_filepath);
+            crate::sync::media::rendered_path_changed(&web_render_filepath(
+                &output_rendered_filepath,
+            ));
             let state = RenderState {
                 key: key.to_string(),
                 dependencies,
@@ -748,6 +752,8 @@ fn create_raw_and_rendered_file(
             );
         }
 
+        crate::sync::media::rendered_path_changed(&output_rendered_filepath);
+        crate::sync::media::rendered_path_changed(&web_render_filepath(&output_rendered_filepath));
         dependencies.normalize();
         let state = RenderState {
             key: key.to_string(),

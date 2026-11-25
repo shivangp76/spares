@@ -659,7 +659,9 @@ fn write_card_image(card_filepath: &Path, contents: &[u8]) -> Result<(), Error> 
         Error::Library(LibraryError::Note(NoteErrorKind::Other {
             description: format!("Failed to save {}: {}", card_filepath.display(), e),
         }))
-    })
+    })?;
+    crate::sync::media::rendered_path_changed(card_filepath);
+    Ok(())
 }
 
 /// The clozes SVG of `image_occlusion_data` as `side` of a card shows it: its clozes recolored,

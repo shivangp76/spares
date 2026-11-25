@@ -66,6 +66,7 @@ fn delete_rendered_file(output_rendered_filepath: &Path) -> Result<(), Error> {
     ] {
         if path.exists() {
             delete_file(&path)?;
+            crate::sync::media::rendered_path_changed(&path);
         }
     }
     Ok(())
@@ -186,6 +187,7 @@ pub fn delete_card_files(
                     );
                     if image_occlusion_card_filepath.exists() {
                         delete_file(&image_occlusion_card_filepath)?;
+                        crate::sync::media::rendered_path_changed(&image_occlusion_card_filepath);
                     }
                 }
             }
