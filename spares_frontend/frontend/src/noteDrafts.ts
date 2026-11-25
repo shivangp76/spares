@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { getCredentials } from "./api/client";
+import { useEffect, useState } from "react";
 
 /**
  * Unsaved note text kept in this browser, so a reload, a closed tab or a crash doesn't lose it: the
@@ -66,21 +67,35 @@ function save<T>(key: string, value: T | null) {
   }
 }
 
-export const newNoteDraft = {
-  load: () => load<NewNoteDraft>(NEW_NOTE_KEY),
-  save: (draft: NewNoteDraft | null) => save(NEW_NOTE_KEY, draft),
-};
+/** localStorage is already isolated by host origin. Capture the collection when an
+ * editor opens, so a write from an old tab cannot acquire the next login's identity. */
+export function draftStore(owner: string | null) {
+  const prefix = JSON.stringify(["spares-drafts-v1", owner]) + ":";
+  function store<T>(key: string) {
+    return {
+      load: () => owner === null ? null : load<T>(prefix + key),
+      save: (value: T | null) => { if (owner !== null) save(prefix + key, value); },
+    };
+  }
+  return {
+    newNoteDraft: store<NewNoteDraft>(NEW_NOTE_KEY),
+    newNoteDefaults: store<NewNoteDefaults>(DEFAULTS_KEY),
+    editDraft: (id: number) => store<EditDraft>(EDIT_PREFIX + id),
+  };
+}
 
-export const editDraft = {
-  load: (noteId: number) => load<EditDraft>(EDIT_PREFIX + noteId),
-  save: (noteId: number, draft: EditDraft | null) =>
-    save(EDIT_PREFIX + noteId, draft),
-};
-
-export const newNoteDefaults = {
-  load: () => load<NewNoteDefaults>(DEFAULTS_KEY)?.value ?? null,
-  save: (defaults: NewNoteDefaults) => save(DEFAULTS_KEY, defaults),
-};
+export function useDraftStore() {
+  const [store] = useState(() => {
+    try {
+      const credentials = getCredentials();
+      // An older login predates collection IDs. Keep its drafts separate from collections identified by ID.
+      return draftStore(credentials.accountId ?? "legacy-name:" + credentials.user);
+    } catch {
+      return draftStore(null);
+    }
+  });
+  return store;
+}
 
 /**
  * Saves `value` with `write` whenever it changes, or clears it when null. Written at once rather

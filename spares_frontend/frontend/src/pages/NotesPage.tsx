@@ -78,7 +78,7 @@ import {
 import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
 import { askConfirm, askText } from "../ask";
-import { newNoteDraft } from "../noteDrafts";
+import { useDraftStore } from "../noteDrafts";
 import { askNotesBefore } from "../notesBefore";
 
 const DATA_PREVIEW_LEN = 100;
@@ -235,6 +235,7 @@ function noteColumns(
 }
 
 export default function NotesPage() {
+  const { newNoteDraft } = useDraftStore();
   const { credentials } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();

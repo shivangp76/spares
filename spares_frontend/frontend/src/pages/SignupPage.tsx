@@ -47,6 +47,7 @@ export default function SignupPage() {
         saveCredentials({
           csrfToken: result.csrfToken,
           user: result.user,
+        accountId: result.accountId,
           schedulerName: schedulerToUse(schedulers),
         });
         navigate("/review");

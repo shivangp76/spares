@@ -20,7 +20,7 @@ import {
 } from "../api/client";
 import { EDITOR_TIPS, useEditorSetup } from "../hooks/useEditorSetup";
 import { submitKeymap, useSubmitKeys } from "../hooks/useSubmitKeys";
-import { draftTime, editDraft, useDraftSaver } from "../noteDrafts";
+import { draftTime, useDraftSaver, useDraftStore } from "../noteDrafts";
 import { useVimKeybindings } from "../preferences";
 import { useResolvedTheme } from "../theme";
 import type {
@@ -97,6 +97,7 @@ export default function NoteDetail({
   localGraph = true,
   ref,
 }: Props) {
+  const { editDraft } = useDraftStore();
   const theme = useResolvedTheme();
   // A live note's text comes from a file on the laptop, which would overwrite edits made here
   const live = isLiveNote(note);
@@ -108,7 +109,7 @@ export default function NoteDetail({
   const vimEnabled = useVimKeybindings();
   // Unsaved edits kept in this browser from before: restored at once if the note hasn't changed
   // since they began, else offered, since restoring them would undo the change
-  const [draft] = useState(() => editDraft.load(note.id));
+  const [draft] = useState(() => editDraft(note.id).load());
   const restoreAtOnce = draft !== null && draft.value.base === note.updated_at;
   const [draftNotice, setDraftNotice] = useState<
     "restored" | "offered" | null
@@ -174,7 +175,7 @@ export default function NoteDetail({
           base: note.updated_at,
         }
       : null,
-    (value) => editDraft.save(note.id, value),
+    (value) => editDraft(note.id).save(value),
     // An offered draft is kept until it is restored or discarded
     draftNotice !== "offered",
   );
@@ -193,7 +194,7 @@ export default function NoteDetail({
     setDataContent(savedData);
     setTagsContent(savedTags);
     setKeywordsContent(savedKeywords);
-    editDraft.save(note.id, null);
+    editDraft(note.id).save(null);
     setDraftNotice(null);
   }
   const [saveStatus, setSaveStatus] = useState<

@@ -106,7 +106,7 @@ import {
   topicTags,
 } from "../utils";
 import type { NewNoteStart } from "../components/NewNoteForm";
-import { newNoteDraft } from "../noteDrafts";
+import { useDraftStore } from "../noteDrafts";
 import { askNotesBefore } from "../notesBefore";
 import type { NotePaneHandle } from "../components/NoteDetail";
 import PageTitle from "../components/PageTitle";
@@ -401,6 +401,7 @@ const sameFilter = (a: RecentFilter, b: RecentFilter) =>
   a.mode === b.mode && a.input === b.input;
 
 export default function ReviewPage() {
+  const { newNoteDraft } = useDraftStore();
   const { credentials } = useAuth();
   const navigate = useNavigate();
   const { stateName } = useCardStates();

@@ -53,6 +53,7 @@ export default function LoginPage() {
       saveCredentials({
         csrfToken: session.csrfToken,
         user: session.user,
+        accountId: session.accountId,
         schedulerName: schedulerToUse(schedulers),
       });
       navigate(next, { replace: true });

@@ -90,7 +90,7 @@ export function getCredentials(): Credentials {
 export async function login(
   user: string,
   password: string,
-): Promise<{ csrfToken: string; user: string }> {
+): Promise<{ csrfToken: string; user: string; accountId: string }> {
   const label = "Log in";
   const res = await send(label, `${hostUrl()}/api/auth/login`, {
     method: "POST",
@@ -101,9 +101,9 @@ export async function login(
   await throwIfNotOk(res, label);
   const body = (await res.json()) as {
     csrf_token: string;
-    user: { name: string };
+    user: { id: string; name: string };
   };
-  return { csrfToken: body.csrf_token, user: body.user.name };
+  return { csrfToken: body.csrf_token, user: body.user.name, accountId: body.user.id };
 }
 
 /** Ends the session on the host, then forgets the credentials. */
@@ -1615,7 +1615,7 @@ export async function signUp(request: {
   password: string;
   invite?: string;
 }): Promise<
-  { csrfToken: string; user: string } | { verify: true; message: string }
+  { csrfToken: string; user: string; accountId: string } | { verify: true; message: string }
 > {
   const label = "Sign up";
   const res = await send(label, `${hostUrl()}/api/auth/signup`, {
@@ -1630,13 +1630,13 @@ export async function signUp(request: {
   await throwIfNotOk(res, label);
   const body = (await res.json()) as {
     csrf_token?: string;
-    user?: { name: string };
+    user?: { id: string; name: string };
     verify?: boolean;
     message?: string;
   };
   if (body.verify)
     return { verify: true, message: body.message ?? "Check your email." };
-  return { csrfToken: body.csrf_token!, user: body.user!.name };
+  return { csrfToken: body.csrf_token!, user: body.user!.name, accountId: body.user!.id };
 }
 
 /** Emails a link to reset the password of the account with this address, if there is one. */

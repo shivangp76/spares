@@ -4,12 +4,7 @@ import { createNotes, listParsers, renderNote } from "../api/client";
 import { EDITOR_TIPS, useEditorSetup } from "../hooks/useEditorSetup";
 import { useParserSyntax } from "../hooks/useParserSyntax";
 import { submitKeymap, useSubmitKeys } from "../hooks/useSubmitKeys";
-import {
-  draftTime,
-  newNoteDefaults,
-  newNoteDraft,
-  useDraftSaver,
-} from "../noteDrafts";
+import { draftTime, useDraftSaver, useDraftStore } from "../noteDrafts";
 import { useVimKeybindings } from "../preferences";
 import { useResolvedTheme } from "../theme";
 import type { NoteResponse, ParserResponse } from "../types/spares";
@@ -79,10 +74,11 @@ export default function NewNoteForm({
   start?: NewNoteStart;
   ref?: React.Ref<NotePaneHandle>;
 }) {
+  const { newNoteDraft, newNoteDefaults } = useDraftStore();
   // Read once: a draft left from before, else `start`, else the last note's parser and tags
   const [initial] = useState(() => {
     const draft = start ? null : newNoteDraft.load();
-    const defaults = newNoteDefaults.load();
+    const defaults = newNoteDefaults.load()?.value;
     const tags = start?.tags?.join("\n") ?? defaults?.tags ?? "";
     const keywords = start?.keywords?.join("\n") ?? "";
     return {

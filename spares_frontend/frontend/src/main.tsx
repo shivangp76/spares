@@ -15,6 +15,12 @@ startVersionChecks();
 // Opens this device's copy of the collection, if it keeps one, and syncs it
 startLocalCopy().catch(console.error);
 
+// Cookies and credentials are shared by tabs. Drop mounted editors when another tab
+// changes sessions, before the old account can submit work into the new collection.
+window.addEventListener("storage", (event) => {
+  if (event.key === "spares_credentials" || event.key === null) window.location.reload();
+});
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
