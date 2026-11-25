@@ -85,6 +85,13 @@ pub(crate) enum Commands {
     /// server. They are not synced.
     #[command(arg_required_else_help = true)]
     SavedSearch(SavedSearchArgs),
+    /// Show how the goals of `config.toml` (`[goals.<name>]`) are going
+    ///
+    /// For each goal, and each of its parts: how many cards are new, learning and learned, how many
+    /// new cards a day learn the rest by its `learned_by` date, when the pace of the last two weeks
+    /// would, how well its cards would be recalled on the day without another review, and the cards
+    /// learned and reviewed in each of the last 8 weeks.
+    Goal(GoalArgs),
     /// Deploy spares to a VPS as a host, the root of your collection's sync chain, and make this
     /// machine's host sync with it
     ///
@@ -786,6 +793,15 @@ pub(crate) struct RedoArgs {
     /// If true, redo all undo events in the same group as the specified event
     #[arg(short, long, default_value_t = false)]
     pub(crate) redo_group: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct GoalArgs {
+    /// Only the goal with this name
+    pub(crate) name: Option<String>,
+    /// Print the status as JSON
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Args, Debug)]

@@ -62,6 +62,7 @@ Cards are scheduled with [FSRS](https://github.com/open-spaced-repetition/fsrs4a
 - A review's due date is chosen among a few days around the one FSRS proposes, preferring days with fewer cards due, away from the note's other cards, and avoiding easy days (`load_balance`, `disperse_siblings`, `[easy_days]`; see `spares_core::schedulers::placement`).
 - The `[queue]` table sets the order cards are shown in (`QueueConfig`), and `new_cards_daily_limit` and `reviews_daily_limit` how many.
 - `[queue.presets.<name>]` tables give the cards of notes with some tags, or the cards a search finds (`query`), their own limits, orders, steps and sibling burying, as deck presets do in Anki (`QueuePreset`).
+- `[goals.<name>]` tables name a set of cards to know by a date, like an exam's (`Goal`). `spares goal status` and the Statistics page show how each is going, part by part, and with a `retention` a card of the goal is never left due after the date with less recall than that on the day.
 
 Changing these settings only affects cards as they are next rated. To apply them to every card now, run `spares card reschedule`, or click **Reschedule all cards** under Scheduler on the web app's Statistics page. Undoing it (`spares event undo <id>` with the id it prints, or Undo in the web app) restores the cards, not the settings. Cards given a due date by hand, postponed, advanced or moved by a break since their last review keep that due date, unless `reschedule_moved_cards = true`.
 

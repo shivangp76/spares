@@ -34,6 +34,7 @@ use crate::api::card::create_card_tags;
 use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards_logged_as;
 use crate::api::fetch_review_logs_for_replay;
+use crate::api::goal::keep_due_for_goals;
 use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
 use crate::api::note::update_notes;
@@ -1636,6 +1637,9 @@ pub(crate) async fn rate_card_with_config(
         reviewed_at,
     )
     .await?;
+    // A goal's card is not left to be due after the goal's day with too little recall on it.
+    updated_card.due =
+        keep_due_for_goals(db, config, scheduler, &updated_card, reviewed_at).await?;
     // Record the interval the card was actually given, not the one the scheduler proposed before
     // placement moved it. Postponing reads this back to measure how overdue a card is.
     new_review_log.scheduled_time = Some((updated_card.due - reviewed_at).num_seconds());

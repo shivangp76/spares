@@ -2358,7 +2358,7 @@ mod reschedule_tests {
 }
 
 #[cfg(test)]
-mod preset_tests {
+pub(crate) mod preset_tests {
     use chrono::Duration;
     use sqlx::SqlitePool;
 
@@ -2405,7 +2405,7 @@ mod preset_tests {
         bury_new_siblings = true
     "#;
 
-    pub(super) fn parse(toml: &str) -> SparesExternalConfig {
+    pub(crate) fn parse(toml: &str) -> SparesExternalConfig {
         let mut config: SparesExternalConfig = toml_edit::de::from_str(toml).unwrap();
         config.validate().unwrap();
         config
@@ -2421,7 +2421,7 @@ mod preset_tests {
 
     /// One note of one card for each list of tags, in order, the `i`th created `i` hours after
     /// the first, returning their cards.
-    pub(super) async fn tagged_cards(
+    pub(crate) async fn tagged_cards(
         pool: &SqlitePool,
         tags: &[&[&str]],
         now: DateTime<Utc>,

@@ -118,6 +118,7 @@ use crate::handlers::review::get_unmasked_image_occlusion_handler;
 use crate::handlers::review::next_review_card_available_at_handler;
 use crate::handlers::review::queue_positions_handler;
 use crate::handlers::review::submit_study_action_handler;
+use crate::handlers::goal::get_goal_status_handler;
 use crate::handlers::saved_search::delete_saved_search_handler;
 use crate::handlers::saved_search::get_saved_search_handler;
 use crate::handlers::saved_search::list_saved_searches_handler;
@@ -412,6 +413,7 @@ fn review_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             post(get_statistics_graphs_handler),
         )
         .route("/api/statistics/steps", post(get_steps_stats_handler))
+        .route("/api/goals/status", get(get_goal_status_handler))
         .route("/api/review/config", get(get_review_config_handler))
         .route(
             "/api/review/unmasked-image-occlusion",

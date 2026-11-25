@@ -4,6 +4,7 @@ mod card_info;
 mod chart;
 mod deploy;
 mod event;
+mod goal;
 mod graph;
 mod history;
 mod import;
@@ -137,6 +138,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::Keyword(keyword_args) => keyword::handle(keyword_args, &base_url, &client).await,
         Commands::Event(event_args) => event::handle(event_args, &base_url, &client).await,
         Commands::SavedSearch(args) => saved_search::handle(args, &base_url, &client).await,
+        Commands::Goal(args) => goal::handle(args, &base_url, &client).await,
         Commands::Deploy(deploy_args) => deploy::handle(deploy_args, &local_env()?).await,
         Commands::Vcs(vcs_args) => notes_vcs::handle(vcs_args, &base_url, &client).await,
         Commands::Host(_) | Commands::Login(_) | Commands::Logout(_) => {

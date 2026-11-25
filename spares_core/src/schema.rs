@@ -1860,3 +1860,69 @@ pub mod saved_search {
         pub query: String,
     }
 }
+
+pub mod goal {
+    use chrono::NaiveDate;
+    use serde::Deserialize;
+    use serde::Serialize;
+
+    /// How a [goal](crate::config::Goal) is going, as `spares goal status` shows it. See
+    /// [`crate::api::goal::goal_status`].
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub struct GoalStatus {
+        pub name: String,
+        /// The day of the exam
+        pub date: NaiveDate,
+        /// The day every new card should be learned by
+        pub learned_by: NaiveDate,
+        /// The recall to have on the day, if the goal sets one
+        pub retention: Option<f64>,
+        /// Days from today to `learned_by`, 0 once it has come
+        pub days_to_learned_by: i64,
+        /// Days from today to `date`, 0 once it has come
+        pub days_to_date: i64,
+        /// The whole goal first, named after the goal, then each of its parts
+        pub parts: Vec<GoalPartStatus>,
+    }
+
+    /// How the cards of a goal, or of one of its parts, are going. See [`GoalStatus`].
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub struct GoalPartStatus {
+        pub name: String,
+        /// Cards, suspended ones included
+        pub cards: u32,
+        /// Cards never studied (or forgotten), not suspended
+        pub new: u32,
+        /// Cards in their learning or relearning steps, not suspended
+        pub learning: u32,
+        /// Cards that graduated from their steps, not suspended
+        pub review: u32,
+        pub suspended: u32,
+        /// Cards first studied in the last [`PACE_DAYS`](crate::api::goal::PACE_DAYS) days
+        pub learned_recently: u32,
+        /// New cards a day that learn the rest by `learned_by`, or `None` once it has come
+        pub new_per_day_needed: Option<f64>,
+        /// When the new cards would all be learned at the pace of the last
+        /// [`PACE_DAYS`](crate::api::goal::PACE_DAYS) days, or `None` with no pace or none left
+        pub projected_learned_by: Option<NaiveDate>,
+        /// The average recall predicted on the goal's day of the studied cards, if none of them
+        /// were reviewed again, or `None` if there are none (or no scheduler has a forgetting curve)
+        pub mean_recall_on_date: Option<f64>,
+        /// Studied cards whose recall on the day would be below the goal's retention (0.9 if it
+        /// has none) without another review
+        pub below_retention_on_date: u32,
+        /// The last weeks, oldest first
+        pub weeks: Vec<GoalWeek>,
+    }
+
+    /// One week of a [`GoalPartStatus`].
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub struct GoalWeek {
+        /// The first day of the week
+        pub start: NaiveDate,
+        /// Cards first studied by the end of the week
+        pub learned: u32,
+        /// Reviews of the cards during the week, crams left out
+        pub reviews: u32,
+    }
+}

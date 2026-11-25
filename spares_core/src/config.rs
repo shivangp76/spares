@@ -1142,6 +1142,122 @@ pub struct SparesExternalConfig {
     /// text is not read. For example, `say --voice={voice} {text}` on macOS, or
     /// `espeak-ng -v {lang} {text}`.
     pub tts_command: Option<String>,
+    /// Exams, or other dates by which a set of cards should be known, by name:
+    /// `[goals.<name>]`. Empty by default. See [`Goal`].
+    pub goals: IndexMap<String, Goal>,
+}
+
+/// A `[goals.<name>]` table of `config.toml`: a set of cards to know by a date, like an exam's.
+///
+/// ```toml
+/// [goals.may-exam]
+/// date = "2027-05-01"
+/// learned_by = "2027-04-01"
+/// retention = 0.95
+/// query = 'tag="probability:grad" or tag=spdes or prerequisite_of=(tag=spdes via=(tag=functional-analysis))'
+///
+/// [goals.may-exam.parts]
+/// probability = 'tag="probability:grad"'
+/// spdes = "tag=spdes"
+/// ```
+///
+/// A goal does two things:
+///
+/// - `spares goal status` (and the web app's statistics) report on it: for the goal and each of
+///   its [`Self::parts`], how many cards are new, learning and learned, how many new cards a day
+///   learn the rest by [`Self::learned_by`], when the pace of the last two weeks would, the cards
+///   learned and reviewed week by week, and how many cards would be below the
+///   [`Self::retention`] on the day if not reviewed again.
+/// - With a [`Self::retention`], rating one of its cards before [`Self::date`] keeps the card
+///   from being due after it with less than that recall on the day. See [`Self::retention`].
+///
+/// Once the date has come, the goal changes nothing, and can be deleted.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Goal {
+    /// The day of the exam, as `2027-05-01` (quoted or not). The goal ends when that day starts
+    /// (at [`SparesExternalConfig::day_starts_at`]).
+    #[serde(deserialize_with = "toml_date::deserialize")]
+    pub date: NaiveDate,
+    /// A search of the goal's cards, as `spares card search` runs. It can't sort, limit, or use
+    /// `c.cloze`.
+    pub query: String,
+    /// The day by which every new card should be learned, like [`Self::date`], so the weeks
+    /// after it are for reviewing. Defaults to [`Self::date`]. The pace `spares goal status` asks
+    /// for is worked out to it.
+    #[serde(default, deserialize_with = "toml_date::deserialize_option")]
+    pub learned_by: Option<NaiveDate>,
+    /// The recall to have on [`Self::date`], from 0 to 1, as in `0.95`. Unset by default, so the
+    /// goal changes no due date.
+    ///
+    /// When a card of the goal is rated before the date, and its next due date is after the date,
+    /// spares checks how likely it would be recalled on the day without another review. If it is
+    /// less than this, the card is instead due when its recall falls to this, which is before the
+    /// date, so it is reviewed once more. Cards that would still be recalled well enough are left
+    /// alone, so this adds only the reviews the date needs.
+    ///
+    /// It applies when a card is rated, like load balancing: rescheduling from the review log
+    /// (`spares card reschedule`, a sync's replay) gives the scheduler's own due dates.
+    #[serde(default)]
+    pub retention: Option<f64>,
+    /// Parts of the goal reported on separately, by name, each a search, as in
+    /// `spdes = "tag=spdes"`. A part's cards are the goal's cards that its search also finds.
+    /// Empty by default.
+    #[serde(default)]
+    pub parts: IndexMap<String, String>,
+    /// [`Self::query`] compiled to the SQL of its card ids, by [`SparesExternalConfig::validate`].
+    #[serde(skip)]
+    pub(crate) query_sql: String,
+    /// [`Self::parts`] compiled likewise, in order.
+    #[serde(skip)]
+    pub(crate) part_sqls: Vec<String>,
+}
+
+/// A date in `config.toml` written either as a TOML date, `2027-05-01`, or as a string,
+/// `"2027-05-01"`.
+mod toml_date {
+    use chrono::NaiveDate;
+    use serde::Deserialize;
+    use serde::Deserializer;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        Text(String),
+        Toml(toml_edit::Datetime),
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<NaiveDate, D::Error> {
+        let text = match Written::deserialize(deserializer)? {
+            Written::Text(text) => text,
+            Written::Toml(datetime) if datetime.time.is_none() && datetime.offset.is_none() => {
+                datetime.to_string()
+            }
+            Written::Toml(datetime) => {
+                return Err(serde::de::Error::custom(format!(
+                    "`{datetime}` must be a date alone, as in 2027-05-01"
+                )));
+            }
+        };
+        NaiveDate::parse_from_str(&text, "%Y-%m-%d").map_err(|e| {
+            serde::de::Error::custom(format!("`{text}` is not a date like 2027-05-01: {e}"))
+        })
+    }
+
+    pub(super) fn deserialize_option<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<NaiveDate>, D::Error> {
+        deserialize(deserializer).map(Some)
+    }
+}
+
+impl Goal {
+    /// [`Self::learned_by`], or [`Self::date`].
+    pub fn learned_by(&self) -> NaiveDate {
+        self.learned_by.unwrap_or(self.date)
+    }
 }
 
 impl Default for SparesExternalConfig {
@@ -1181,11 +1297,50 @@ impl Default for SparesExternalConfig {
             }
             .to_string(),
             tts_command: None,
+            goals: IndexMap::new(),
         }
     }
 }
 
 impl SparesExternalConfig {
+    /// Checks [`Self::goals`], and compiles their queries.
+    fn validate_goals(&mut self) -> Result<(), String> {
+        let compile_config = self.clone();
+        let compile = |key: &str, query: &str| {
+            if query.trim().is_empty() {
+                return Err(format!("`{key}` must not be empty."));
+            }
+            crate::search::evaluator::Evaluator::new(query)
+                .card_ids_sql(&compile_config)
+                .map_err(|e| format!("`{key}`: {e}"))
+        };
+        for (name, goal) in &mut self.goals {
+            let key = |setting: &str| format!("goals.{name}.{setting}");
+            goal.query_sql = compile(&key("query"), &goal.query)?;
+            goal.part_sqls = goal
+                .parts
+                .iter()
+                .map(|(part, query)| compile(&key(&format!("parts.{part}")), query))
+                .collect::<Result<_, _>>()?;
+            if goal.learned_by() > goal.date {
+                return Err(format!(
+                    "`{}` must not be after `{}`.",
+                    key("learned_by"),
+                    key("date")
+                ));
+            }
+            if let Some(retention) = goal.retention
+                && !(retention > 0.0 && retention < 1.0)
+            {
+                return Err(format!(
+                    "`{}` must be between 0 and 1, as in 0.95, not {retention}.",
+                    key("retention")
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Checks [`QueueConfig::presets`], and compiles their queries.
     fn validate_presets(&mut self) -> Result<(), String> {
         // A preset's query is compiled with the config it is in, for the fields that read it.
@@ -1239,6 +1394,7 @@ impl SparesExternalConfig {
             Zone::parse(Some(name), self.day_starts_at).map_err(|e| format!("`time_zone`: {e}"))?;
         }
         self.validate_presets()?;
+        self.validate_goals()?;
         if self
             .maximum_answer_time
             .is_some_and(|maximum| maximum <= Duration::zero())
