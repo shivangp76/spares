@@ -1,4 +1,4 @@
-//! Keep the fixture directory to compare revisions against identical input.
+//! Set SPARES_REVIEW_BENCH_FIXTURE to a new SQLite file, then reuse it to compare revisions.
 #[path = "common/statistics_fixture.rs"]
 mod fixture;
 
@@ -52,6 +52,7 @@ fn main() {
             .execute(&db)
             .await
             .unwrap();
+        let parsers = get_all_parsers();
         for narrow in [false, true] {
             for _ in 0..10 {
                 let next = || {
@@ -62,7 +63,7 @@ fn main() {
                                 .then(|| GetReviewCardFilterRequest::Query("c.id<201".into())),
                         },
                         fixture::now(),
-                        &PARSERS,
+                        &parsers,
                     )
                 };
                 let start = Instant::now();
@@ -102,5 +103,3 @@ fn main() {
         }
     });
 }
-static PARSERS: std::sync::LazyLock<Vec<fn() -> Box<dyn spares_core::parsers::Parseable>>> =
-    std::sync::LazyLock::new(get_all_parsers);

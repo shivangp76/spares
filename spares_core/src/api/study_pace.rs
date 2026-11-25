@@ -4,6 +4,7 @@
 //! [`get_cards_left_by_state_and_time_estimate`]: crate::api::review::get_cards_left_by_state_and_time_estimate
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use sqlx::AssertSqlSafe;
 use sqlx::sqlite::SqlitePool;
@@ -147,15 +148,47 @@ impl StudyPaces {
         cards: &str,
         zone: Zone,
         maximum_answer_seconds: Option<i64>,
+        needed: &HashSet<(Option<usize>, StateId)>,
     ) -> Result<Self, Error> {
-        let (first, last): (Option<i64>, Option<i64>) =
-            sqlx::query_as(r"SELECT MIN(reviewed_at), MAX(reviewed_at) FROM review_log")
-                .fetch_one(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })?;
-        let day = zone
-            .clock(first.unwrap_or_default(), last.unwrap_or_default())
-            .day("rl.reviewed_at");
+        if needed.is_empty() {
+            return Ok(Self::default());
+        }
+        // Independent indexed endpoints. A combined MIN/MAX visits every review.
+        let (first, last): (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT (SELECT MIN(reviewed_at) FROM review_log), (SELECT MAX(reviewed_at) FROM review_log)"
+        ).fetch_one(db).await.map_err(|source| Error::Sqlx {source})?;
+        let (Some(first), Some(last)) = (first, last) else {
+            return Ok(Self::default());
+        };
+        // Once every required group has 200 complete card-days, older days cannot affect its pace.
+        // Sparse histories and rare presets retain the full-history calculation.
+        if let Some(start) = chrono::DateTime::from_timestamp(last, 0)
+            .and_then(|at| zone.date(at).checked_sub_days(chrono::Days::new(14)))
+            .map(|date| zone.start_of(date).timestamp())
+            .filter(|&start| start > first)
+        {
+            let (recent, complete) =
+                Self::in_range(db, cards, zone, maximum_answer_seconds, start, last).await?;
+            if needed.is_subset(&complete) {
+                return Ok(recent);
+            }
+        }
+        Ok(
+            Self::in_range(db, cards, zone, maximum_answer_seconds, first, last)
+                .await?
+                .0,
+        )
+    }
+
+    async fn in_range(
+        db: &SqlitePool,
+        cards: &str,
+        zone: Zone,
+        maximum_answer_seconds: Option<i64>,
+        first: i64,
+        last: i64,
+    ) -> Result<(Self, HashSet<(Option<usize>, StateId)>), Error> {
+        let day = zone.clock(first, last).day("rl.reviewed_at");
         let seconds = pace_answer_seconds("rl", maximum_answer_seconds);
         let review = ReviewLogKind::Review as u8;
         // The state and preset are the same for every review of a card's day
@@ -166,7 +199,7 @@ impl StudyPaces {
                         PARTITION BY rl.card_id, {day} ORDER BY rl.reviewed_at
                     ) AS state
                 FROM review_log rl
-                WHERE rl.kind = {review} AND rl.card_id IS NOT NULL
+                WHERE rl.kind = {review} AND rl.card_id IS NOT NULL AND rl.reviewed_at >= {first}
             ),
             card_days AS (
                 SELECT c.preset, r.state, r.day, COUNT(*) AS reviews, SUM(r.seconds) AS seconds
@@ -191,7 +224,11 @@ impl StudyPaces {
                 .await
                 .map_err(|e| Error::Sqlx { source: e })?;
         let mut paces = Self::default();
+        let mut complete = HashSet::new();
         for (of_preset, preset, state, days, reviews, seconds) in rows {
+            if of_preset && days >= RECENT_CARD_DAYS {
+                complete.insert((preset_index(preset), state));
+            }
             let pace = StudyPace {
                 seconds_per_review: seconds / f64::from(reviews),
                 reviews_per_day: f64::from(reviews) / f64::from(days),
@@ -202,7 +239,7 @@ impl StudyPaces {
                 paces.by_preset.insert((preset_index(preset), state), pace);
             }
         }
-        Ok(paces)
+        Ok((paces, complete))
     }
 
     /// The pace of cards of `preset` in `state`: the preset's own, else that of every card in
@@ -306,6 +343,26 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[sqlx::test]
+    async fn sparse_preset_includes_older_card_days(pool: SqlitePool) {
+        let now = local_midday();
+        let ids = cards(&pool, &[&["math"], &[]], now).await;
+        for days in 20..32 {
+            review(&pool, ids[0], now - Duration::days(days), 2, 65).await;
+        }
+        review(&pool, ids[1], now, 2, 1).await;
+        let paces = StudyPaces::load(
+            &pool,
+            &cards_with_preset(&math()),
+            Zone::parse(Some("Europe/Berlin"), 4).unwrap(),
+            None,
+            &HashSet::from([(Some(0), 2)]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(paces.of(Some(0), 2).seconds_per_review, 65.0);
     }
 
     /// The estimate of the cards due by `now`, with `presets`.
