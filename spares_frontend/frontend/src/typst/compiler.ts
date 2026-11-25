@@ -307,7 +307,7 @@ export function precompileTypst(
   const key = resultKey(source, inputs);
   const existing = precompiled.get(key);
   if (existing) return existing;
-  const result = enqueue(() => compileNow(source, inputs));
+  const result = enqueue(() => compileNow(source, inputs), true);
   precompiled.set(key, result);
   // A failure, e.g. without a connection, is not kept, so showing the source compiles it again
   result.catch(() => {

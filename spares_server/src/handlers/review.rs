@@ -22,6 +22,7 @@ use spares_core::config::read_external_config;
 use spares_core::model::CardId;
 use spares_core::parsers::get_all_parsers;
 use spares_core::schema::review::GetReviewCardRequest;
+use spares_core::schema::review::GetReviewCardResponse;
 use spares_core::schema::review::QueuePositionRequest;
 use spares_core::schema::review::ReviewConfigResponse;
 use spares_core::schema::review::ReviewHistoryRequest;
@@ -35,13 +36,88 @@ use spares_core::schema::statistics::StepsStatsRequest;
 use crate::Coll;
 use crate::handlers::error_to_response;
 
+#[derive(serde::Deserialize)]
+pub(crate) struct ReviewRequest {
+    #[serde(flatten)]
+    selection: GetReviewCardRequest,
+    #[cfg(not(target_family = "wasm"))]
+    #[serde(default)]
+    include_front_html: bool,
+}
+
+#[derive(serde::Serialize)]
+struct WebReviewCard {
+    #[serde(flatten)]
+    card: GetReviewCardResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    front_html: Option<String>,
+}
+
+impl ReviewRequest {
+    async fn select(
+        self,
+        data: &spares_core::collection::Collection,
+    ) -> Result<Option<WebReviewCard>, spares_core::Error> {
+        let Some(card) =
+            get_review_card(&data.db, self.selection, Utc::now(), &get_all_parsers()).await?
+        else {
+            return Ok(None);
+        };
+        // Device copies already have the rendered files in browser storage.
+        #[cfg(target_family = "wasm")]
+        let front_html = None;
+        #[cfg(not(target_family = "wasm"))]
+        let front_html = if self.include_front_html
+            && let Some(path) = &card.card_front_web_path
+        {
+            small_front_html(&data.paths.files, path).await
+        } else {
+            None
+        };
+        Ok(Some(WebReviewCard { card, front_html }))
+    }
+}
+
+/// Send small HTML fronts with the selection so displaying them takes one round trip.
+/// Large or unreadable files go through the usual file viewer.
+#[cfg(not(target_family = "wasm"))]
+async fn small_front_html(files: &std::path::Path, path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    use std::path::Component;
+
+    const MAX_BYTES: u64 = 64 * 1024;
+    if !path.components().all(|c| matches!(c, Component::Normal(_))) {
+        return None;
+    }
+    let path = files.join(path);
+    let files = files.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let path = path.canonicalize().ok()?;
+        if !path.starts_with(files.canonicalize().ok()?) {
+            return None;
+        }
+        let metadata = path.metadata().ok()?;
+        if !metadata.is_file() || metadata.len() > MAX_BYTES {
+            return None;
+        }
+        let mut html = String::with_capacity(metadata.len() as usize);
+        std::fs::File::open(path)
+            .ok()?
+            .take(MAX_BYTES + 1)
+            .read_to_string(&mut html)
+            .ok()?;
+        (html.len() as u64 <= MAX_BYTES).then_some(html)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 pub(crate) async fn get_review_card_handler(
     Coll(data): Coll,
-    Json(body): Json<GetReviewCardRequest>,
+    Json(body): Json<ReviewRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let review_card_response = get_review_card(&data.db, body, Utc::now(), &get_all_parsers())
-        .await
-        .map_err(error_to_response)?;
+    let review_card_response = body.select(&data).await.map_err(error_to_response)?;
     Ok(Json(review_card_response))
 }
 
@@ -79,12 +155,12 @@ pub(crate) async fn queue_positions_handler(
 pub(crate) struct SubmitRequest {
     #[serde(flatten)]
     action: SubmitStudyActionRequest,
-    next_review: Option<GetReviewCardRequest>,
+    next_review: Option<ReviewRequest>,
 }
 
 #[derive(serde::Serialize)]
 struct NextReview {
-    card: Option<spares_core::schema::review::GetReviewCardResponse>,
+    card: Option<WebReviewCard>,
 }
 
 #[derive(serde::Serialize)]
@@ -105,7 +181,7 @@ pub(crate) async fn submit_study_action_handler(
     // The rating has committed. If selecting its successor fails, the client
     // can retry the read independently and still has the event ID for undo.
     let next_review = if let Some(request) = body.next_review {
-        match get_review_card(&data.db, request, Utc::now(), &get_all_parsers()).await {
+        match request.select(&data).await {
             Ok(card) => Some(NextReview { card }),
             Err(error) => {
                 log::warn!("Failed to fetch the next card after a study action: {error}");

@@ -23,6 +23,8 @@ export interface GetReviewCardResponse {
   card_back_rendered_path: { CardBack: string } | { Note: string };
   // HTML shown instead of the rendered files. Present iff both sides have it (Markdown)
   card_front_web_path?: string;
+  /** Rendered HTML included with a review selection when the host can send it inline. */
+  front_html?: string;
   card_back_web_path?: { CardBack: string } | { Note: string };
   card_front_raw_path: string;
   card_back_raw_path: { CardBack: string } | { Note: string };
@@ -140,7 +142,7 @@ export type StudyAction =
 export interface SubmitStudyActionRequest {
   scheduler_name: string;
   action: StudyAction;
-  next_review?: { filter?: ReviewFilter };
+  next_review?: { filter?: ReviewFilter; include_front_html?: boolean };
 }
 
 export interface SubmitStudyActionResponse {

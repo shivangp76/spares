@@ -97,7 +97,7 @@ export default function HtmlViewer({
     const loadedFor = current.key;
     const onLoad = () => {
       const doc = iframe.contentDocument;
-      if (!doc) return;
+      if (!doc?.head || doc.URL !== "about:srcdoc" || observer) return;
       applyTheme(doc, themeRef.current, zoomRef.current);
       doc.addEventListener("click", (e) =>
         onClick(e, onOpenNoteRef.current, onPlayAudioRef.current),
@@ -166,6 +166,7 @@ export default function HtmlViewer({
   if (current === null) return <Skeleton block={160} lines={0} />;
   return (
     <iframe
+      key={current.key}
       ref={iframeRef}
       title="Rendered card"
       sandbox="allow-same-origin"

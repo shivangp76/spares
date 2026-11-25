@@ -19,6 +19,10 @@ Each run performed ten fetch–rate–fetch cycles per filter with a fixed clock
 
 The browser comparison isolates the extra request using the same optimized host and production frontend for both flows. Headless Chromium rated 24 cards in a disposable collection with 40 Markdown cards. The benchmark alternated whether the rating requested its successor and added 40 ms before forwarding each rating or selection request. It timed from the rating click until the next distinct front's HTML appeared in its iframe on an animation frame. It verified exactly one rating per transition and that separate selection requests went from one to zero. Network latency, document size, and rendering engine affect the visible gain.
 
+### Rating to visible card
+
+The current browser benchmark also delays the rendered front's file request by 40 ms and checks the loading page on each animation frame until the new front is visible. On the 40-card Markdown fixture, sending the front HTML with the rating response reduced the median from 111.45 ms to 61.05 ms over eight interleaved samples per flow. The median across six more inline transitions with no added latency was 26.80 ms. The host includes HTML fronts up to 64 KiB. Larger fronts use the file request.
+
 ## Browsing and offline files
 
 Each native run made twelve calls per workload. The table uses calls 2–12 to show repeated use.

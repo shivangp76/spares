@@ -640,7 +640,7 @@ export async function postReview(
 ): Promise<GetReviewCardResponse | null> {
   return apiFetch("Review fetch", "/api/review", {
     method: "POST",
-    body: JSON.stringify(filter ? { filter } : {}),
+    body: JSON.stringify({ filter, include_front_html: true }),
   });
 }
 

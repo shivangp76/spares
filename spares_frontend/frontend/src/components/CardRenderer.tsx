@@ -21,6 +21,8 @@ interface Props {
   source?: string;
   /** HTML for web clients, shown instead of the rendered file at `path`. */
   webPath?: string;
+  /** The contents of webPath, when supplied with the review card. */
+  frontHtml?: string;
   /** The card's Markdown source, on a device, shown while the server hasn't rendered its note's latest change. */
   deviceSource?: string;
   /** The card's note, for telling whether the server has rendered its latest change (see `PendingRender`). */
@@ -43,6 +45,7 @@ export default function CardRenderer({
   path,
   source,
   webPath,
+  frontHtml,
   deviceSource,
   noteId,
   onOpenNote,
@@ -75,6 +78,7 @@ export default function CardRenderer({
     webPath !== undefined ? (
       <HtmlViewer
         path={webPath}
+        html={frontHtml}
         version={version}
         onOpenNote={onOpenNote}
         onReady={onReady}
@@ -244,10 +248,6 @@ function PendingRender({
   }, [noteId, path]);
 
   const current = shown?.path === path ? shown : null;
-  const showsText = current !== null && !("rendered" in current);
-  useEffect(() => {
-    if (showsText) onReady?.();
-  }, [showsText, onReady]);
   const markdown =
     current && "note" in current && current.note.parser_name === "markdown"
       ? current.note.data
@@ -257,6 +257,11 @@ function PendingRender({
     [markdown],
   );
   const html = useDeviceImages(parsed) ?? parsed;
+  const showsFallback =
+    current !== null && !("rendered" in current) && html === null;
+  useEffect(() => {
+    if (showsFallback) onReady?.();
+  }, [showsFallback, onReady]);
 
   if (current === null) return <Skeleton block={160} lines={0} />;
   if ("rendered" in current) {
@@ -281,7 +286,7 @@ function PendingRender({
         this is the note&apos;s text.
       </p>
       {html !== null ? (
-        <HtmlViewer path={path} html={html} />
+        <HtmlViewer path={path} html={html} onReady={onReady} />
       ) : (
         <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
           {current.note.data}

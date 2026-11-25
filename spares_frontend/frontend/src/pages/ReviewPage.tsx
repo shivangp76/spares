@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -126,7 +127,9 @@ function formatWait(ms: number): string {
 
 type Phase =
   | "landing"
+  | "submitting"
   | "loading"
+  | "rendering"
   | "front"
   | "back"
   | "waiting"
@@ -410,6 +413,26 @@ export default function ReviewPage() {
   const { stateName } = useCardStates();
 
   const [phase, setPhase] = useState<Phase>("landing");
+  const loadingCard =
+    phase === "submitting" || phase === "loading" || phase === "rendering";
+  const loadingPaint = useRef<Promise<void> | null>(null);
+  // Give even an immediately ready card one loading frame. Fetch and render throughout.
+  useLayoutEffect(() => {
+    if (!loadingCard) return;
+    let frame: number;
+    let afterFrame: ReturnType<typeof setTimeout> | undefined;
+    loadingPaint.current = new Promise<void>((resolve) => {
+      frame = requestAnimationFrame(() => {
+        // The next task runs after this frame's rendering steps.
+        afterFrame = setTimeout(resolve, 0);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(afterFrame);
+      loadingPaint.current = null;
+    };
+  }, [loadingCard]);
   const [card, setCard] = useState<GetReviewCardResponse | null>(null);
   // Bumped when the card is refreshed in place, since its rendered files keep their paths when the
   // note is rendered again
@@ -593,6 +616,21 @@ export default function ReviewPage() {
       }),
     [],
   );
+  useLayoutEffect(() => {
+    if (phase !== "rendering" || !frontRendered) return;
+    let current = true;
+    loadingPaint.current?.then(() => {
+      if (!current) return;
+      recallStart.current = Date.now();
+      recallDuration.current = null;
+      rateDuration.current = null;
+      syncStopwatch();
+      setPhase("front");
+    });
+    return () => {
+      current = false;
+    };
+  }, [phase, frontRendered, syncStopwatch]);
 
   // Phones collapse the less common actions so the card and ratings get the screen
   const isNarrow = useMediaQuery("(max-width: 640px)");
@@ -607,7 +645,7 @@ export default function ReviewPage() {
   // An undo sent in the background, resolving to whether it went through. Actions wait for it, so
   // that they don't act on what it hasn't reverted yet.
   const pendingUndo = useRef<Promise<boolean> | null>(null);
-  // A rating being sent, while its card is still shown
+  // A rating being sent while the review shows its loading page
   const pendingRating = useRef<Promise<void> | null>(null);
   // Shortcuts pressed meanwhile, to run once it is recorded
   const queuedKeys = useRef<string[]>([]);
@@ -680,11 +718,8 @@ export default function ReviewPage() {
         }
         setCard(next);
         setSessionShowedCard(true);
-        recallStart.current = Date.now();
-        recallDuration.current = null;
-        rateDuration.current = null;
-        syncStopwatch();
-        setPhase("front");
+        setFrontRendered(!!next.cli);
+        setPhase("rendering");
       } catch (e) {
         if (generation !== loadGeneration.current) return;
         setError(errorMessage(e));
@@ -696,7 +731,7 @@ export default function ReviewPage() {
         setPhase("error");
       }
     },
-    [syncStopwatch],
+    [],
   );
 
   // Autoplays the clips and text each side shows, as the card is shown and flipped. Replay plays
@@ -818,6 +853,7 @@ export default function ReviewPage() {
   }, [startParam]);
 
   async function startReview(mode: FilterMode, rawInput: string) {
+    setPhase("loading");
     setError(null);
     setQueryError(null);
     setSessionInfo(null);
@@ -931,6 +967,7 @@ export default function ReviewPage() {
     const recallMs = recallDuration.current;
     const recallSeconds = msToSeconds(recallMs);
     const rateSeconds = msToSeconds(rateMs);
+    setPhase("submitting");
     if (!(await undoWentThrough())) return;
     try {
       const generation = loadGeneration.current;
@@ -938,7 +975,9 @@ export default function ReviewPage() {
         config?.timebox && Date.now() - timebox.current.start >= config.timebox * 1000;
       const res = await submitAction({
         scheduler_name: credentials.schedulerName,
-        next_review: timeboxDue ? undefined : { filter: activeFilter },
+        next_review: timeboxDue
+          ? undefined
+          : { filter: activeFilter, include_front_html: true },
         action: {
           Rate: {
             card_id: card.card_id,
@@ -1007,6 +1046,7 @@ export default function ReviewPage() {
     message?: string,
   ) {
     if (!card) return;
+    setPhase("submitting");
     if (!(await undoWentThrough())) return;
     try {
       lastEventId.current = await action();
@@ -1016,6 +1056,7 @@ export default function ReviewPage() {
       loadCard(activeFilter);
     } catch (e) {
       setStatus(errorMessage(e));
+      setPhase(phase);
     }
   }
 
@@ -1460,16 +1501,13 @@ export default function ReviewPage() {
     };
   }, [onLanding, filterMode, filterInput]);
 
-  // Likewise the card likely to come next while this one is shown, once its back has had time to
-  // compile first, so rating it shows the next card at once
-  const shownCardId = frontRendered ? card?.card_id : undefined;
+  // Start the next lookup as soon as this front is visible. The viewer's own compiles
+  // take priority over speculative ones.
+  const reviewing = phase === "front" || phase === "back";
+  const shownCardId = reviewing && frontRendered ? card?.card_id : undefined;
   useEffect(() => {
     if (shownCardId === undefined) return;
-    const timer = setTimeout(
-      () => prepareNextCardQuietly(activeFilter ?? null, shownCardId),
-      PRECOMPILE_DELAY_MS,
-    );
-    return () => clearTimeout(timer);
+    prepareNextCardQuietly(activeFilter ?? null, shownCardId);
   }, [shownCardId, activeFilter]);
 
   // A Markdown card of a note changed on this device: its back is converted with pandoc while the
@@ -1484,7 +1522,6 @@ export default function ReviewPage() {
   }, [deviceBack]);
 
   // Load the note editor while a card is shown, so opening the note isn't delayed by it
-  const reviewing = phase === "front" || phase === "back";
   useEffect(() => {
     if (reviewing) loadNoteDetail().catch(console.error);
   }, [reviewing]);
@@ -1826,6 +1863,7 @@ export default function ReviewPage() {
     if (
       key === "u" &&
       (phase === "loading" ||
+        phase === "rendering" ||
         phase === "waiting" ||
         phase === "timebox" ||
         phase === "done") &&
@@ -1876,6 +1914,11 @@ export default function ReviewPage() {
   // sees what the one before did.
   useEffect(() => {
     if (pendingRating.current) return;
+    if (
+      (phase === "loading" || phase === "rendering") &&
+      queuedKeys.current[0] !== "u"
+    )
+      return;
     let key;
     while ((key = queuedKeys.current.shift()) !== undefined)
       if (runKey(key)) return;
@@ -1917,7 +1960,6 @@ export default function ReviewPage() {
       )
         e.preventDefault();
       if (pendingRating.current) {
-        // Not on the card being rated, which is still shown
         if (key === "Space") e.preventDefault();
         queuedKeys.current.push(key);
         return;
@@ -2354,7 +2396,7 @@ export default function ReviewPage() {
         </div>
       )}
 
-      {phase === "loading" && <Skeleton block={220} lines={2} />}
+      {loadingCard && <Skeleton immediate block={220} lines={2} />}
 
       {phase === "waiting" && waitingUntil !== null && (
         <div
@@ -2478,8 +2520,11 @@ export default function ReviewPage() {
         </div>
       )}
 
-      {(phase === "front" || phase === "back") && card && (
-        <>
+      {(phase === "rendering" || reviewing) && card && (
+        <div
+          style={phase === "rendering" ? hiddenSide : undefined}
+          inert={phase === "rendering"}
+        >
           {/* What happened to the previous card, above the card so it is seen without scrolling.
               On phones it is one line, which a tap unfolds, so the card is not pushed down. */}
           {status && (
@@ -2677,6 +2722,7 @@ export default function ReviewPage() {
                     deviceSource={card.device_sources?.card_front}
                     noteId={card.note_id}
                     webPath={card.card_front_web_path}
+                    frontHtml={card.front_html}
                     version={cardVersion}
                     onOpenNote={openNote}
                     onReady={onFrontRendered}
@@ -3322,7 +3368,7 @@ export default function ReviewPage() {
               </details>
             )}
           </div>
-        </>
+        </div>
       )}
     </div>
   );
