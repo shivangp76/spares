@@ -127,7 +127,6 @@ pub struct CardSnapshot {
     pub back_type: BackType,
     pub due: DateTime<Utc>,
     pub stability: f64,
-    #[serde(default)]
     pub stability_fast: f64,
     pub difficulty: f64,
     pub desired_retention: f64,

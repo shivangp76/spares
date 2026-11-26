@@ -598,7 +598,6 @@ pub mod note {
         pub searched_keyword: String,
         pub linked_note_id: Option<NoteId>,
         pub matched_keyword: Option<String>,
-        #[serde(default)]
         pub relation: LinkRelation,
     }
 

@@ -621,15 +621,16 @@ mod tests {
         );
     }
 
-    /// The backfill gives every stored card a fast stability equal to its stability: card rows,
-    /// sync bases and the cards undo events keep, wherever they are in the payload. A card's
-    /// changes (`{"before", "after"}`) aren't a card, so they aren't touched.
+    /// On a database the old migrations made, the baseline gives every stored card a fast
+    /// stability equal to its stability: card rows, sync bases and the cards undo events keep,
+    /// wherever they are in the payload. A card's changes (`{"before", "after"}`) aren't a card,
+    /// so they aren't touched.
     #[sqlx::test(migrations = false)]
-    async fn migration_backfill_stability_fast_writes_it_into_every_card(pool: SqlitePool) {
+    async fn migration_baseline_writes_a_fast_stability_into_every_card(pool: SqlitePool) {
         use serde_json::json;
 
         let migrator = crate::collection::migrator();
-        migrator.run_to(20_261_126_200_000, &pool).await.unwrap();
+        migrator.run(&pool).await.unwrap();
         let card = |id: i64, stability: f64| {
             json!({"id": id, "note_id": 1, "order": 1, "back_type": 0, "created_at": 0,
                    "updated_at": 0, "due": 0, "stability": stability, "difficulty": 5.0,
@@ -668,6 +669,7 @@ mod tests {
                 .unwrap();
         }
         drop(conn);
+        pretend_old_migrations_ran(&pool, &[LAST_OLD_MIGRATION]).await;
 
         migrator.run(&pool).await.unwrap();
 
@@ -702,28 +704,47 @@ mod tests {
         assert_eq!(payloads[2], events[2]);
     }
 
-    /// The strict schema keeps every row (and the rowids of the tables without an integer key),
-    /// and leaves every table STRICT, without defaults, refusing a value of the wrong type.
+    /// On a database the old migrations made, whose tables had defaults and loose types, the
+    /// baseline keeps every row (and the rowids of the tables without an integer key), and leaves
+    /// every table STRICT, without defaults, refusing a value of the wrong type.
     #[sqlx::test(migrations = false)]
-    async fn migration_strict_schema_keeps_the_rows_and_checks_types(pool: SqlitePool) {
+    async fn migration_baseline_makes_old_tables_strict_and_keeps_their_rows(pool: SqlitePool) {
         let migrator = crate::collection::migrator();
-        migrator.run_to(20_261_126_210_000, &pool).await.unwrap();
+        migrator.run(&pool).await.unwrap();
+        // Two tables as the old migrations made them, filled relying on their defaults
         sqlx::raw_sql(
-            r#"INSERT INTO parser (id, name) VALUES (1, 'markdown');
-               INSERT INTO note (id, data, custom_data, parser_id) VALUES (1, 'a', '{}', 1);
-               INSERT INTO card (id, note_id, "order", back_type, due, stability, stability_fast,
-                   difficulty, desired_retention, state, custom_data)
-               VALUES (1, 1, 1, 0, 100, 2.5, 2.5, 5, 0.9, 2, '{}');
+            r"PRAGMA foreign_keys = OFF;
+               DROP TABLE note_keyword;
+               CREATE TABLE note_keyword (
+                   note_id INTEGER NOT NULL,
+                   keyword VARCHAR NOT NULL,
+                   embedded INTEGER NOT NULL CHECK (embedded IN (0, 1)),
+                   FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE
+               );
+               DROP TABLE event;
+               CREATE TABLE event (
+                   id INTEGER PRIMARY KEY NOT NULL,
+                   kind STRING NOT NULL,
+                   created_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
+                   group_id INTEGER,
+                   reverts_event_id INTEGER UNIQUE,
+                   payload TEXT NOT NULL,
+                   FOREIGN KEY (reverts_event_id) REFERENCES event(id)
+               );
+               INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1);
+               INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn)
+               VALUES (1, 'a', 0, 0, '{}', 1, -1);
                INSERT INTO note_keyword (rowid, note_id, keyword, embedded) VALUES (7, 1, 'k', 0);
-               INSERT INTO event (id, kind, payload) VALUES (1, 6, '{}');"#,
+               INSERT INTO event (id, kind, payload) VALUES (1, 6, '{}');
+               PRAGMA foreign_keys = ON;",
         )
         .execute(&pool)
         .await
         .unwrap();
-        let rows = async || -> (i64, f64, i64, i64, String) {
+        let rows = async || -> (i64, String, i64, i64, String) {
             sqlx::query_as(
-                "SELECT (SELECT due FROM card), (SELECT stability FROM card),
-                        (SELECT rowid FROM note_keyword), (SELECT kind FROM event),
+                "SELECT (SELECT rowid FROM note_keyword), (SELECT keyword FROM note_keyword),
+                        (SELECT kind FROM event), (SELECT created_at FROM event),
                         (SELECT data FROM note)",
             )
             .fetch_one(&pool)
@@ -731,6 +752,7 @@ mod tests {
             .unwrap()
         };
         let before = rows().await;
+        pretend_old_migrations_ran(&pool, &[LAST_OLD_MIGRATION]).await;
 
         migrator.run(&pool).await.unwrap();
 
@@ -753,7 +775,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(defaults, Vec::<String>::new());
-        let wrong_type = sqlx::query("UPDATE card SET due = 'tomorrow'")
+        let wrong_type = sqlx::query("UPDATE event SET kind = 'six'")
             .execute(&pool)
             .await
             .unwrap_err();
