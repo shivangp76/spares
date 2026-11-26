@@ -81,7 +81,10 @@ export function hostUrl(): string {
 export function getCredentials(): Credentials {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) throw new Error("Not authenticated");
-  return JSON.parse(raw) as Credentials;
+  const credentials = JSON.parse(raw) as Partial<Credentials>;
+  // A session from before account IDs logs in again, which records one
+  if (!credentials.accountId) throw new Error("Not authenticated");
+  return credentials as Credentials;
 }
 
 /**

@@ -5,8 +5,8 @@ export interface Credentials {
    * a cookie the page can't read (see `spares_server::host::auth`).
    */
   csrfToken: string;
-  /** Stable host collection ID. Older sessions only have a name. */
-  accountId?: string;
+  /** Stable host collection ID. */
+  accountId: string;
   /** The account's name */
   user: string;
   /** Picked with the host on logging in, and changed on the Settings page (`chooseScheduler`). */

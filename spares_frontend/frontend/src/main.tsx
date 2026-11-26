@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.tsx";
 import "./index.css";
-import { credentialsKey, legacyCopyKey } from "./local/copyScope";
+import { credentialsKey } from "./local/copyScope";
 import { startLocalCopy } from "./local/copy";
 import { startVersionChecks } from "./version";
 import { onServerBack } from "./api/reachability";
@@ -28,14 +28,6 @@ onServerBack(() => {
 // changes sessions, before the old account can submit work into the new collection.
 window.addEventListener("storage", (event) => {
   if (event.key === credentialsKey || event.key === null)
-    window.location.reload();
-  if (
-    event.key === legacyCopyKey &&
-    event.oldValue &&
-    event.newValue &&
-    JSON.parse(event.oldValue).collectionId !==
-      JSON.parse(event.newValue).collectionId
-  )
     window.location.reload();
 });
 

@@ -24,11 +24,10 @@ import {
   copyAccount,
   copyDirectory,
   copyKey,
-  legacyCopyKey,
   requireCopyAccount,
 } from "./copyScope";
 
-const COPY_KEY = copyKey(legacyCopyKey);
+const COPY_KEY = copyKey("spares_local_copy");
 const LOCK_NAME = copyKey("spares-db");
 
 /** Where the copy keeps the rendered files and render assets it downloads (see copy.ts), by URL on its server. */
@@ -38,7 +37,7 @@ export const COPY_RENDER_ASSETS_CACHE = copyKey("spares-copy-render-assets");
 /** The copy this device keeps, as set up in Settings. It syncs with the host that serves the page. */
 export interface LocalCopy {
   /** The collection the copy was enrolled from, used to scope editor drafts. */
-  collectionId?: string;
+  collectionId: string;
   replica: number;
   /** Whether its first full download has finished. Until then, requests go to the server. */
   ready: boolean;

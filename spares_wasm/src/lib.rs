@@ -117,22 +117,6 @@ fn remote(server: &str, key: Option<String>) -> Result<DeviceRemote, JsValue> {
     ))
 }
 
-/// Whether the legacy copy belongs to this account and matches its enrolled collection.
-#[wasm_bindgen]
-pub async fn legacy_matches(
-    account: String,
-    server: String,
-    csrf: String,
-    replica: u8,
-) -> Result<bool, JsValue> {
-    use spares_core::sync::run::SyncRemote;
-    let meta = remote(&server, Some(csrf))?
-        .meta(replica)
-        .await
-        .map_err(|e| core_error(&e))?;
-    storage::legacy_matches(&account, &meta.epoch, replica).await
-}
-
 /// Opens the copy, creating an empty one the first time, and returns [`status`].
 #[wasm_bindgen]
 pub async fn open(directory: String) -> Result<JsValue, JsValue> {

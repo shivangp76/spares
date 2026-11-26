@@ -91,12 +91,9 @@ export function useDraftStore() {
   const [store] = useState(() => {
     try {
       const credentials = getCredentials();
-      // An older login predates collection IDs. Keep its drafts separate from collections identified by ID.
-      const owner = credentials.accountId ?? "legacy-name:" + credentials.user;
+      const owner = credentials.accountId;
       const copy = getLocalCopy();
-      const collection = copy?.ready
-        ? (copy.collectionId ?? "legacy-copy:" + copy.replica)
-        : owner;
+      const collection = copy?.ready ? copy.collectionId : owner;
       return draftStore(owner, collection);
     } catch {
       return draftStore(null);

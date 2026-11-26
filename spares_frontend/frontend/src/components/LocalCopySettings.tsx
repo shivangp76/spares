@@ -1,4 +1,4 @@
-import { copyAccount, legacyCopy } from "../local/copyScope";
+import { copyAccount } from "../local/copyScope";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -12,7 +12,6 @@ import {
   describeDownload,
   disableLocalCopy,
   enableLocalCopy,
-  recoverLegacyCopy,
   useLocalStatus,
   type SetupStep,
 } from "../local/copy";
@@ -431,19 +430,6 @@ export default function LocalCopySettings() {
   return (
     <fieldset className="settings-section">
       <legend className="section-label">This Device</legend>
-      {!copy && legacyCopy() && !legacyCopy()?.collectionId && (
-        <p>
-          An older offline collection is stored on this browser. Sign in to its
-          original account and verify it online to recover its unsynced changes.{" "}
-          <button
-            onClick={() =>
-              recoverLegacyCopy().catch((e) => setError(errorMessage(e)))
-            }
-          >
-            Recover older copy
-          </button>
-        </p>
-      )}
       {copyAccount ? (
         body
       ) : (

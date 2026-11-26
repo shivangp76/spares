@@ -20,12 +20,7 @@
 // token only when the credentials are for that server. On every change of credentials, the copy pauses: no
 // syncs or downloads in the background, while the copy and its files stay. It starts again once
 // logged in to its server.
-import {
-  copyKey,
-  legacyCopy,
-  legacyCopyKey,
-  requireCopyAccount,
-} from "./copyScope";
+import { copyKey, requireCopyAccount } from "./copyScope";
 import {
   openCheckpoints,
   forgetCheckpoints,
@@ -66,11 +61,7 @@ import {
   usesLocalCopy,
 } from "./transport";
 import { COPY_PANDOC_CACHE, PANDOC_WASM_URL } from "./pandoc";
-import type {
-  CollectionProgress,
-  WorkerMessage,
-  WorkerRequest,
-} from "./worker";
+import type { CollectionProgress } from "./worker";
 
 /** Syncs once nothing changed for this long */
 const IDLE_MS = 30 * 1000;
@@ -473,68 +464,6 @@ onCredentialsChange(() => {
 });
 
 // Setting up and removing the copy
-
-/** Restore an unlabelled copy only after its saved collection and host account both match. */
-export async function recoverLegacyCopy(): Promise<void> {
-  const account = requireCopyAccount();
-  const csrf = getCredentials().csrfToken;
-  if (!navigator.locks)
-    throw new Error("Recovery needs a browser with Web Locks support.");
-  await navigator.locks.request("spares-copy-setup:" + account, () =>
-    navigator.locks.request(
-      "spares-db",
-      { ifAvailable: true },
-      async (held) => {
-        if (!held)
-          throw new Error(
-            "Close other tabs using the older copy and try again.",
-          );
-        const old = legacyCopy();
-        if (!old || old.collectionId || getLocalCopy())
-          throw new Error("The offline copy changed. Reload Settings.");
-        const message =
-          "This account’s enrollment and collection could not be verified. The older copy has been preserved.";
-        const verifier = new Worker(new URL("./worker.ts", import.meta.url), {
-          type: "module",
-        });
-        try {
-          const matches = await new Promise<boolean>((resolve, reject) => {
-            verifier.onerror = () => reject(new Error(message));
-            verifier.onmessage = ({ data }: MessageEvent<WorkerMessage>) => {
-              if ("error" in data)
-                reject(
-                  new Error(
-                    data.error.message + " The older copy has been preserved.",
-                  ),
-                );
-              else if ("result" in data) resolve(data.result === true);
-            };
-            verifier.postMessage({
-              id: 1,
-              op: "legacy_matches",
-              args: [account, hostUrl(), csrf, old.replica],
-            } satisfies WorkerRequest);
-          });
-          requireCopyAccount();
-          if (
-            !matches ||
-            getCredentials().csrfToken !== csrf ||
-            getLocalCopy() ||
-            legacyCopy()?.collectionId
-          )
-            throw new Error(message);
-          localStorage.setItem(
-            legacyCopyKey,
-            JSON.stringify({ ...old, collectionId: account }),
-          );
-        } finally {
-          verifier.terminate();
-        }
-      },
-    ),
-  );
-  window.location.reload();
-}
 
 /** A step of `enableLocalCopy`, for its progress. */
 export type SetupStep =

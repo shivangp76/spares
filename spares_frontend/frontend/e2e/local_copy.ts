@@ -809,35 +809,11 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       { timeout: TIMEOUT, polling: 500 },
     );
 
-    if (engine === "webkit") {
-      await context.setOffline(true);
-      await page.goto(`${ORIGIN}/notes`);
-      await createNote(
-        page,
-        "markdown",
-        "Unsynced legacy edit {{ recover me }}",
-      );
-      await page.evaluate(() => {
-        const copy = JSON.parse(localStorage.getItem("spares_local_copy")!);
-        delete copy.collectionId;
-        localStorage.setItem("spares_local_copy", JSON.stringify(copy));
-      });
-      await page.goto(`${ORIGIN}/settings`);
-      await context.setOffline(false);
-      check(
-        "the legacy edit exists only in the browser",
-        (await serverNotes('"Unsynced legacy edit"')).length === 0,
-      );
-    }
     await logIn(page, `first-${engine}`);
     await page.goto(`${ORIGIN}/settings`);
     await page
       .getByRole("button", { name: "Keep a Copy on This Device" })
       .waitFor();
-    if (engine === "webkit") {
-      await page.getByRole("button", { name: "Recover older copy" }).click();
-      await see(page, /older copy has been preserved/);
-    }
     await page
       .getByRole("button", { name: "Keep a Copy on This Device" })
       .click();
@@ -858,31 +834,7 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await context.setOffline(false);
     await logIn(page);
     await page.goto(`${ORIGIN}/settings`);
-    if (engine === "webkit") {
-      await page.getByRole("button", { name: "Recover older copy" }).click();
-      await Promise.race([
-        page.getByRole("button", { name: "Stop Keeping a Copy" }).waitFor(),
-        page
-          .getByRole("alert")
-          .waitFor()
-          .then(async () => {
-            throw new Error(
-              "Recovering the enrolled copy: " +
-                (await page.getByRole("alert").innerText()),
-            );
-          }),
-      ]);
-    }
     await page.getByRole("button", { name: "Stop Keeping a Copy" }).waitFor();
-
-    if (engine === "webkit") {
-      await page.getByRole("button", { name: /^Sync/ }).click();
-      await see(page, /Synced: received|Already in sync/);
-      check(
-        "verified recovery preserves and syncs the original offline edit",
-        (await serverNotes('"Unsynced legacy edit"')).length === 1,
-      );
-    }
 
     // A page put into the back-forward cache lets go of the copy, so the page after it can open
     // it, and opens it again when shown. The events are dispatched, since whether a page is cached

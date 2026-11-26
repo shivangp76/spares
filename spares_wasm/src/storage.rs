@@ -78,43 +78,6 @@ async fn vfs(directory: &str) -> Result<OpfsSAHPoolUtil, JsValue> {
     Ok(vfs)
 }
 
-/// Check the old directory without migrating it or returning collection data to the page.
-pub(crate) async fn legacy_matches(
-    account: &str,
-    epoch: &str,
-    replica: u8,
-) -> Result<bool, JsValue> {
-    let vfs = vfs("spares").await?;
-    for file in [DEVICE_FILE, DB_FILE] {
-        if !vfs
-            .contains(file)
-            .map_err(|e| js_error(&format!("{e:?}")))?
-        {
-            return Err(js_error("The older database files could not be located."));
-        }
-    }
-    let device = connect(DEVICE_FILE).await?;
-    if load_replica(&device).await?.map(Replica::number) != Some(replica) {
-        return Err(js_error(
-            "The saved replica number differs from the enrollment.",
-        ));
-    }
-    let image_dir = get_state(&device, "image_dir").await?.unwrap_or_default();
-    let suffix = format!("/users/{account}/media/images");
-    if !image_dir.replace('\\', "/").ends_with(&suffix) {
-        return Err(js_error(
-            "The saved media location does not identify this account.",
-        ));
-    }
-    let db = connect(DB_FILE).await?;
-    let saved: Option<String> = sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
-        .bind(spares_core::sync::SYNC_EPOCH_KEY)
-        .fetch_optional(&db)
-        .await
-        .map_err(sqlx_error)?;
-    Ok(!epoch.is_empty() && saved.as_deref() == Some(epoch))
-}
-
 /// The storage, once [`open`] has run.
 pub(crate) fn opened() -> Result<Opened, JsValue> {
     OPENED
