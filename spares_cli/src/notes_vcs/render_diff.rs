@@ -5,7 +5,8 @@
 //! --tool spares-render-diff`, so it takes `jj diff`'s arguments (`jj rd -r 'main..@'`). jj
 //! copies the changed files of each side into two directories, runs this with them, and deletes
 //! them when it returns, so everything is read first and the page holds all it shows. With git:
-//! `git difftool --dir-diff -x 'spares vcs render-diff'`.
+//! `git difftool --dir-diff -x 'spares vcs render-diff'`. jj runs it in a temporary directory with
+//! `$left` and `$right` relative to it, and says nothing about the revisions it compares.
 //!
 //! The renders come from the host (`POST /api/notes/vcs/render-preview`), which renders in its
 //! sandbox with its Typst workers, so the server must be running, as it must be to push.

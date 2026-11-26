@@ -1,3 +1,21 @@
+//! The files `spares sync cloud` copies to the server over ssh and rsync (see its `--help`).
+//!
+//! rsync never deletes here: the server's files are listed and removed by
+//! [`remove_remote_files`] instead. macOS's `/usr/bin/rsync` is openrsync (protocol 29), which
+//! doesn't report deletions in `--out-format`, and whose `--delete` with `--safe-links` deleted
+//! files under a receiving directory whose sending side was an unsafe symlink.
+//!
+//! The scripts run by the server's `sh`, which on a Linux server is often dash, so they stay POSIX;
+//! the `*_runs_in_sh` tests run them. To run those under dash on macOS, symlink `/bin/dash` as
+//! `sh` in a directory first on `PATH`.
+//!
+//! There is no sshd on a laptop, and the check that the server serves the collection at the same
+//! path refuses one that is the laptop's own collection, so a whole `spares sync cloud` can't run
+//! locally. To test the ssh and rsync code anyway, put a fake `ssh` first on `PATH` that skips its
+//! options and host, `cd`s into a scratch "remote home" and runs `sh -c "$*"`; rsync then works
+//! through it too, as `rsync --server` runs locally. Drive the private functions from a throwaway
+//! `#[cfg(test)]` module.
+
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;

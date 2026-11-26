@@ -2,6 +2,13 @@
 //! and its new render, side by side. `spares vcs render-diff` builds it from the two directories a
 //! jj or git diff tool gets, with the renders from the host's `POST /api/notes/vcs/render-preview`
 //! (see [`crate::render::preview_typst`]).
+//!
+//! The renders are shown side by side rather than merged into one marked-up render (as latexdiff
+//! does): that was tried and was too much to read.
+//!
+//! A Typst SVG page is about 200 KB, a `<use>` per glyph with 32-hex ids, so the page holds each
+//! one gzipped and inflates it only when it is shown (see [`page`]). 420 notes make a page of
+//! 44 MB rather than 230 MB.
 
 pub mod page;
 pub mod pairs;

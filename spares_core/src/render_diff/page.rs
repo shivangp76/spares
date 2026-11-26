@@ -447,6 +447,7 @@ details.links-only > summary { cursor: pointer; font-weight: 600; margin: 20px 0
 .typ-link { text-decoration: underline; }
 "#;
 
+// A raw string without `#`, so the script can't contain a `"`: use `'` or backticks.
 const SCRIPT: &str = r"
 (function () {
   // Pages are gzipped SVGs, shown as images when near the viewport
