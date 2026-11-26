@@ -39,12 +39,12 @@ use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
 use crate::api::note::update_notes;
 use crate::api::preset::CardConfigs;
-use crate::api::preset::resolve_preset_queries;
 use crate::api::preset::PresetLimitsLeft;
 use crate::api::preset::cap_counts;
 use crate::api::preset::cards_with_preset;
 use crate::api::preset::limited_preset_sql;
 use crate::api::preset::preset_index;
+use crate::api::preset::resolve_preset_queries;
 use crate::api::queue::QueueCaps;
 use crate::api::queue::linked_notes_clause;
 use crate::api::queue::queue_order_by;
@@ -1673,10 +1673,11 @@ pub(crate) async fn rate_card_with_config(
     let special_state =
         (leech && config.leech.action == LeechAction::Suspend).then_some(SpecialState::Suspended);
     let _update_card_result = sqlx::query(
-        r"UPDATE card SET due = ?, stability = ?, difficulty = ?, special_state = ?, state = ?, updated_at = ?, custom_data = ? WHERE id = ?",
+        r"UPDATE card SET due = ?, stability = ?, stability_fast = ?, difficulty = ?, special_state = ?, state = ?, updated_at = ?, custom_data = ? WHERE id = ?",
     )
     .bind(updated_card.due.timestamp())
     .bind(updated_card.stability)
+    .bind(updated_card.stability_fast)
     .bind(updated_card.difficulty)
     .bind(special_state)
     .bind(updated_card.state)
@@ -1718,6 +1719,10 @@ pub(crate) async fn rate_card_with_config(
                 stability: Some(Transition {
                     before: before_card.stability,
                     after: updated_card.stability,
+                }),
+                stability_fast: Some(Transition {
+                    before: before_card.stability_fast,
+                    after: updated_card.stability_fast,
                 }),
                 difficulty: Some(Transition {
                     before: before_card.difficulty,
@@ -1855,6 +1860,7 @@ async fn rate_card_without_rescheduling(
             back_type: None,
             due: None,
             stability: None,
+            stability_fast: None,
             difficulty: None,
             desired_retention: None,
             special_state: before_card.special_state.map(|state| Transition {
@@ -1961,6 +1967,7 @@ async fn bury_siblings(
             back_type: None,
             due: None,
             stability: None,
+            stability_fast: None,
             difficulty: None,
             desired_retention: None,
             special_state: Some(Transition {
@@ -2090,10 +2097,11 @@ pub async fn bury_card(
 
     // Update card with all new properties from buried_card
     let _update_card_result = sqlx::query(
-        r"UPDATE card SET due = ?, stability = ?, difficulty = ?, special_state = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
+        r"UPDATE card SET due = ?, stability = ?, stability_fast = ?, difficulty = ?, special_state = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
     )
     .bind(buried_card.due.timestamp())
     .bind(buried_card.stability)
+    .bind(buried_card.stability_fast)
     .bind(buried_card.difficulty)
     .bind(buried_card.special_state)
     .bind(buried_card.state)
@@ -2117,6 +2125,12 @@ pub async fn bury_card(
                 .then_some(Transition {
                     before: before_card.stability,
                     after: buried_card.stability,
+                }),
+            stability_fast: ((buried_card.stability_fast - before_card.stability_fast).abs()
+                > ALLOWED_F64_ERROR)
+                .then_some(Transition {
+                    before: before_card.stability_fast,
+                    after: buried_card.stability_fast,
                 }),
             difficulty: ((buried_card.difficulty - before_card.difficulty).abs()
                 > ALLOWED_F64_ERROR)

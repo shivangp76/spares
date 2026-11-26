@@ -200,15 +200,16 @@ async fn restore_note_cards(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-    execute_batched_query(db, snapshots, max_rows_for(12), async |db, chunk| {
+    execute_batched_query(db, snapshots, max_rows_for(13), async |db, chunk| {
         let query_str = format!(
-            "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, difficulty, desired_retention, special_state, state, custom_data) VALUES {}
+            "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, stability_fast, difficulty, desired_retention, special_state, state, custom_data) VALUES {}
             ON CONFLICT (id) DO UPDATE SET note_id = excluded.note_id, \"order\" = excluded.\"order\",
                 back_type = excluded.back_type, updated_at = excluded.updated_at, due = excluded.due,
-                stability = excluded.stability, difficulty = excluded.difficulty,
+                stability = excluded.stability, stability_fast = excluded.stability_fast,
+                difficulty = excluded.difficulty,
                 desired_retention = excluded.desired_retention, special_state = excluded.special_state,
                 state = excluded.state, custom_data = excluded.custom_data",
-            placeholders_2d(chunk.len(), 12)
+            placeholders_2d(chunk.len(), 13)
         );
         let mut query = sqlx::query(AssertSqlSafe(query_str));
         for card in chunk {
@@ -219,6 +220,7 @@ async fn restore_note_cards(
             query = query.bind(at.timestamp());
             query = query.bind(card.due.timestamp());
             query = query.bind(card.stability);
+            query = query.bind(card.stability_fast);
             query = query.bind(card.difficulty);
             query = query.bind(card.desired_retention);
             query = query.bind(card.special_state);

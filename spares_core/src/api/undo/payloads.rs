@@ -135,6 +135,8 @@ pub struct CardSnapshot {
     pub back_type: BackType,
     pub due: DateTime<Utc>,
     pub stability: f64,
+    #[serde(default)]
+    pub stability_fast: f64,
     pub difficulty: f64,
     pub desired_retention: f64,
     pub special_state: Option<SpecialState>,
@@ -150,6 +152,7 @@ impl CardSnapshot {
             back_type: card.back_type,
             due: card.due,
             stability: card.stability,
+            stability_fast: card.stability_fast,
             difficulty: card.difficulty,
             desired_retention: card.desired_retention,
             special_state: card.special_state,
@@ -467,6 +470,8 @@ pub struct UpdateCardPayload {
     pub due: FieldChange<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stability: FieldChange<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stability_fast: FieldChange<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub difficulty: FieldChange<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -485,6 +490,7 @@ impl UpdateCardPayload {
             || self.back_type.is_some()
             || self.due.is_some()
             || self.stability.is_some()
+            || self.stability_fast.is_some()
             || self.difficulty.is_some()
             || self.desired_retention.is_some()
             || self.special_state.is_some()
@@ -500,6 +506,7 @@ impl UpdateCardPayload {
             back_type: self.back_type.map(Transition::swap),
             due: self.due.map(Transition::swap),
             stability: self.stability.map(Transition::swap),
+            stability_fast: self.stability_fast.map(Transition::swap),
             difficulty: self.difficulty.map(Transition::swap),
             desired_retention: self.desired_retention.map(Transition::swap),
             special_state: self.special_state.map(Transition::swap),

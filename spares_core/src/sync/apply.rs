@@ -277,12 +277,14 @@ pub(crate) async fn upsert_card(
     }
     sqlx::query(
         r#"INSERT INTO card (id, note_id, "order", back_type, created_at, updated_at, due,
-               stability, difficulty, desired_retention, special_state, state, custom_data, usn)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               stability, stability_fast, difficulty, desired_retention, special_state, state, custom_data,
+               usn)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (id) DO UPDATE SET note_id = excluded.note_id, "order" = excluded."order",
                back_type = excluded.back_type, created_at = excluded.created_at,
                updated_at = excluded.updated_at, due = excluded.due,
-               stability = excluded.stability, difficulty = excluded.difficulty,
+               stability = excluded.stability, stability_fast = excluded.stability_fast,
+               difficulty = excluded.difficulty,
                desired_retention = excluded.desired_retention,
                special_state = excluded.special_state, state = excluded.state,
                custom_data = excluded.custom_data, usn = excluded.usn"#,
@@ -295,6 +297,7 @@ pub(crate) async fn upsert_card(
     .bind(record.updated_at)
     .bind(record.due)
     .bind(record.stability)
+    .bind(record.stability_fast)
     .bind(record.difficulty)
     .bind(record.desired_retention)
     .bind(record.special_state)

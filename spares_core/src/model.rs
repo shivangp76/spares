@@ -76,7 +76,11 @@ pub struct Card {
     // See <https://github.com/open-spaced-repetition/rs-fsrs/blob/7cea5d36770b119b2584be086c31a73949185d34/src/models.rs#L93>
     #[serde(with = "ts_seconds")]
     pub due: DateTime<Utc>,
-    pub stability: f64,  // changes after every review
+    pub stability: f64, // changes after every review
+    /// FSRS-7's fast stability, which same-day reviews move most. Equal to `stability` under
+    /// FSRS-6, and 0 (read as `stability`) for a card last scheduled before FSRS-7.
+    #[serde(default)]
+    pub stability_fast: f64,
     pub difficulty: f64, // changes after every review
     /// Values between 70% and 97% are considered reasonable. See <https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS>.
     pub desired_retention: f64,
@@ -106,6 +110,7 @@ impl Card {
             created_at,
             updated_at: created_at,
             stability: 0.0,
+            stability_fast: 0.0,
             difficulty: 0.0,
             desired_retention: DEFAULT_DESIRED_RETENTION,
             special_state: None,

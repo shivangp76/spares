@@ -87,6 +87,9 @@ pub struct CardRecord {
     pub updated_at: i64,
     pub due: i64,
     pub stability: f64,
+    /// Missing from a replica on a version before FSRS-7, which reads as `stability`.
+    #[serde(default)]
+    pub stability_fast: f64,
     pub difficulty: f64,
     pub desired_retention: f64,
     pub special_state: Option<i64>,

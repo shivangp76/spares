@@ -193,6 +193,12 @@ pub(crate) fn build_update_card_payload(
                 before: existing_card.stability,
                 after: final_card.stability,
             }),
+        stability_fast: ((final_card.stability_fast - existing_card.stability_fast).abs()
+            > ALLOWED_F64_ERROR)
+            .then_some(Transition {
+                before: existing_card.stability_fast,
+                after: final_card.stability_fast,
+            }),
         difficulty: ((final_card.difficulty - existing_card.difficulty).abs() > ALLOWED_F64_ERROR)
             .then_some(Transition {
                 before: existing_card.difficulty,
@@ -454,6 +460,10 @@ pub async fn update_card_event(
             .stability
             .as_ref()
             .map_or(existing_card.stability, |t| t.after);
+        let new_stability_fast = payload
+            .stability_fast
+            .as_ref()
+            .map_or(existing_card.stability_fast, |t| t.after);
         let new_difficulty = payload
             .difficulty
             .as_ref()
@@ -475,10 +485,11 @@ pub async fn update_card_event(
             .as_ref()
             .map_or_else(|| existing_card.custom_data.clone(), |t| t.after.clone());
         sqlx::query(
-            r"UPDATE card SET due = ?, stability = ?, difficulty = ?, desired_retention = ?, special_state = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
+            r"UPDATE card SET due = ?, stability = ?, stability_fast = ?, difficulty = ?, desired_retention = ?, special_state = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
         )
         .bind(new_due.timestamp())
         .bind(new_stability)
+        .bind(new_stability_fast)
         .bind(new_difficulty)
         .bind(new_desired_retention)
         .bind(new_special_state)
@@ -593,6 +604,7 @@ pub async fn forget_card(
         .map_err(|e| Error::Sqlx { source: e })?;
     let mut card = before_card.clone();
     card.stability = 0.0;
+    card.stability_fast = 0.0;
     card.difficulty = 0.0;
     card.due = now;
     card.state = NEW_CARD_STATE;
@@ -636,8 +648,9 @@ pub async fn forget_card(
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
-    sqlx::query("UPDATE card SET stability = ?, difficulty = ?, due = ?, state = ?, updated_at = ? WHERE id = ?")
+    sqlx::query("UPDATE card SET stability = ?, stability_fast = ?, difficulty = ?, due = ?, state = ?, updated_at = ? WHERE id = ?")
         .bind(card.stability)
+        .bind(card.stability_fast)
         .bind(card.difficulty)
         .bind(card.due.timestamp())
         .bind(card.state)
@@ -658,6 +671,10 @@ pub async fn forget_card(
             stability: Some(Transition {
                 before: before_card.stability,
                 after: card.stability,
+            }),
+            stability_fast: Some(Transition {
+                before: before_card.stability_fast,
+                after: card.stability_fast,
             }),
             difficulty: Some(Transition {
                 before: before_card.difficulty,
@@ -760,6 +777,7 @@ pub(crate) async fn unbury_cards_logged_as(
                     back_type: None,
                     due: None,
                     stability: None,
+                    stability_fast: None,
                     difficulty: None,
                     desired_retention: None,
                     special_state: Some(Transition {

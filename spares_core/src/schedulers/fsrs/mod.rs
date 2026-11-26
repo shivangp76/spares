@@ -38,7 +38,6 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
-use fsrs_rs::MemoryState;
 use itertools::Itertools;
 use rand::RngExt;
 use rand::distr::Distribution;
@@ -58,6 +57,7 @@ use utils::Rating as FsrsRating;
 use utils::State;
 use utils::decay;
 use utils::get_fuzz_range;
+use utils::memory_state;
 use utils::model;
 use utils::number_to_rating;
 use utils::number_to_state;
@@ -108,11 +108,11 @@ pub(crate) fn relearning_state() -> StateId {
 /// `desired_retention`. Not rounded, clamped or fuzzed.
 #[cfg(test)]
 pub(crate) fn optimal_interval_days(stability: f64, desired_retention: f64) -> f64 {
-    f64::from(fsrs_rs::FSRS::new(&fsrs_rs::FSRS6_DEFAULT_PARAMETERS).unwrap().next_interval(
-        Some(stability as f32),
-        desired_retention as f32,
-        1,
-    ))
+    f64::from(
+        fsrs_rs::FSRS::new(&fsrs_rs::FSRS6_DEFAULT_PARAMETERS)
+            .unwrap()
+            .next_interval(Some(stability as f32), desired_retention as f32, 1),
+    )
 }
 
 /// The name review logs and `config.toml` know FSRS by.
@@ -285,11 +285,7 @@ impl SrsScheduler for Fsrs {
             u32::try_from((reviewed_at - previous.reviewed_at).num_days().max(0))
                 .unwrap_or(u32::MAX)
         });
-        let memory = (state != State::New).then_some(MemoryState {
-            stability: card.stability as f32,
-            difficulty: card.difficulty as f32,
-            stability_fast: card.stability as f32,
-        });
+        let memory = (state != State::New).then(|| memory_state(card));
         let previous_delay = previous_review_log
             .as_ref()
             .and_then(|previous| previous.scheduled_time)
@@ -318,6 +314,7 @@ impl SrsScheduler for Fsrs {
             updated_at: reviewed_at,
             due: reviewed_at + step.interval,
             stability: f64::from(step.memory.stability),
+            stability_fast: f64::from(step.memory.stability_fast),
             difficulty: f64::from(step.memory.difficulty),
             state: state_to_number(step.state),
             ..card.clone()

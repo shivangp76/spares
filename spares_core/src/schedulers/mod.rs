@@ -423,6 +423,7 @@ pub trait SrsScheduler: Send + Sync {
                     card.desired_retention,
                 )?;
                 card.stability = new_card.stability;
+                card.stability_fast = new_card.stability_fast;
                 card.difficulty = new_card.difficulty;
                 card.state = new_card.state;
                 if !pinned.contains(&card.id) {
@@ -449,10 +450,11 @@ pub trait SrsScheduler: Send + Sync {
             context.update(card);
 
             let _update_card_result = sqlx::query(
-                r"UPDATE card SET due = ?, stability = ?, difficulty = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
+                r"UPDATE card SET due = ?, stability = ?, stability_fast = ?, difficulty = ?, state = ?, custom_data = ?, updated_at = ? WHERE id = ?",
             )
             .bind(card.due.timestamp())
             .bind(card.stability)
+            .bind(card.stability_fast)
             .bind(card.difficulty)
             .bind(card.state)
             .bind(card.custom_data.clone())

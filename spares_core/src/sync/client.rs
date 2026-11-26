@@ -25,7 +25,7 @@
 //! | Note and card `custom_data` | Key by key. A key both sides changed: local for notes, the newer change for cards. |
 //! | Note `parser_id`, `created_at` | Three-way; local wins a conflict. |
 //! | review_log | Union. A log keeps its card and tag where either side still has them. One an undo took back on either side (its grave) is deleted on both. |
-//! | Card scheduling (`due`, `stability`, `difficulty`, `state`) | As a whole from the side that changed it. Both changed: the side with the newer review, else the newer change. If both reviewed, the memory state is replayed from the merged logs. |
+//! | Card scheduling (`due`, `stability`, `stability_fast`, `difficulty`, `state`) | As a whole from the side that changed it. Both changed: the side with the newer review, else the newer change. If both reviewed, the memory state is replayed from the merged logs. |
 //! | Card `special_state`, `desired_retention` | Three-way; the newer change wins a conflict. |
 //! | Card `order`, `back_type`, `note_id` | Follow the note text ([`reconcile_cards`]). |
 //! | Note deleted on one side, edited on the other | The edit wins: the note is kept (its cards and reviews are sent back), tagged `sync-conflict`, with a `sync_conflict` row. A review doesn't count as an edit. |
@@ -858,10 +858,12 @@ impl Merger<'_> {
                 card.desired_retention,
             )?;
             sqlx::query(
-                "UPDATE card SET stability = ?, difficulty = ?, state = ?, due = ?, usn = -1
+                "UPDATE card SET stability = ?, stability_fast = ?, difficulty = ?, state = ?, due = ?,
+                 usn = -1
                  WHERE id = ?",
             )
             .bind(replayed.stability)
+            .bind(replayed.stability_fast)
             .bind(replayed.difficulty)
             .bind(replayed.state)
             .bind(replayed.due.timestamp())
@@ -944,6 +946,7 @@ fn scheduling_equal(a: &CardRecord, b: &CardRecord) -> bool {
     a.due == b.due
         && a.state == b.state
         && f64_eq(a.stability, b.stability)
+        && f64_eq(a.stability_fast, b.stability_fast)
         && f64_eq(a.difficulty, b.difficulty)
 }
 
@@ -961,7 +964,7 @@ pub(crate) fn cards_equal(a: &CardRecord, b: &CardRecord) -> bool {
         && a.tags == b.tags
 }
 
-/// Merges a card changed on both sides. Its scheduling (due, stability, difficulty, state) is
+/// Merges a card changed on both sides. Its scheduling (due, stability, stability_fast, difficulty, state) is
 /// taken as a whole from one side: the one that changed it, or if both did, the one with the
 /// newer review (else the newer change). If both reviewed it, the returned flag asks for the
 /// memory state to be replayed from both sides' reviews.
@@ -1025,6 +1028,7 @@ pub(crate) fn merge_card(
         updated_at: local.updated_at.max(remote.updated_at),
         due: scheduling.due,
         stability: scheduling.stability,
+        stability_fast: scheduling.stability_fast,
         difficulty: scheduling.difficulty,
         desired_retention,
         special_state: merge3_or(

@@ -785,13 +785,31 @@ async fn reviews_are_unioned_and_replayed() {
         .unwrap();
     assert_eq!(logs, 2);
     // B's scheduling comes from the phone, which reviewed it.
-    let (state, stability): (i64, f64) =
-        sqlx::query_as("SELECT state, stability FROM card WHERE id = ?")
+    let scheduling = async |db| -> (i64, f64, f64) {
+        sqlx::query_as("SELECT state, stability, stability_fast FROM card WHERE id = ?")
             .bind(b)
-            .fetch_one(&replicas.laptop)
+            .fetch_one(db)
             .await
-            .unwrap();
-    assert!(state != 0 && stability > 0.0);
+            .unwrap()
+    };
+    let (state, stability, stability_fast) = scheduling(&replicas.laptop).await;
+    assert!(state != 0 && stability > 0.0 && stability_fast > 0.0);
+    assert_eq!(
+        (state, stability, stability_fast),
+        on_server(scheduling(&replicas.server)).await
+    );
+}
+
+/// A replica on a version before FSRS-7 sends cards without a fast stability.
+#[test]
+fn a_card_without_a_fast_stability_reads_as_zero() {
+    let record: CardRecord = serde_json::from_value(serde_json::json!({
+        "id": 1, "note_id": 1, "order": 1, "back_type": 0, "created_at": 0, "updated_at": 0,
+        "due": 0, "stability": 3.0, "difficulty": 5.0, "desired_retention": 0.9,
+        "special_state": null, "state": 2, "custom_data": {}, "tags": [],
+    }))
+    .unwrap();
+    assert_eq!((record.stability, record.stability_fast), (3.0, 0.0));
 }
 
 #[tokio::test]

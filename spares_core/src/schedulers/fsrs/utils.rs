@@ -1,8 +1,8 @@
 use std::cmp;
 
 use chrono::Duration;
-use fsrs_rs::FSRS6_DEFAULT_PARAMETERS;
 use fsrs_rs::FSRS;
+use fsrs_rs::FSRS6_DEFAULT_PARAMETERS;
 use fsrs_rs::MemoryState;
 
 use crate::Error;
@@ -10,6 +10,7 @@ use crate::LibraryError;
 use crate::SchedulerErrorKind;
 use crate::config::SparesExternalConfig;
 use crate::helpers::FractionalDays;
+use crate::model::Card;
 use crate::model::RatingId;
 use crate::model::StateId;
 
@@ -91,6 +92,26 @@ pub fn model(config: &SparesExternalConfig) -> Result<FSRS, Error> {
             format!("invalid `fsrs_parameters`: {e:?}"),
         )))
     })
+}
+
+/// The fast stability of a card with `stability` and `stability_fast`, as stored: a card last
+/// scheduled before FSRS-7, or synced from a replica that predates it, has none (0), and the fsrs
+/// crate takes a memory state without one to have it equal the stability.
+pub fn stability_fast(stability: f64, stability_fast: f64) -> f64 {
+    if stability_fast > 0.0 {
+        stability_fast
+    } else {
+        stability
+    }
+}
+
+/// The memory state FSRS remembers for `card`, which must not be new.
+pub fn memory_state(card: &Card) -> MemoryState {
+    MemoryState {
+        stability: card.stability as f32,
+        difficulty: card.difficulty as f32,
+        stability_fast: stability_fast(card.stability, card.stability_fast) as f32,
+    }
 }
 
 /// The forgetting curve's decay under the configured parameters, clipped like the model clips
