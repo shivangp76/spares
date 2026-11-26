@@ -380,6 +380,20 @@ function nextMilestone(part: GoalPartStatus): GoalMilestoneStatus | undefined {
   return part.milestones.find((milestone) => milestone.new_on_day === null);
 }
 
+/** The goal table's cells, a little narrower than other tables' so its many columns fit. */
+const goalTh: React.CSSProperties = { ...th, padding: "8px 8px" };
+const goalTd: React.CSSProperties = { ...td, padding: "8px 8px" };
+const goalNumeric: React.CSSProperties = { ...numeric, padding: "8px 8px" };
+
+/** `YYYY-MM-DD` as a date without its year, like "May 1", for table cells. */
+function formatShortDay(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 /**
  * How much of a part is learned, as a thin bar under its count, with a tick where the next
  * milestone wants it to be.
@@ -470,14 +484,42 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
   const passed = whole?.milestones.filter((m) => m.new_on_day !== null) ?? [];
   const pace = (part: GoalPartStatus) => {
     if (part.new === 0) return "Done";
-    if (part.projected_learned_by === null) return "No pace yet";
+    if (part.projected_learned_by === null) return "No pace";
     const late = part.projected_learned_by > goal.learned_by;
     return (
-      <span style={late ? { color: "var(--error)" } : undefined}>
-        {formatDay(part.projected_learned_by)}
+      <span
+        style={late ? { color: "var(--error)" } : undefined}
+        title={formatDay(part.projected_learned_by)}
+      >
+        {formatShortDay(part.projected_learned_by)}
       </span>
     );
   };
+  const projected = (part: GoalPartStatus) => {
+    const projection = part.projection;
+    if (!projection) return "–";
+    if (part.new === 0) return "Done";
+    const { learned_earliest: earliest, learned_latest: latest } = projection;
+    if (earliest === null) return "Never";
+    const late = latest === null || latest > goal.learned_by;
+    const text =
+      earliest === latest
+        ? formatShortDay(earliest)
+        : `${formatShortDay(earliest)} – ${latest === null ? "never" : formatShortDay(latest)}`;
+    const full =
+      earliest === latest
+        ? formatDay(earliest)
+        : `${formatDay(earliest)} to ${latest === null ? "never" : formatDay(latest)}`;
+    return (
+      <span style={late ? { color: "var(--error)" } : undefined} title={full}>
+        {text}
+      </span>
+    );
+  };
+  const heldBack = goal.presets.filter(
+    (preset) => preset.lost_to_links >= 0.005,
+  );
+  const projectedAtNext = next?.projected_new_left;
   return (
     <div style={{ marginBottom: 24 }}>
       <h3 className="stat-subheading">{goal.name}</h3>
@@ -509,6 +551,24 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
               {next.on_track === false && (
                 <span style={{ color: "var(--error)" }}> · behind</span>
               )}
+              {projectedAtNext && (
+                <>
+                  {" "}
+                  · projected{" "}
+                  <span
+                    style={
+                      projectedAtNext[1] > next.new_left
+                        ? { color: "var(--error)" }
+                        : undefined
+                    }
+                  >
+                    {projectedAtNext[0] === projectedAtNext[1]
+                      ? projectedAtNext[0]
+                      : `${projectedAtNext[0]}–${projectedAtNext[1]}`}{" "}
+                    new left then
+                  </span>
+                </>
+              )}
             </>
           )}
         </p>
@@ -517,19 +577,19 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
         <table style={{ borderCollapse: "collapse", fontSize: 14 }}>
           <thead>
             <tr>
-              <th style={th}>Part</th>
-              <th style={th}>Learned</th>
-              <th style={{ ...th, textAlign: "right" }}>New</th>
-              <th style={{ ...th, textAlign: "right" }}>Learning</th>
+              <th style={goalTh}>Part</th>
+              <th style={goalTh}>Learned</th>
+              <th style={{ ...goalTh, textAlign: "right" }}>New</th>
+              <th style={{ ...goalTh, textAlign: "right" }}>Learning</th>
               <th
-                style={{ ...th, textAlign: "right" }}
+                style={{ ...goalTh, textAlign: "right" }}
                 title="New cards a day that learn the rest in time"
               >
                 Needed / day
               </th>
               {next && (
                 <th
-                  style={{ ...th, textAlign: "right" }}
+                  style={{ ...goalTh, textAlign: "right" }}
                   title={`New cards a day that reach this part's share of the ${formatDay(next.date)} milestone`}
                 >
                   By{" "}
@@ -540,25 +600,31 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
                 </th>
               )}
               <th
-                style={{ ...th, textAlign: "right" }}
+                style={{ ...goalTh, textAlign: "right" }}
                 title="Cards first studied in the last 14 days"
               >
                 Last 14 days
               </th>
               <th
-                style={th}
+                style={goalTh}
                 title="When the new cards would all be learned at the last 14 days' pace"
               >
                 At this pace
               </th>
               <th
-                style={{ ...th, textAlign: "right" }}
+                style={goalTh}
+                title="When the new cards would all be learned with today's limits, orders, sibling burying and linked notes, studying every day"
+              >
+                Projected
+              </th>
+              <th
+                style={{ ...goalTh, textAlign: "right" }}
                 title="The average recall predicted on the day, if the studied cards were not reviewed again"
               >
                 Recall on the day
               </th>
               <th
-                style={{ ...th, textAlign: "right" }}
+                style={{ ...goalTh, textAlign: "right" }}
                 title="Studied cards that would be below the target on the day without another review"
               >
                 Below {Math.round(target * 100)}%
@@ -571,7 +637,7 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
                 key={part.name}
                 style={i === 0 ? { fontWeight: 600 } : undefined}
               >
-                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                <td style={{ ...goalTd, whiteSpace: "nowrap" }}>
                   <a
                     href={reviewQueryPath(part.query)}
                     onClick={(e) => {
@@ -588,30 +654,47 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
                     {part.name}
                   </a>
                 </td>
-                <td style={td}>
+                <td style={goalTd}>
                   <LearnedBar part={part} />
                 </td>
-                <td style={numeric}>{part.new}</td>
-                <td style={numeric}>{part.learning}</td>
-                <td style={numeric}>
+                <td style={goalNumeric}>{part.new}</td>
+                <td style={goalNumeric}>{part.learning}</td>
+                <td style={goalNumeric}>
                   {part.new_per_day_needed === null
                     ? "–"
                     : part.new_per_day_needed.toFixed(1)}
                 </td>
                 {next && <MilestoneNeed part={part} />}
-                <td style={numeric}>{part.learned_recently}</td>
-                <td style={{ ...td, whiteSpace: "nowrap" }}>{pace(part)}</td>
-                <td style={numeric}>
+                <td style={goalNumeric}>{part.learned_recently}</td>
+                <td style={{ ...goalTd, whiteSpace: "nowrap" }}>
+                  {pace(part)}
+                </td>
+                <td style={{ ...goalTd, whiteSpace: "nowrap" }}>
+                  {projected(part)}
+                </td>
+                <td style={goalNumeric}>
                   {part.mean_recall_on_date === null
                     ? "–"
                     : `${Math.round(part.mean_recall_on_date * 100)}%`}
                 </td>
-                <td style={numeric}>{part.below_retention_on_date}</td>
+                <td style={goalNumeric}>{part.below_retention_on_date}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {heldBack.length > 0 && (
+        <p style={{ ...note, marginTop: 8 }}>
+          Limits unused while new cards wait on linked notes, until{" "}
+          {formatDay(goal.learned_by)}:{" "}
+          {heldBack
+            .map(
+              (preset) =>
+                `${preset.name} ${Math.round(preset.lost_to_links * 100)}% of ${preset.new_limit}/day`,
+            )
+            .join(", ")}
+        </p>
+      )}
       {whole && whole.weeks.length > 0 && (
         <div style={{ marginTop: 12 }}>
           <BarChart
@@ -640,7 +723,7 @@ function MilestoneNeed({ part }: { part: GoalPartStatus }) {
   return (
     <td
       style={{
-        ...numeric,
+        ...goalNumeric,
         ...(milestone?.on_track === false ? { color: "var(--error)" } : {}),
       }}
       title={

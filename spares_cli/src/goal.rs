@@ -165,7 +165,7 @@ fn render(status: &GoalStatus) -> String {
         });
     let _ = writeln!(
         out,
-        "{:<width$}  {:>6} {:>6} {:>6} {:>6} {:>5}  {:>9} {:>8}{next_header}  {:<12}  {:>6} {:>7}",
+        "{:<width$}  {:>6} {:>6} {:>6} {:>6} {:>5}  {:>9} {:>8}{next_header}  {:<12}  {:<13}  {:>6} {:>7}",
         "part",
         "cards",
         "new",
@@ -175,11 +175,33 @@ fn render(status: &GoalStatus) -> String {
         "learned14",
         "need/day",
         "at this pace",
+        "projected",
         "recall",
         format!("<{retention}"),
     );
     for part in &status.parts {
         let _ = writeln!(out, "{}", row(part, width, next));
+    }
+    let held_back = status
+        .presets
+        .iter()
+        .filter(|preset| preset.lost_to_links >= 0.005)
+        .map(|preset| {
+            format!(
+                "{} {:.0}% of {}/day",
+                preset.name,
+                preset.lost_to_links * 100.0,
+                preset.new_limit
+            )
+        })
+        .collect::<Vec<_>>();
+    if !held_back.is_empty() {
+        let _ = writeln!(
+            out,
+            "Limits unused while new cards wait on linked notes, until {}: {}",
+            status.learned_by,
+            held_back.join(", ")
+        );
     }
     let _ = writeln!(
         out,
@@ -226,7 +248,36 @@ fn milestone_line(goal: &GoalPartStatus, milestone: &GoalMilestoneStatus) -> Str
         } else {
             ""
         },
-    )
+    ) + &milestone
+        .projected_new_left
+        .map_or_else(String::new, |[fewest, most]| {
+            format!("; projected {} new left then", range(fewest, most))
+        })
+}
+
+/// `low` alone if it is `high`, else `low-high`.
+fn range(low: u32, high: u32) -> String {
+    if low == high {
+        low.to_string()
+    } else {
+        format!("{low}-{high}")
+    }
+}
+
+/// When the projection has `part`'s new cards all learned.
+fn projected(part: &GoalPartStatus) -> String {
+    match (&part.projection, part.new) {
+        (None, _) => "-".to_string(),
+        (_, 0) => "done".to_string(),
+        (Some(projection), _) => match (projection.learned_earliest, projection.learned_latest) {
+            (Some(earliest), Some(latest)) if earliest == latest => earliest.to_string(),
+            (Some(earliest), Some(latest)) => {
+                format!("{}-{}", earliest.format("%b %d"), latest.format("%b %d"))
+            }
+            (Some(earliest), None) => format!("{} or never", earliest.format("%b %d")),
+            (None, _) => "never".to_string(),
+        },
+    }
 }
 
 /// The pace `part` needs for the milestone at `next`, and `behind` if its recent pace falls short.
@@ -262,7 +313,7 @@ fn row(part: &GoalPartStatus, width: usize, next: Option<usize>) -> String {
         format!("  {:<13}", milestone_need(part, next))
     });
     format!(
-        "{:<width$}  {:>6} {:>6} {:>6} {:>6} {:>5}  {:>9} {:>8}{next}  {:<12}  {:>6} {:>7}",
+        "{:<width$}  {:>6} {:>6} {:>6} {:>6} {:>5}  {:>9} {:>8}{next}  {:<12}  {:<13}  {:>6} {:>7}",
         part.name,
         part.cards,
         part.new,
@@ -272,6 +323,7 @@ fn row(part: &GoalPartStatus, width: usize, next: Option<usize>) -> String {
         part.learned_recently,
         need,
         pace,
+        projected(part),
         recall,
         part.below_retention_on_date,
     )

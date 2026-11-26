@@ -1883,6 +1883,43 @@ pub mod goal {
         pub days_to_date: i64,
         /// The whole goal first, named after the goal, then each of its parts
         pub parts: Vec<GoalPartStatus>,
+        /// The presets with a daily limit of new cards that the goal's new cards use, and how
+        /// much of the limit the [projection](GoalPartStatus::projection) leaves unused because
+        /// of linked notes
+        #[serde(default)]
+        pub presets: Vec<GoalPresetUse>,
+    }
+
+    /// How much of a preset's daily limit of new cards a goal's cards would use, by its
+    /// [projection](GoalPartStatus::projection). See [`GoalStatus::presets`].
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub struct GoalPresetUse {
+        /// The `[queue.presets.<name>]`
+        pub name: String,
+        /// Its `new_cards_daily_limit`
+        pub new_limit: u32,
+        /// The goal's new cards that use it
+        pub new: u32,
+        /// The share, from 0 to 1, of its limit left unused while some of its new cards waited on
+        /// linked notes, on the days before `learned_by` that it still had new cards
+        pub lost_to_links: f64,
+    }
+
+    /// When the new cards of a goal, or of one of its parts, would be learned with today's
+    /// presets, limits, orders, sibling burying and linked notes, studying every day. See
+    /// [`GoalPartStatus::projection`].
+    ///
+    /// Random orders are drawn a few times, so each figure is a range, the same at both ends
+    /// otherwise.
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub struct GoalPartProjection {
+        /// The day the last new card would first be studied, in the run that gets there first,
+        /// or `None` if none does within 3 years (or there are no new cards)
+        pub learned_earliest: Option<NaiveDate>,
+        /// Likewise, in the run that gets there last
+        pub learned_latest: Option<NaiveDate>,
+        /// The new cards still new when `learned_by` starts: the fewest and the most of the runs
+        pub new_left_at_learned_by: [u32; 2],
     }
 
     /// How the cards of a goal, or of one of its parts, are going. See [`GoalStatus`].
@@ -1921,6 +1958,11 @@ pub mod goal {
         /// share of each target
         #[serde(default)]
         pub milestones: Vec<GoalMilestoneStatus>,
+        /// When its new cards would be learned with today's settings, which unlike
+        /// `projected_learned_by` knows about limits and linked notes (see
+        /// [`crate::api::goal::projection`])
+        #[serde(default)]
+        pub projection: Option<GoalPartProjection>,
     }
 
     /// How one of a goal's [milestones](crate::config::Goal::milestones) is going, for the whole
@@ -1945,6 +1987,10 @@ pub mod goal {
         pub new_on_day: Option<u32>,
         /// Once the day has come, whether `new_on_day` was at most `new_left`
         pub met: Option<bool>,
+        /// While the day is to come, the new cards the [projection](GoalPartStatus::projection)
+        /// leaves when it starts: the fewest and the most of its runs
+        #[serde(default)]
+        pub projected_new_left: Option<[u32; 2]>,
     }
 
     /// A [goal](crate::config::Goal)'s search and its parts', to review them with, from

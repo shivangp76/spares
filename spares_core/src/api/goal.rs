@@ -4,10 +4,13 @@
 //! [`keep_due_for_goals`] keeps a goal's cards from being due after its date with too little
 //! recall left, when one is rated.
 
+pub(crate) mod projection;
+
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::NaiveDate;
 use chrono::Utc;
+use itertools::Itertools;
 use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
@@ -26,7 +29,9 @@ use crate::schedulers::SrsScheduler;
 use crate::schedulers::all_schedulers;
 use crate::schedulers::state_role;
 use crate::schema::goal::GoalMilestoneStatus;
+use crate::schema::goal::GoalPartProjection;
 use crate::schema::goal::GoalPartStatus;
+use crate::schema::goal::GoalPresetUse;
 use crate::schema::goal::GoalSearch;
 use crate::schema::goal::GoalStatus;
 use crate::schema::goal::GoalWeek;
@@ -129,6 +134,7 @@ pub async fn goal_status(
             histories.push(history);
         }
         add_milestones(goal, &mut parts, &histories, zone, today);
+        let presets = add_projection(db, config, goal, &mut parts, today).await?;
         statuses.push(GoalStatus {
             name: name.clone(),
             date: goal.date,
@@ -137,6 +143,7 @@ pub async fn goal_status(
             days_to_learned_by: (goal.learned_by() - today).num_days().max(0),
             days_to_date: (goal.date - today).num_days().max(0),
             parts,
+            presets,
         });
     }
     Ok(statuses)
@@ -187,6 +194,7 @@ async fn part_status(
         below_retention_on_date: 0,
         weeks: Vec::new(),
         milestones: Vec::new(),
+        projection: None,
     };
     let mut history = Vec::new();
     let pace_start = (now - Duration::days(PACE_DAYS)).timestamp();
@@ -286,6 +294,7 @@ fn add_milestones(
                     on_track: None,
                     new_on_day: Some(new),
                     met: Some(new <= target),
+                    projected_new_left: None,
                 }
             } else {
                 let target = share(milestone.new_left, part.new, goal_new_now);
@@ -302,11 +311,114 @@ fn add_milestones(
                     on_track: Some(pace * days >= to_learn),
                     new_on_day: None,
                     met: None,
+                    projected_new_left: None,
                 }
             };
             part.milestones.push(status);
         }
     }
+}
+
+/// Projects `goal` (see [`projection`]) and fills in [`GoalPartStatus::projection`] and the
+/// milestones' [`projected_new_left`](GoalMilestoneStatus::projected_new_left) of `parts`, the
+/// whole goal first. Returns [`GoalStatus::presets`].
+async fn add_projection(
+    db: &SqlitePool,
+    config: &SparesExternalConfig,
+    goal: &Goal,
+    parts: &mut [GoalPartStatus],
+    today: NaiveDate,
+) -> Result<Vec<GoalPresetUse>, Error> {
+    let days_until = |date: NaiveDate| u32::try_from((date - today).num_days()).unwrap_or(0);
+    let input =
+        projection::load(db, config, &goal.query_sql, days_until(goal.learned_by())).await?;
+    let output = projection::simulate(&input);
+    for (index, part) in parts.iter_mut().enumerate() {
+        let sql = cards_sql(goal, index.checked_sub(1));
+        let ids: std::collections::HashSet<CardId> = sqlx::query_scalar(AssertSqlSafe(sql))
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?
+            .into_iter()
+            .collect();
+        // The part's new cards, by index in the projection
+        let new = input
+            .cards
+            .iter()
+            .enumerate()
+            .filter(|(_, card)| card.start == projection::Start::New && ids.contains(&card.id))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        // In each run, the cards still new when day `day` starts
+        let new_left = |day: u32| {
+            let counts = output.studied_on.iter().map(|studied| {
+                let left = new
+                    .iter()
+                    .filter(|&&card| studied[card].is_none_or(|on| on >= day))
+                    .count();
+                u32::try_from(left).unwrap_or(u32::MAX)
+            });
+            let (fewest, most) = counts.minmax().into_option().unwrap_or((0, 0));
+            [fewest, most]
+        };
+        // In each run, the day the last new card is studied, if all are
+        let learned_on = output
+            .studied_on
+            .iter()
+            .map(|studied| {
+                new.iter()
+                    .map(|&card| studied[card])
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(|days| days.into_iter().max())
+            })
+            .collect::<Vec<_>>();
+        let date = |day: Option<u32>| day.map(|day| today + Duration::days(i64::from(day)));
+        let learned_latest = if learned_on.iter().all(Option::is_some) {
+            date(learned_on.iter().flatten().max().copied())
+        } else {
+            None
+        };
+        part.projection = Some(GoalPartProjection {
+            learned_earliest: date(learned_on.iter().flatten().min().copied()),
+            learned_latest,
+            new_left_at_learned_by: new_left(days_until(goal.learned_by())),
+        });
+        for milestone in &mut part.milestones {
+            if milestone.new_on_day.is_none() {
+                milestone.projected_new_left = Some(new_left(days_until(milestone.date)));
+            }
+        }
+    }
+    Ok(input
+        .presets
+        .iter()
+        .zip(&output.presets)
+        .enumerate()
+        .filter_map(|(index, (preset, used))| {
+            let new_limit = preset.limit?;
+            let new = input
+                .cards
+                .iter()
+                .filter(|card| card.preset == Some(index) && card.start == projection::Start::New)
+                .count();
+            if new == 0 {
+                return None;
+            }
+            #[expect(clippy::cast_precision_loss, reason = "counts of cards")]
+            let lost_to_links = if used.slots == 0 {
+                0.0
+            } else {
+                // Both are summed over the runs, so this is their average.
+                used.lost_to_links as f64 / used.slots as f64
+            };
+            Some(GoalPresetUse {
+                name: preset.name.clone(),
+                new_limit,
+                new: u32::try_from(new).unwrap_or(u32::MAX),
+                lost_to_links,
+            })
+        })
+        .collect())
 }
 
 /// A part's share of a target of `new_left` new cards for the whole goal, in proportion to its
@@ -641,6 +753,73 @@ mod tests {
         assert_eq!(prob.milestones[0].new_left, 3);
         assert_eq!(prob.milestones[0].new_per_day_needed, Some(0.0));
         assert_eq!(prob.milestones[0].on_track, Some(true));
+    }
+
+    /// The projection: a link between the goal's notes holds the newer one back a day, and a link
+    /// to a note outside the goal holds nothing back.
+    #[sqlx::test]
+    async fn projects_with_links_inside_the_goal_only(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(
+            &pool,
+            &[&["other"], &["exam:prob"], &["exam:prob"]],
+            now - Duration::days(1),
+        )
+        .await;
+        let link = |from: CardId, to: CardId| {
+            sqlx::query(
+                r#"INSERT INTO note_link
+                    (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score)
+                VALUES ((SELECT note_id FROM card WHERE id = ?), (SELECT note_id FROM card WHERE id = ?),
+                    0, 'keyword', 'keyword', 0)"#,
+            )
+            .bind(from)
+            .bind(to)
+            .execute(&pool)
+        };
+        // The first exam note links to the note outside the goal, which is new.
+        link(ids[1], ids[0]).await.unwrap();
+        let today = SparesExternalConfig::default().zone().date(now);
+        let date = today + Duration::days(30);
+        let config = |milestone: &str| {
+            parse(&format!(
+                "[queue]\nnew_after_linked_notes = true\n\
+                 [queue.presets.exam]\ntags = [\"exam\"]\nnew_cards_daily_limit = 5\n\
+                 [goals.exam]\ndate = \"{date}\"\nquery = 'tag=exam'\n{milestone}"
+            ))
+        };
+        let projection = |statuses: &[GoalStatus]| statuses[0].parts[0].projection.clone().unwrap();
+        let statuses = goal_status(&pool, &config(""), now).await.unwrap();
+        assert_eq!(projection(&statuses).learned_latest, Some(today));
+        assert_eq!(projection(&statuses).new_left_at_learned_by, [0, 0]);
+        let [preset] = statuses[0].presets.as_slice() else {
+            panic!("the exam preset: {:?}", statuses[0].presets)
+        };
+        assert_eq!(
+            (preset.name.as_str(), preset.new_limit, preset.new),
+            ("exam", 5, 2)
+        );
+        assert!(preset.lost_to_links.abs() < f64::EPSILON);
+
+        // The second exam note links to the first, so waits a day.
+        link(ids[2], ids[1]).await.unwrap();
+        let milestone = format!(
+            "milestones = [{{ date = {}, new_left = 0 }}]",
+            today + Duration::days(1)
+        );
+        let statuses = goal_status(&pool, &config(&milestone), now).await.unwrap();
+        let projected = projection(&statuses);
+        assert_eq!(projected.learned_earliest, Some(today + Duration::days(1)));
+        assert_eq!(projected.learned_latest, Some(today + Duration::days(1)));
+        // When tomorrow starts, the second card is still new.
+        assert_eq!(
+            statuses[0].parts[0].milestones[0].projected_new_left,
+            Some([1, 1])
+        );
+        // Of 10 slots over the 2 days with new cards, today's 4 free ones lose the card waiting on
+        // its link.
+        let lost = statuses[0].presets[0].lost_to_links;
+        assert!((lost - 0.1).abs() < 1e-9, "{lost}");
     }
 
     /// A card whose next review is after the goal's day, with too little recall left on the day,

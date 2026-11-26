@@ -948,6 +948,30 @@ export interface GoalMilestoneStatus {
   new_on_day: number | null;
   /** Once the day has come, whether `new_on_day` was at most `new_left` */
   met: boolean | null;
+  /** While the day is to come, the new cards the projection leaves then: fewest and most */
+  projected_new_left: [number, number] | null;
+}
+
+/**
+ * When a goal's (or part's) new cards would be learned with today's presets, limits, orders,
+ * sibling burying and linked notes, studying every day. Random orders give a range.
+ */
+export interface GoalPartProjection {
+  /** The day the last new card is first studied, in the earliest run; `null` if never */
+  learned_earliest: string | null;
+  /** Likewise, in the latest run */
+  learned_latest: string | null;
+  /** New cards still new when `learned_by` starts: fewest and most */
+  new_left_at_learned_by: [number, number];
+}
+
+/** How much of a preset's new-card limit the goal's cards would leave unused, held back by links. */
+export interface GoalPresetUse {
+  name: string;
+  new_limit: number;
+  new: number;
+  /** The share of the limit unused while cards waited on linked notes, before `learned_by` */
+  lost_to_links: number;
 }
 
 /** How the cards of a goal, or of one of its parts, are going. */
@@ -974,6 +998,8 @@ export interface GoalPartStatus {
   weeks: GoalWeek[];
   /** The goal's milestones, in order, with this part's share of each target */
   milestones: GoalMilestoneStatus[];
+  /** When its new cards would be learned with today's settings, unlike `projected_learned_by` */
+  projection: GoalPartProjection | null;
 }
 
 /** A goal's search and its parts', to review them with (`GET /api/goals`). */
@@ -994,4 +1020,6 @@ export interface GoalStatus {
   days_to_date: number;
   /** The whole goal first, then each of its parts */
   parts: GoalPartStatus[];
+  /** Presets with a new-card limit that the goal's new cards use */
+  presets: GoalPresetUse[];
 }
