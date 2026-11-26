@@ -927,6 +927,8 @@ export interface GoalWeek {
   learned: number;
   /** Reviews of the cards during the week, crams left out */
   reviews: number;
+  /** Minutes spent on the cards during the week, crams included */
+  minutes: number;
 }
 
 /**
@@ -1022,4 +1024,9 @@ export interface GoalStatus {
   parts: GoalPartStatus[];
   /** Presets with a new-card limit that the goal's new cards use */
   presets: GoalPresetUse[];
+  /**
+   * Minutes a day the next week would take at these limits, not counting the new cards' later
+   * reviews; `null` with no reviews to go on
+   */
+  minutes_per_day: number | null;
 }

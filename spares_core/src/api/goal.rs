@@ -16,6 +16,7 @@ use sqlx::SqlitePool;
 
 use crate::Error;
 use crate::api::statistics::local_time::Zone;
+use crate::api::study_pace::capped_answer_seconds;
 use crate::config::Goal;
 use crate::config::SparesExternalConfig;
 use crate::model::Card;
@@ -128,13 +129,22 @@ pub async fn goal_status(
         for (index, part_name) in names.enumerate() {
             let sql = cards_sql(goal, index.checked_sub(1));
             let part = (index > 0).then_some(part_name.as_str());
-            let (part, history) =
-                part_status(db, goal, part_name, part, &sql, zone, now, recall.as_ref()).await?;
+            let (part, history) = part_status(
+                db,
+                config,
+                goal,
+                part_name,
+                part,
+                &sql,
+                now,
+                recall.as_ref(),
+            )
+            .await?;
             parts.push(part);
             histories.push(history);
         }
         add_milestones(goal, &mut parts, &histories, zone, today);
-        let presets = add_projection(db, config, goal, &mut parts, today).await?;
+        let (presets, minutes_per_day) = add_projection(db, config, goal, &mut parts, now).await?;
         statuses.push(GoalStatus {
             name: name.clone(),
             date: goal.date,
@@ -144,6 +154,7 @@ pub async fn goal_status(
             days_to_date: (goal.date - today).num_days().max(0),
             parts,
             presets,
+            minutes_per_day,
         });
     }
     Ok(statuses)
@@ -157,11 +168,11 @@ pub async fn goal_status(
 )]
 async fn part_status(
     db: &SqlitePool,
+    config: &SparesExternalConfig,
     goal: &Goal,
     name: &str,
     part: Option<&str>,
     cards_sql: &str,
-    zone: Zone,
     now: DateTime<Utc>,
     recall: Option<&RetrievabilityFn>,
 ) -> Result<(GoalPartStatus, Vec<CardHistory>), Error> {
@@ -177,6 +188,7 @@ async fn part_status(
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
+    let zone = config.zone();
     let today = zone.date(now);
     let suspended = SpecialState::Suspended as u8;
     let mut status = GoalPartStatus {
@@ -260,7 +272,7 @@ async fn part_status(
         let days = (f64::from(status.new) / pace).ceil() as i64;
         status.projected_learned_by = Some(today + Duration::days(days));
     }
-    status.weeks = weeks(db, cards_sql, &cards, zone, today).await?;
+    status.weeks = weeks(db, config, cards_sql, &cards, today).await?;
     Ok((status, history))
 }
 
@@ -321,14 +333,15 @@ fn add_milestones(
 
 /// Projects `goal` (see [`projection`]) and fills in [`GoalPartStatus::projection`] and the
 /// milestones' [`projected_new_left`](GoalMilestoneStatus::projected_new_left) of `parts`, the
-/// whole goal first. Returns [`GoalStatus::presets`].
+/// whole goal first. Returns [`GoalStatus::presets`] and [`GoalStatus::minutes_per_day`].
 async fn add_projection(
     db: &SqlitePool,
     config: &SparesExternalConfig,
     goal: &Goal,
     parts: &mut [GoalPartStatus],
-    today: NaiveDate,
-) -> Result<Vec<GoalPresetUse>, Error> {
+    now: DateTime<Utc>,
+) -> Result<(Vec<GoalPresetUse>, Option<f64>), Error> {
+    let today = config.zone().date(now);
     let days_until = |date: NaiveDate| u32::try_from((date - today).num_days()).unwrap_or(0);
     let input =
         projection::load(db, config, &goal.query_sql, days_until(goal.learned_by())).await?;
@@ -389,7 +402,8 @@ async fn add_projection(
             }
         }
     }
-    Ok(input
+    let minutes = estimate_minutes(db, config, &goal.query_sql, &input, &output, today).await?;
+    let presets = input
         .presets
         .iter()
         .zip(&output.presets)
@@ -418,7 +432,102 @@ async fn add_projection(
                 lost_to_links,
             })
         })
-        .collect())
+        .collect();
+    Ok((presets, minutes))
+}
+
+/// The days [`GoalStatus::minutes_per_day`] averages over.
+const ESTIMATE_DAYS: u32 = 7;
+
+/// [`GoalStatus::minutes_per_day`] of the goal whose cards `cards_sql` selects, projected as
+/// `output` from `input`.
+async fn estimate_minutes(
+    db: &SqlitePool,
+    config: &SparesExternalConfig,
+    cards_sql: &str,
+    input: &projection::SimInput,
+    output: &projection::SimOutput,
+    today: NaiveDate,
+) -> Result<Option<f64>, Error> {
+    let error = |source| Error::Sqlx { source };
+    let reviewed: bool = sqlx::query_scalar(AssertSqlSafe(format!(
+        "SELECT EXISTS (SELECT 1 FROM review_log WHERE kind = {})",
+        ReviewLogKind::Review as u8
+    )))
+    .fetch_one(db)
+    .await
+    .map_err(error)?;
+    if !reviewed {
+        return Ok(None);
+    }
+    let zone = config.zone();
+    let presets = &config.queue.presets;
+    let cards: Vec<(CardId, Option<i64>, StateId, i64)> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT c.id, {} AS preset, c.state, c.due FROM card c WHERE c.id IN ({cards_sql}) \
+         AND (c.special_state IS NULL OR c.special_state IN ({}, {}))",
+        crate::api::preset::preset_sql(presets),
+        SpecialState::SchedulerBuried as u8,
+        SpecialState::BuriedUntilLaterToday as u8,
+    )))
+    .fetch_all(db)
+    .await
+    .map_err(error)?;
+    let week_end = zone
+        .start_of(today + Duration::days(i64::from(ESTIMATE_DAYS)))
+        .timestamp();
+    let index = input
+        .cards
+        .iter()
+        .enumerate()
+        .map(|(index, card)| (card.id, index))
+        .collect::<std::collections::HashMap<_, _>>();
+    #[expect(clippy::cast_precision_loss, reason = "a few runs")]
+    let runs = output.studied_on.len().max(1) as f64;
+    // Each card studied in the week, and how many of the runs study it
+    let mut studied = Vec::new();
+    for (id, preset, state, due) in cards {
+        let preset = crate::api::preset::preset_index(preset);
+        let weight = match state_role(state) {
+            Some(StateRole::New) | None => {
+                let Some(&index) = index.get(&id) else {
+                    continue;
+                };
+                let runs_studying = output
+                    .studied_on
+                    .iter()
+                    .filter(|run| run[index].is_some_and(|day| day < ESTIMATE_DAYS))
+                    .count();
+                #[expect(clippy::cast_precision_loss, reason = "a few runs")]
+                let share = runs_studying as f64 / runs;
+                share
+            }
+            Some(_) if due < week_end => 1.0,
+            Some(_) => continue,
+        };
+        if weight > 0.0 {
+            studied.push((preset, state, weight));
+        }
+    }
+    let needed = studied
+        .iter()
+        .map(|(preset, state, _)| (*preset, *state))
+        .collect();
+    let paces = crate::api::study_pace::StudyPaces::load(
+        db,
+        &crate::api::preset::cards_with_preset(presets),
+        zone,
+        config.maximum_answer_seconds(),
+        &needed,
+    )
+    .await?;
+    let seconds: f64 = studied
+        .iter()
+        .map(|(preset, state, weight)| {
+            let pace = paces.of(*preset, *state);
+            pace.seconds_per_review * pace.reviews_per_day * weight
+        })
+        .sum();
+    Ok(Some(seconds / f64::from(ESTIMATE_DAYS) / 60.0))
 }
 
 /// A part's share of a target of `new_left` new cards for the whole goal, in proportion to its
@@ -440,11 +549,12 @@ fn share(new_left: u32, part_new: u32, goal_new: u32) -> u32 {
 /// The last [`WEEKS`] weeks of `cards`, which `cards_sql` selects, ending today, oldest first.
 async fn weeks(
     db: &SqlitePool,
+    config: &SparesExternalConfig,
     cards_sql: &str,
     cards: &[GoalCard],
-    zone: Zone,
     today: NaiveDate,
 ) -> Result<Vec<GoalWeek>, Error> {
+    let zone = config.zone();
     let starts = (0..WEEKS)
         .rev()
         .map(|weeks_ago| today - Duration::days(7 * weeks_ago + 6))
@@ -459,14 +569,23 @@ async fn weeks(
         })
         .collect::<Vec<_>>();
     let first_start = bounds.first().map_or(0, |(start, _)| *start);
-    let reviews: Vec<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
-        "SELECT rl.reviewed_at FROM review_log rl WHERE rl.kind = {} AND rl.reviewed_at >= {first_start} \
+    // Crams take time too, so count toward the minutes, but aren't reviews.
+    let logs: Vec<(i64, u8, i64)> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT rl.reviewed_at, rl.kind, {seconds} FROM review_log rl \
+         WHERE rl.kind IN ({review}, {cram}) AND rl.reviewed_at >= {first_start} \
          AND rl.card_id IN ({cards_sql})",
-        ReviewLogKind::Review as u8
+        seconds = capped_answer_seconds("rl", config.maximum_answer_seconds()),
+        review = ReviewLogKind::Review as u8,
+        cram = ReviewLogKind::Cram as u8,
     )))
     .fetch_all(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
+    let reviews = logs
+        .iter()
+        .filter(|(_, kind, _)| *kind == ReviewLogKind::Review as u8)
+        .map(|(at, _, _)| *at)
+        .collect::<Vec<_>>();
     let count =
         |values: &mut dyn Iterator<Item = i64>| u32::try_from(values.count()).unwrap_or(u32::MAX);
     Ok(starts
@@ -481,6 +600,14 @@ async fn weeks(
                     .filter(|first| *first < to),
             ),
             reviews: count(&mut reviews.iter().copied().filter(|at| (from..to).contains(at))),
+            #[expect(clippy::cast_precision_loss, reason = "seconds of study")]
+            minutes: logs
+                .iter()
+                .filter(|(at, _, _)| (from..to).contains(at))
+                // From 0, as an empty `sum` of floats is -0.
+                .fold(0.0, |minutes, (_, _, seconds)| {
+                    minutes + *seconds as f64 / 60.0
+                }),
         })
         .collect())
 }
@@ -753,6 +880,72 @@ mod tests {
         assert_eq!(prob.milestones[0].new_left, 3);
         assert_eq!(prob.milestones[0].new_per_day_needed, Some(0.0));
         assert_eq!(prob.milestones[0].on_track, Some(true));
+    }
+
+    /// Minutes by week, crams included, and the estimate of the minutes a day, which needs reviews
+    /// to go on.
+    #[sqlx::test]
+    async fn reports_minutes(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(
+            &pool,
+            &[&["exam:prob"], &["exam:prob"], &["exam:spdes"]],
+            now - Duration::days(30),
+        )
+        .await;
+        let today = SparesExternalConfig::default().zone().date(now);
+        let config = config(today + Duration::days(30), "");
+        let statuses = goal_status(&pool, &config, now).await.unwrap();
+        assert_eq!(statuses[0].minutes_per_day, None, "no reviews to go on");
+        assert!(
+            statuses[0].parts[0]
+                .weeks
+                .iter()
+                .all(|week| week.minutes == 0.0)
+        );
+
+        // 60 and 120 seconds of reviews and a 30-second cram 2 days ago, and 6 minutes 17 days ago
+        let log = |card: CardId, days_ago: i64, kind: ReviewLogKind, recall: i64, rate: i64| {
+            sqlx::query(
+                r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
+                scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
+                VALUES (?, ?, ?, 3, 'fsrs', 0, ?, ?, ?, '{}')",
+            )
+            .bind(card)
+            .bind((now - Duration::days(days_ago)).timestamp())
+            .bind(kind as u8)
+            .bind(recall)
+            .bind(rate)
+            .bind(NEW)
+            .execute(&pool)
+        };
+        log(ids[0], 2, ReviewLogKind::Review, 50, 10).await.unwrap();
+        log(ids[1], 2, ReviewLogKind::Review, 120, 0).await.unwrap();
+        log(ids[0], 2, ReviewLogKind::Cram, 30, 0).await.unwrap();
+        log(ids[2], 17, ReviewLogKind::Review, 300, 60)
+            .await
+            .unwrap();
+        for id in &ids {
+            set_card(&pool, *id, REVIEW, now + Duration::days(3), 10.0, 5.0).await;
+        }
+        let statuses = goal_status(&pool, &config, now).await.unwrap();
+        let minutes = |part: &GoalPartStatus| {
+            part.weeks
+                .iter()
+                .map(|week| (week.minutes * 10.0).round() / 10.0)
+                .collect::<Vec<_>>()
+        };
+        let [exam, prob, spdes] = statuses[0].parts.as_slice() else {
+            panic!("the goal and 2 parts")
+        };
+        assert_eq!(minutes(exam), [0.0, 0.0, 0.0, 0.0, 0.0, 6.0, 0.0, 3.5]);
+        assert_eq!(minutes(prob), [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.5]);
+        assert_eq!(minutes(spdes), [0.0, 0.0, 0.0, 0.0, 0.0, 6.0, 0.0, 0.0]);
+        // The crams aren't reviews.
+        assert_eq!(exam.weeks[7].reviews, 2);
+        // Each card is due this week, at the pace of reviews so far.
+        let estimate = statuses[0].minutes_per_day.unwrap();
+        assert!(estimate > 0.0, "{estimate}");
     }
 
     /// The projection: a link between the goal's notes holds the newer one back a day, and a link

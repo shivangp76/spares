@@ -1888,6 +1888,13 @@ pub mod goal {
         /// of linked notes
         #[serde(default)]
         pub presets: Vec<GoalPresetUse>,
+        /// The minutes a day the next week of the goal would take at these limits: the new cards
+        /// the [projection](GoalPartStatus::projection) takes, with their learning steps, and the
+        /// cards due, each at the pace of its preset and state that review's time estimates use.
+        /// The later reviews of the new cards aren't counted, so it is a lower bound. `None` with
+        /// no reviews to go on.
+        #[serde(default)]
+        pub minutes_per_day: Option<f64>,
     }
 
     /// How much of a preset's daily limit of new cards a goal's cards would use, by its
@@ -2013,5 +2020,9 @@ pub mod goal {
         pub learned: u32,
         /// Reviews of the cards during the week, crams left out
         pub reviews: u32,
+        /// Minutes spent on the cards during the week, crams included, each answer capped as
+        /// [`maximum_answer_time`](crate::config::SparesExternalConfig::maximum_answer_time) says
+        #[serde(default)]
+        pub minutes: f64,
     }
 }

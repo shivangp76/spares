@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
-import { reviewQueryPath } from "./goals";
+import { formatMinutes, reviewQueryPath } from "./goals";
+
+describe("formatMinutes", () => {
+  test("reads as hours and minutes", () => {
+    expect(formatMinutes(0.2)).toBe("0 min");
+    expect(formatMinutes(25.4)).toBe("25 min");
+    expect(formatMinutes(120)).toBe("2 h");
+    expect(formatMinutes(130)).toBe("2 h 10 min");
+  });
+});
 
 describe("reviewQueryPath", () => {
   test("escapes the query and starts the review", () => {

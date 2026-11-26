@@ -141,6 +141,16 @@ fn render(status: &GoalStatus) -> String {
         for milestone in &goal.milestones {
             let _ = writeln!(out, "{}", milestone_line(goal, milestone));
         }
+        let last_week = goal.weeks.last().map_or(0.0, |week| week.minutes / 7.0);
+        let _ = writeln!(
+            out,
+            "time: {} a day for the next week at these limits, plus the reviews of its new cards; {} a day the last 7 days",
+            status.minutes_per_day.map_or_else(
+                || "unknown".to_string(),
+                |minutes| format!("~{}", duration(minutes))
+            ),
+            duration(last_week),
+        );
     }
     // The pace each part needs for the next milestone, while one is to come
     let next = status.parts.first().and_then(|goal| {
@@ -203,20 +213,31 @@ fn render(status: &GoalStatus) -> String {
             held_back.join(", ")
         );
     }
+    out.push_str(&weeks_table(status, width));
+    out
+}
+
+/// The weeks of `status`, a row per part, with names `width` wide.
+fn weeks_table(status: &GoalStatus, width: usize) -> String {
+    let mut out = String::new();
     let _ = writeln!(
         out,
-        "\nWeeks (cards learned by the end of the week / reviews in it):"
+        "\nWeeks (cards learned by the end of the week / reviews in it / minutes in it):"
     );
     if let Some(first) = status.parts.first() {
         let starts = first.weeks.iter().fold(String::new(), |mut row, week| {
-            let _ = write!(row, "{:>11}", week.start.format("%b %d"));
+            let _ = write!(row, "{:>14}", week.start.format("%b %d"));
             row
         });
         let _ = writeln!(out, "{:<width$}{starts}", "");
     }
     for part in &status.parts {
         let weeks = part.weeks.iter().fold(String::new(), |mut row, week| {
-            let _ = write!(row, "{:>11}", format!("{}/{}", week.learned, week.reviews));
+            let _ = write!(
+                row,
+                "{:>14}",
+                format!("{}/{}/{:.0}", week.learned, week.reviews, week.minutes)
+            );
             row
         });
         let _ = writeln!(out, "{:<width$}{weeks}", part.name);
@@ -253,6 +274,21 @@ fn milestone_line(goal: &GoalPartStatus, milestone: &GoalMilestoneStatus) -> Str
         .map_or_else(String::new, |[fewest, most]| {
             format!("; projected {} new left then", range(fewest, most))
         })
+}
+
+/// `minutes` as `2 h 10 min` or `25 min`.
+fn duration(minutes: f64) -> String {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "minutes of study, rounded"
+    )]
+    let minutes = minutes.max(0.0).round() as u64;
+    match (minutes / 60, minutes % 60) {
+        (0, minutes) => format!("{minutes} min"),
+        (hours, 0) => format!("{hours} h"),
+        (hours, minutes) => format!("{hours} h {minutes} min"),
+    }
 }
 
 /// `low` alone if it is `high`, else `low-high`.
@@ -327,4 +363,17 @@ fn row(part: &GoalPartStatus, width: usize, next: Option<usize>) -> String {
         recall,
         part.below_retention_on_date,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durations_read_as_hours_and_minutes() {
+        assert_eq!(duration(0.2), "0 min");
+        assert_eq!(duration(25.4), "25 min");
+        assert_eq!(duration(120.0), "2 h");
+        assert_eq!(duration(130.0), "2 h 10 min");
+    }
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDataVersion } from "../dataVersion";
 import { useNavigate } from "react-router-dom";
-import { reviewQueryPath } from "../goals";
+import { formatMinutes, reviewQueryPath } from "../goals";
 import { loginPath } from "../login";
 import {
   advanceCards,
@@ -529,6 +529,21 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
         {goal.retention !== null &&
           ` · recall target ${Math.round(goal.retention * 100)}%`}
       </p>
+      {whole && (
+        <p
+          style={{ ...note, marginTop: 0 }}
+          title="The next week's new cards, with their learning steps, and the cards due, at the pace of reviews so far. The new cards' later reviews come on top."
+        >
+          {goal.minutes_per_day === null
+            ? "Time a day at these limits unknown"
+            : `~${formatMinutes(goal.minutes_per_day)}/day at these limits`}
+          {" · "}
+          {formatMinutes(
+            (whole.weeks[whole.weeks.length - 1]?.minutes ?? 0) / 7,
+          )}
+          /day the last 7 days
+        </p>
+      )}
       {whole && (next || passed.length > 0) && (
         <p style={{ ...note, marginTop: 0 }}>
           {passed.map((milestone) => (
@@ -709,6 +724,28 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
               values: whole.weeks.map((week) => week.learned),
               merge: "last",
             }}
+          />
+        </div>
+      )}
+      {whole && whole.weeks.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <p style={{ ...note, margin: "0 0 4px" }}>
+            Minutes spent on its cards by week
+          </p>
+          <BarChart
+            title={`${goal.name}: minutes by week`}
+            labels={labels}
+            series={[
+              {
+                key: "minutes",
+                label: "Minutes",
+                color: "var(--chart-bar)",
+                values: whole.weeks.map((week) => Math.round(week.minutes)),
+              },
+            ]}
+            labelHeading="Week of"
+            mergeToFit={false}
+            height={80}
           />
         </div>
       )}
