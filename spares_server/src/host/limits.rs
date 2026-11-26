@@ -189,7 +189,8 @@ pub async fn usage(db: &SqlitePool, user_id: &str) -> Result<Usage, Error> {
 
 pub async fn record_storage(db: &SqlitePool, user_id: &str, bytes: u64) -> Result<(), Error> {
     sqlx::query(
-        "INSERT INTO usage (user_id, storage_bytes, storage_measured_at) VALUES (?, ?, ?)
+        "INSERT INTO usage (user_id, storage_bytes, storage_measured_at, requests)
+         VALUES (?, ?, ?, 0)
          ON CONFLICT (user_id) DO UPDATE SET storage_bytes = excluded.storage_bytes,
              storage_measured_at = excluded.storage_measured_at",
     )
@@ -283,7 +284,8 @@ impl Counters {
         let now = Utc::now().timestamp();
         for (user_id, requests) in counted {
             sqlx::query(
-                "INSERT INTO usage (user_id, requests, last_request_at) VALUES (?, ?, ?)
+                "INSERT INTO usage (user_id, storage_bytes, requests, last_request_at)
+                 VALUES (?, 0, ?, ?)
                  ON CONFLICT (user_id) DO UPDATE SET requests = requests + excluded.requests,
                      last_request_at = excluded.last_request_at",
             )
