@@ -280,7 +280,7 @@ fn main() {
                             rate_duration: chrono::Duration::seconds(1),
                             tag_id: None,
                         }),
-                        action_id: None,
+                        action_id: Some(spares_core::api::review::new_action_id()),
                     },
                     fixture::now(),
                 )

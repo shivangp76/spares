@@ -190,7 +190,7 @@ pub async fn populate_reviews(
                     let body = SubmitStudyActionRequest {
                         scheduler_name: "fsrs".to_string(),
                         action: StudyAction::Rate(rating_submission),
-                        action_id: None,
+                        action_id: Some(crate::api::review::new_action_id()),
                     };
                     submit_study_action(spares_pool, body, reviewed_at).await?;
                 }

@@ -184,7 +184,7 @@ async function api<T>(
     headers: {
       Authorization: `Bearer ${KEY}`,
       "Content-Type": "application/json",
-      "X-Spares-Sync-Protocol": "2",
+      "X-Spares-Sync-Protocol": "3",
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });

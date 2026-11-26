@@ -93,7 +93,7 @@ async fn rate(pool: &SqlitePool, card_id: CardId) {
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: None,
             }),
-            action_id: None,
+            action_id: Some(crate::api::review::new_action_id()),
         },
         Utc::now(),
     )

@@ -350,23 +350,15 @@ async fn a_bury_sent_again_is_carried_out_once() {
     }
 }
 
-/// Clients from before action ids send none: each request is carried out, as before.
+/// A rating without an action id is refused, and changes nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn ratings_without_an_id_are_each_carried_out() {
+async fn ratings_without_an_id_are_refused() {
     for route in ROUTES {
         let setup = Setup::new(route).await;
         let before = setup.snapshot().await;
-        let body = rating(setup.card_id, 3, None, None);
-        let (first, _) = setup.submit(&body).await;
-        let (second, _) = setup.submit(&body).await;
-        assert_eq!(
-            (first, second),
-            (StatusCode::OK, StatusCode::OK),
-            "{route:?}"
-        );
-        let after = setup.snapshot().await;
-        assert_eq!(after.1, before.1 + 2, "{route:?}: two reviews");
-        assert_eq!(after.4, 0, "{route:?}: nothing recorded");
+        let (status, response) = setup.submit(&rating(setup.card_id, 3, None, None)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{route:?}: {response}");
+        assert_eq!(setup.snapshot().await, before, "{route:?}");
     }
 }
 

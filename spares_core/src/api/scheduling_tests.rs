@@ -81,12 +81,14 @@ async fn create_cards(pool: &SqlitePool, notes: &[&str]) -> Vec<Vec<CardId>> {
 }
 
 async fn study(pool: &SqlitePool, action: StudyAction, at: DateTime<Utc>) {
+    let action_id = matches!(action, StudyAction::Rate(_) | StudyAction::Bury { .. })
+        .then(crate::api::review::new_action_id);
     submit_study_action(
         pool,
         SubmitStudyActionRequest {
             scheduler_name: "fsrs".to_string(),
             action,
-            action_id: None,
+            action_id,
         },
         at,
     )

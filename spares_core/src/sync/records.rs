@@ -33,8 +33,6 @@ pub struct TagRecord {
     pub description: String,
     pub query: Option<String>,
     pub auto_delete: i64,
-    /// Absent from snapshots taken before tags had it, which all rescheduled.
-    #[serde(default = "reschedule_default")]
     pub reschedule: i64,
     pub created_at: i64,
     pub updated_at: i64,
@@ -47,10 +45,6 @@ pub struct SavedSearchRecord {
     pub query: String,
     pub created_at: i64,
     pub updated_at: i64,
-}
-
-fn reschedule_default() -> i64 {
-    1
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -87,8 +81,6 @@ pub struct CardRecord {
     pub updated_at: i64,
     pub due: i64,
     pub stability: f64,
-    /// Missing from a replica on a version before FSRS-7, which reads as `stability`.
-    #[serde(default)]
     pub stability_fast: f64,
     pub difficulty: f64,
     pub desired_retention: f64,

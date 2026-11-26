@@ -37,7 +37,8 @@ use super::records::Changes;
 /// - `1`: a server and clients, set by environment variables, with API keys.
 /// - `2`: hosts and their devices, with device tokens or sessions; every replica but the root's is
 ///   enrolled, and a host with an upstream relays its devices' requests to it.
-pub const SYNC_PROTOCOL_VERSION: u32 = 2;
+/// - `3`: every record carries every field: a tag its `reschedule`, a card its `stability_fast`.
+pub const SYNC_PROTOCOL_VERSION: u32 = 3;
 /// The header that carries [`SYNC_PROTOCOL_VERSION`].
 pub const SYNC_PROTOCOL_HEADER: &str = "x-spares-sync-protocol";
 /// The header listing the hosts a sync request has come through, as their [`host_id`]s separated

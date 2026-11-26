@@ -426,7 +426,7 @@ async fn rate(pool: &SqlitePool, card_id: CardId, rating: u32, at: chrono::DateT
                 rate_duration: Duration::seconds(2),
                 tag_id: None,
             }),
-            action_id: None,
+            action_id: Some(crate::api::review::new_action_id()),
         },
         at,
     )
@@ -803,16 +803,15 @@ async fn reviews_are_unioned_and_replayed() {
     assert!(super::merge::f64_eq(stability_fast, server_stability_fast));
 }
 
-/// A replica on a version before FSRS-7 sends cards without a fast stability.
+/// A card record without a fast stability, as a replica from before protocol 3 sent, is refused.
 #[test]
-fn a_card_without_a_fast_stability_reads_as_zero() {
-    let record: CardRecord = serde_json::from_value(serde_json::json!({
+fn a_card_without_a_fast_stability_is_refused() {
+    let record = serde_json::from_value::<CardRecord>(serde_json::json!({
         "id": 1, "note_id": 1, "order": 1, "back_type": 0, "created_at": 0, "updated_at": 0,
         "due": 0, "stability": 3.0, "difficulty": 5.0, "desired_retention": 0.9,
         "special_state": null, "state": 2, "custom_data": {}, "tags": [],
-    }))
-    .unwrap();
-    assert_eq!((record.stability, record.stability_fast), (3.0, 0.0));
+    }));
+    assert!(record.is_err());
 }
 
 #[tokio::test]

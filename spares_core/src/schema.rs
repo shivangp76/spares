@@ -1250,9 +1250,8 @@ pub mod review {
         /// [`MAX_ACTION_ID_LEN`](crate::api::review::MAX_ACTION_ID_LEN) printable ASCII
         /// characters.
         ///
-        /// Only [`StudyAction::Rate`] and [`StudyAction::Bury`] take one. Clients from before
-        /// there were ids send none, and their actions are carried out each time they arrive, as
-        /// before.
+        /// [`StudyAction::Rate`] and [`StudyAction::Bury`] need one, and the other actions take
+        /// none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub action_id: Option<String>,
     }
@@ -1386,12 +1385,9 @@ pub mod review {
         /// ([`ReviewLogKind::Cram`](crate::model::ReviewLogKind::Cram)), counting each rating, so
         /// a card crammed twice counts twice. For example, going twice through the 60 cards of
         /// an `exam-cram` tag gives 120, while `cards_studied_count` stays 0.
-        // Defaulted, so responses cached by clients before crams were logged still decode.
-        #[serde(default)]
         pub cram_count: u32,
         /// Time spent on those crams, recalling and rating together.
         #[serde_as(as = "serde_with::DurationSeconds<i64>")]
-        #[serde(default)]
         pub cram_duration: Duration,
         pub card_count_by_state: HashMap<StateId, u32>,
         /// The cards due on the date by state, overdue ones included, with new and review cards

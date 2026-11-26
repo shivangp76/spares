@@ -472,7 +472,7 @@ async fn simulate_reviews(
                         rate_duration: Duration::zero(),
                         tag_id: None,
                     }),
-                    action_id: None,
+                    action_id: Some(crate::api::review::new_action_id()),
                 };
                 let submit_review_res = submit_study_action(pool, request, requested_date).await;
                 assert!(submit_review_res.is_ok());
@@ -653,7 +653,7 @@ async fn simulate_filtered_tag_reviews(
                         rate_duration: Duration::zero(),
                         tag_id: Some(filtered_tag_id),
                     }),
-                    action_id: None,
+                    action_id: Some(crate::api::review::new_action_id()),
                 };
                 let submit_review_res = submit_study_action(pool, request, requested_date).await;
                 assert!(submit_review_res.is_ok());

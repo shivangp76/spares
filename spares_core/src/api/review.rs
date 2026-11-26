@@ -2372,7 +2372,8 @@ const ACTION_ID_DAYS: i64 = 30;
 /// write fails, none of it. Only tagging a leech's note and updating the notes repository happen
 /// after the transaction commits (see [`AfterCommit`]).
 ///
-/// With an `action_id` this collection has carried out before, nothing is written and the first
+/// A rating or bury without an `action_id` is refused. With an `action_id` this collection has
+/// carried out before, nothing is written and the first
 /// attempt's response is returned, so that a client can send an action again when it doesn't know
 /// whether it went through (its response was lost, say). The same id with a different request is
 /// refused with [`LibraryError::StudyActionConflict`].
@@ -2392,12 +2393,17 @@ pub async fn submit_study_action(
 
     match action {
         StudyAction::Rate(_) | StudyAction::Bury { .. } => {
+            let Some(action_id) = action_id else {
+                return Err(Error::Library(LibraryError::InvalidStudyAction(
+                    "Rating and burying a card take an action_id".to_string(),
+                )));
+            };
             return Box::pin(submit_card_action(
                 db,
                 scheduler.as_ref(),
                 &scheduler_name,
                 action,
-                action_id.as_deref(),
+                &action_id,
                 at,
             ))
             .await;
@@ -2449,12 +2455,10 @@ async fn submit_card_action(
     scheduler: &dyn SrsScheduler,
     scheduler_name: &str,
     action: StudyAction,
-    action_id: Option<&str>,
+    action_id: &str,
     at: DateTime<Utc>,
 ) -> Result<SubmitStudyActionResponse, Error> {
-    if let Some(id) = action_id {
-        validate_action_id(id)?;
-    }
+    validate_action_id(action_id)?;
     // What a retry has to repeat exactly: everything the client sent but the id
     let request = serde_json::json!({ "scheduler_name": scheduler_name, "action": &action });
     let request = serde_json::to_string(&request).expect("serializable");
@@ -2463,9 +2467,7 @@ async fn submit_card_action(
         _ => None,
     };
     let mut tx = begin_study_action(db).await?;
-    if let Some(id) = action_id
-        && let Some(response) = recorded_study_action(&mut tx, id, &request).await?
-    {
+    if let Some(response) = recorded_study_action(&mut tx, action_id, &request).await? {
         return Ok(response);
     }
     let (event_id, after) = match (action, &config) {
@@ -2478,9 +2480,7 @@ async fn submit_card_action(
         _ => unreachable!("only ratings and buries are submitted here"),
     };
     let response = SubmitStudyActionResponse { event_id };
-    if let Some(id) = action_id {
-        record_study_action(&mut tx, id, &request, &response, at).await?;
-    }
+    record_study_action(&mut tx, action_id, &request, &response, at).await?;
     tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
     after.run(db).await;
     Ok(response)
@@ -3182,7 +3182,7 @@ mod tests {
                 rate_duration: Duration::seconds(5),
                 tag_id: None,
             }),
-            action_id: None,
+            action_id: Some(crate::api::review::new_action_id()),
         };
         let submit_review_res = submit_study_action(&pool, request, now).await;
         assert!(submit_review_res.is_ok());

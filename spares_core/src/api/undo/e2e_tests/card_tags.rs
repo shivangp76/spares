@@ -241,7 +241,7 @@ async fn bury(pool: &SqlitePool, card_id: CardId, at: chrono::DateTime<Utc>) {
         crate::schema::review::SubmitStudyActionRequest {
             scheduler_name: "fsrs".to_string(),
             action: crate::schema::review::StudyAction::Bury { card_id },
-            action_id: None,
+            action_id: Some(crate::api::review::new_action_id()),
         },
         at,
     )
@@ -330,7 +330,7 @@ async fn rating_a_card_starts_its_count_again(pool: SqlitePool) {
                     tag_id: None,
                 },
             ),
-            action_id: None,
+            action_id: Some(crate::api::review::new_action_id()),
         },
         day(2),
     )
