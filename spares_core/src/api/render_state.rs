@@ -211,20 +211,52 @@ mod tests {
             .unwrap();
     }
 
+    /// Makes the notes `pool` creates next have ids no other test has, returning the id they
+    /// come after. Rendered files are named by note id, in a directory that every test and every
+    /// test process shares (two `cargo test` runs at once, in different workspaces, say). So the
+    /// ids are `z` (6-letter ids), this process's id in 4 letters, and `test`, a letter of the
+    /// test's own, which the test's notes count up from.
+    async fn seed_note_ids(pool: &SqlitePool, test: u8) -> NoteId {
+        let mut pid = std::process::id();
+        let mut letters = vec![b'z'];
+        for _ in 0..4 {
+            letters.insert(1, b'a' + u8::try_from(pid % 26).unwrap());
+            pid /= 26;
+        }
+        letters.push(test);
+        let seed = NoteId::from_letters(std::str::from_utf8(&letters).unwrap()).unwrap();
+        sqlx::query("INSERT INTO id_counter (replica, tbl, last) VALUES (0, 'note', ?)")
+            .bind(seed)
+            .execute(pool)
+            .await
+            .unwrap();
+        seed
+    }
+
+    /// Removes the files rendered for `note_ids`, so that seeded ids don't leave files behind.
+    fn remove_rendered(note_ids: &[NoteId]) {
+        let dir = MarkdownParser::new().get_output_rendered_dir(RenderOutputDirectoryType::Card);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if note_ids.iter().any(|id| {
+                let letters = id.letters();
+                name.starts_with(&format!("{letters}.")) || name.starts_with(&format!("{letters}-"))
+            }) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
     /// Rendering records each output's key, and renders again only what changed: outputs whose
     /// rendered file is gone, all of them when forced, and the note and its cards when it changed,
     /// forgetting the cards it no longer has.
-    // TODO(flaky): fails in about 2 of 13 runs of the whole suite, never alone (seen 2026-11-06).
-    // Not from another test's id: only this one and the one seeding `movz` seed `id_counter`.
     #[sqlx::test]
     async fn rendering_keeps_what_it_rendered_in_the_database(pool: SqlitePool) {
         let parser_row = create_parser_helper(&pool, "markdown").await;
-        // Rendered files are in a directory every test shares, so the note has an id of its own
-        sqlx::query("INSERT INTO id_counter (replica, tbl, last) VALUES (0, 'note', ?)")
-            .bind(NoteId::from_letters("rsta").unwrap())
-            .execute(&pool)
-            .await
-            .unwrap();
+        let seed = seed_note_ids(&pool, b'a').await;
         let request = CreateNotesRequest {
             parser_id: parser_row.id,
             requests: vec![CreateNoteRequest {
@@ -242,7 +274,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(note_id > NoteId::from_letters("rsta").unwrap());
+        assert!(note_id > seed);
         let parser = MarkdownParser::new();
         let rendered = |output| -> PathBuf {
             let dir = match output {
@@ -320,6 +352,7 @@ mod tests {
             .await
             .unwrap();
         assert!(states().await.is_empty());
+        remove_rendered(&[note_id]);
     }
 
     /// When notes swap their text, as live notes do when one is inserted before them, each card
@@ -327,11 +360,7 @@ mod tests {
     #[sqlx::test]
     async fn moved_cards_are_copied_from_earlier_renders(pool: SqlitePool) {
         let parser_row = create_parser_helper(&pool, "markdown").await;
-        sqlx::query("INSERT INTO id_counter (replica, tbl, last) VALUES (0, 'note', ?)")
-            .bind(NoteId::from_letters("movz").unwrap())
-            .execute(&pool)
-            .await
-            .unwrap();
+        seed_note_ids(&pool, b'n').await;
         let note = |data: &str| CreateNoteRequest {
             data: data.to_string(),
             keywords: Vec::new(),
@@ -384,6 +413,7 @@ mod tests {
         assert_eq!(std::fs::read(rendered(b)).unwrap(), file_a);
         // The files set aside while rendering are gone
         assert!(!rendered(a).with_extension("pdf.before").exists());
+        remove_rendered(&[a, b]);
     }
 
     #[test]
