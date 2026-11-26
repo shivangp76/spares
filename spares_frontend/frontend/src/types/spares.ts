@@ -953,6 +953,8 @@ export interface GoalMilestoneStatus {
 /** How the cards of a goal, or of one of its parts, are going. */
 export interface GoalPartStatus {
   name: string;
+  /** The search of its cards, to review them with */
+  query: string;
   cards: number;
   new: number;
   learning: number;
@@ -972,6 +974,14 @@ export interface GoalPartStatus {
   weeks: GoalWeek[];
   /** The goal's milestones, in order, with this part's share of each target */
   milestones: GoalMilestoneStatus[];
+}
+
+/** A goal's search and its parts', to review them with (`GET /api/goals`). */
+export interface GoalSearch {
+  name: string;
+  query: string;
+  /** Each part's name and the search of its cards */
+  parts: [string, string][];
 }
 
 /** A `[goals.<name>]` table of config.toml and how it is going (`spares goal status`). */

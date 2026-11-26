@@ -27,6 +27,7 @@ use crate::schedulers::all_schedulers;
 use crate::schedulers::state_role;
 use crate::schema::goal::GoalMilestoneStatus;
 use crate::schema::goal::GoalPartStatus;
+use crate::schema::goal::GoalSearch;
 use crate::schema::goal::GoalStatus;
 use crate::schema::goal::GoalWeek;
 use crate::schema::review::StateRole;
@@ -84,6 +85,23 @@ impl CardHistory {
     }
 }
 
+/// The searches of the goals of `config` and of their parts, in the order of `config.toml`.
+pub fn goal_searches(config: &SparesExternalConfig) -> Vec<GoalSearch> {
+    config
+        .goals
+        .iter()
+        .map(|(name, goal)| GoalSearch {
+            name: name.clone(),
+            query: goal.query.clone(),
+            parts: goal
+                .parts
+                .keys()
+                .map(|part| (part.clone(), goal.part_query(Some(part))))
+                .collect(),
+        })
+        .collect()
+}
+
 /// How every goal of `config` is going, as of `now`, in the order of `config.toml`.
 pub async fn goal_status(
     db: &SqlitePool,
@@ -104,8 +122,9 @@ pub async fn goal_status(
         let mut histories = Vec::new();
         for (index, part_name) in names.enumerate() {
             let sql = cards_sql(goal, index.checked_sub(1));
+            let part = (index > 0).then_some(part_name.as_str());
             let (part, history) =
-                part_status(db, goal, part_name, &sql, zone, now, recall.as_ref()).await?;
+                part_status(db, goal, part_name, part, &sql, zone, now, recall.as_ref()).await?;
             parts.push(part);
             histories.push(history);
         }
@@ -123,12 +142,17 @@ pub async fn goal_status(
     Ok(statuses)
 }
 
-/// [`GoalPartStatus`] of the cards `cards_sql` selects, named `name`, of `goal`, without its
-/// milestones, and the history of those of its cards that aren't suspended.
+/// [`GoalPartStatus`] of the cards `cards_sql` selects, named `name`, of `goal` or of its part
+/// `part`, without its milestones, and the history of those of its cards that aren't suspended.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the part and what it is measured against"
+)]
 async fn part_status(
     db: &SqlitePool,
     goal: &Goal,
     name: &str,
+    part: Option<&str>,
     cards_sql: &str,
     zone: Zone,
     now: DateTime<Utc>,
@@ -150,6 +174,7 @@ async fn part_status(
     let suspended = SpecialState::Suspended as u8;
     let mut status = GoalPartStatus {
         name: name.to_string(),
+        query: goal.part_query(part),
         cards: 0,
         new: 0,
         learning: 0,
@@ -558,6 +583,12 @@ mod tests {
         let [exam, prob, spdes] = statuses[0].parts.as_slice() else {
             panic!("the goal and 2 parts: {statuses:?}")
         };
+        assert_eq!(exam.query, "tag=exam");
+        let searches = goal_searches(&config(day(60), ""));
+        assert_eq!(searches[0].query, "tag=exam");
+        assert_eq!(searches[0].parts[1].0, "spdes");
+        assert_eq!(searches[0].parts[1].1, spdes.query);
+        assert_eq!(prob.query, "(tag=exam) (tag=\"exam:prob\")");
         // 10 days ago, 9 were new (the prob card was learned before): met. Yesterday 7 were new,
         // more than 6: missed. 7 new now to 2 in 10 days needs 0.5 a day, and 2 a fortnight
         // learns only 1.4 in 10 days.

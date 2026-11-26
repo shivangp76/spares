@@ -51,7 +51,7 @@ pub(crate) struct QueueArgs {
 
 pub(crate) async fn print_queue_positions(
     QueueArgs {
-        filter_args,
+        mut filter_args,
         match_query,
         limit,
         json,
@@ -59,6 +59,7 @@ pub(crate) async fn print_queue_positions(
     base_url: &str,
     client: &Client,
 ) -> Result<(), Error> {
+    filter_args.resolve_named_query(base_url, client).await?;
     let filter = filter_args_to_filter(&filter_args, base_url, client)
         .await
         .map_err(|e| miette!("{e}"))?;
@@ -231,4 +232,43 @@ fn time(at: DateTime<Utc>) -> String {
 
 fn terminal_width() -> usize {
     terminal_size::terminal_size().map_or(usize::MAX, |(width, _)| usize::from(width.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use crate::args::CardCommands;
+    use crate::args::Cli;
+    use crate::args::Commands;
+    use crate::review::FilterArgs;
+
+    fn filter(args: &[&str]) -> Result<FilterArgs, clap::Error> {
+        let cli = Cli::try_parse_from(["spares", "card"].iter().chain(args))?;
+        let Commands::Card(card) = cli.command else {
+            panic!("a card command")
+        };
+        Ok(match card.command {
+            CardCommands::Review(review) => review.filter_args,
+            CardCommands::Queue(queue) => queue.filter_args,
+            command => panic!("review or queue, not {command:?}"),
+        })
+    }
+
+    /// `--saved` and `--goal` (with `--part`) stand for a query, for both review and queue.
+    #[test]
+    fn saved_searches_and_goals_are_filters() {
+        for command in ["review", "queue"] {
+            let saved = filter(&[command, "--saved", "exam-may"]).unwrap();
+            assert_eq!(saved.saved.as_deref(), Some("exam-may"));
+            let goal = filter(&[command, "--goal", "may-exam", "--part", "spdes ch3"]).unwrap();
+            assert_eq!(goal.goal.as_deref(), Some("may-exam"));
+            assert_eq!(goal.part.as_deref(), Some("spdes ch3"));
+            // Each stands for the query, so neither goes with one, nor --part without --goal.
+            assert!(filter(&[command, "--saved", "a", "--query", "tag=b"]).is_err());
+            assert!(filter(&[command, "--saved", "a", "--goal", "g"]).is_err());
+            assert!(filter(&[command, "--goal", "g", "--tag-name", "t"]).is_err());
+            assert!(filter(&[command, "--part", "p"]).is_err());
+        }
+    }
 }

@@ -32,6 +32,8 @@ use crate::handlers::card::list_cards_handler;
 use crate::handlers::card::schedule_break_handler;
 use crate::handlers::card::unbury_cards_handler;
 use crate::handlers::card::update_cards_handler;
+use crate::handlers::goal::get_goal_status_handler;
+use crate::handlers::goal::get_goals_handler;
 use crate::handlers::health_check_handler;
 use crate::handlers::image::IMAGE_BODY_LIMIT;
 #[cfg(not(target_family = "wasm"))]
@@ -118,7 +120,6 @@ use crate::handlers::review::get_unmasked_image_occlusion_handler;
 use crate::handlers::review::next_review_card_available_at_handler;
 use crate::handlers::review::queue_positions_handler;
 use crate::handlers::review::submit_study_action_handler;
-use crate::handlers::goal::get_goal_status_handler;
 use crate::handlers::saved_search::delete_saved_search_handler;
 use crate::handlers::saved_search::get_saved_search_handler;
 use crate::handlers::saved_search::list_saved_searches_handler;
@@ -413,6 +414,7 @@ fn review_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             post(get_statistics_graphs_handler),
         )
         .route("/api/statistics/steps", post(get_steps_stats_handler))
+        .route("/api/goals", get(get_goals_handler))
         .route("/api/goals/status", get(get_goal_status_handler))
         .route("/api/review/config", get(get_review_config_handler))
         .route(

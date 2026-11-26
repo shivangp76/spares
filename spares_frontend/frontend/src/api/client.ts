@@ -45,6 +45,7 @@ import type {
   StatisticsResponse,
   StepsStatsRequest,
   StepsStatsResponse,
+  GoalSearch,
   GoalStatus,
   SubmitStudyActionRequest,
   SubmitStudyActionResponse,
@@ -991,6 +992,11 @@ export async function getStatisticsGraphs(
 }
 
 /** How quickly a preset's cards are forgotten in their steps, and the steps that fit. */
+/** The searches of the goals of config.toml and of their parts, to review them with. */
+export async function getGoals(): Promise<GoalSearch[]> {
+  return apiFetch("Goals fetch", "/api/goals");
+}
+
 /** How each goal of config.toml is going, like `spares goal status`. */
 export async function getGoalStatus(): Promise<GoalStatus[]> {
   return apiFetch("Goal status fetch", "/api/goals/status");

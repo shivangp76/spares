@@ -1309,6 +1309,16 @@ impl Goal {
     pub fn learned_by(&self) -> NaiveDate {
         self.learned_by.unwrap_or(self.date)
     }
+
+    /// The search of the cards of the part `part` of [`Self::parts`]: the goal's cards that the
+    /// part's search also finds. [`Self::query`] for the whole goal (`None`) or a part it doesn't
+    /// have.
+    pub fn part_query(&self, part: Option<&str>) -> String {
+        match part.and_then(|part| self.parts.get(part)) {
+            Some(part_query) => format!("({}) ({part_query})", self.query),
+            None => self.query.clone(),
+        }
+    }
 }
 
 impl Default for SparesExternalConfig {

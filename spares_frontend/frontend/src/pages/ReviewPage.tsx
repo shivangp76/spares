@@ -71,6 +71,7 @@ import {
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useRecentSearches } from "../hooks/useRecentSearches";
 import { useSavedSearches } from "../hooks/useSavedSearches";
+import { useGoalSearches } from "../hooks/useGoalSearches";
 import { TYPED_ANSWER_SHORTCUTS, type Keybinding } from "../help/shortcuts";
 import {
   CARD_ZOOMS,
@@ -482,6 +483,8 @@ export default function ReviewPage() {
   const [sessionInfo, setSessionInfo] = useState<string | null>(null);
   // The searches saved on the Notes and Cards pages, to review the cards they find in one click
   const savedSearches = useSavedSearches();
+  // The goals of config.toml and their parts, likewise
+  const goals = useGoalSearches();
   const recentFilters = useRecentSearches<RecentFilter>(
     "spares_review_recent_filters",
     sameFilter,
@@ -698,7 +701,8 @@ export default function ReviewPage() {
       setDueDatePicker(null);
       setBuryUntilPicker(null);
       try {
-        const next = supplied === undefined ? await postReview(filter) : supplied;
+        const next =
+          supplied === undefined ? await postReview(filter) : supplied;
         if (generation !== loadGeneration.current) return;
         if (!next) {
           const availableAt = await nextReviewAvailableAt(filter);
@@ -972,7 +976,8 @@ export default function ReviewPage() {
     try {
       const generation = loadGeneration.current;
       const timeboxDue =
-        config?.timebox && Date.now() - timebox.current.start >= config.timebox * 1000;
+        config?.timebox &&
+        Date.now() - timebox.current.start >= config.timebox * 1000;
       const res = await submitAction({
         scheduler_name: credentials.schedulerName,
         next_review: timeboxDue
@@ -1025,7 +1030,9 @@ export default function ReviewPage() {
       }
       loadCard(
         activeFilter,
-        generation === loadGeneration.current ? res.next_review?.card : undefined,
+        generation === loadGeneration.current
+          ? res.next_review?.card
+          : undefined,
       );
     } catch (e) {
       setError(errorMessage(e));
@@ -2368,6 +2375,31 @@ export default function ReviewPage() {
               ))}
             </div>
           )}
+          {goals.map((goal) => (
+            <div key={goal.name} className="saved-filters">
+              <span style={{ color: "var(--text-muted)" }}>Goal:</span>
+              {[[goal.name, goal.query] as const, ...goal.parts].map(
+                ([name, query], i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setFilterMode("query");
+                      setFilterInput(query);
+                      startReview("query", query);
+                    }}
+                    style={i === 0 ? { fontWeight: 600 } : undefined}
+                    title={
+                      i === 0
+                        ? `Review the cards of ${goal.name} due today`
+                        : `Review the cards of ${goal.name}'s part ${name} due today`
+                    }
+                  >
+                    {name}
+                  </button>
+                ),
+              )}
+            </div>
+          ))}
           {filterMode === "query" && (
             <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
               Queries using <code>limit</code> are saved to a filtered tag once

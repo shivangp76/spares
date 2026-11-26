@@ -1889,6 +1889,10 @@ pub mod goal {
     #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
     pub struct GoalPartStatus {
         pub name: String,
+        /// The search of its cards, to review them with (see
+        /// [`Goal::part_query`](crate::config::Goal::part_query))
+        #[serde(default)]
+        pub query: String,
         /// Cards, suspended ones included
         pub cards: u32,
         /// Cards never studied (or forgotten), not suspended
@@ -1941,6 +1945,17 @@ pub mod goal {
         pub new_on_day: Option<u32>,
         /// Once the day has come, whether `new_on_day` was at most `new_left`
         pub met: Option<bool>,
+    }
+
+    /// A [goal](crate::config::Goal)'s search and its parts', to review them with, from
+    /// `GET /api/goals`: what `spares goal status` reports on, without working anything out.
+    #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+    pub struct GoalSearch {
+        pub name: String,
+        /// The search of the goal's cards
+        pub query: String,
+        /// Each part's name and the search of its cards (the goal's that its search also finds)
+        pub parts: Vec<(String, String)>,
     }
 
     /// One week of a [`GoalPartStatus`].

@@ -113,6 +113,34 @@ pub(crate) struct FilterArgs {
     /// Study a filtered tag with the supplied name
     #[arg(short, long, conflicts_with_all = ["query", "tag_id"])]
     pub(crate) tag_name: Option<String>,
+    /// Filter with the search saved under this name (see `spares saved-search`), as `--query`
+    #[arg(long, conflicts_with_all = ["query", "tag_id", "tag_name", "goal"])]
+    pub(crate) saved: Option<String>,
+    /// Filter with the search of the goal with this name (`[goals.<name>]` of config.toml), as
+    /// `--query`
+    #[arg(long, conflicts_with_all = ["query", "tag_id", "tag_name"])]
+    pub(crate) goal: Option<String>,
+    /// With `--goal`, only the cards of this part of the goal (`[goals.<name>.parts]`)
+    #[arg(long, requires = "goal")]
+    pub(crate) part: Option<String>,
+}
+
+impl FilterArgs {
+    /// Replaces `--saved` or `--goal` (and `--part`) by the query they stand for.
+    pub(crate) async fn resolve_named_query(
+        &mut self,
+        base_url: &str,
+        client: &Client,
+    ) -> Result<(), miette::Error> {
+        if let Some(name) = self.saved.take() {
+            self.query = Some(crate::saved_search::saved_query(&name, base_url, client).await?);
+        } else if let Some(goal) = self.goal.take() {
+            let part = self.part.take();
+            let query = crate::goal::goal_query(&goal, part.as_deref(), base_url, client).await?;
+            self.query = Some(query);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Display, EnumIter, EnumString, PartialEq)]
@@ -659,6 +687,11 @@ pub(crate) async fn review_cards(
     base_url: &str,
     client: &Client,
 ) -> Result<(), String> {
+    review_args
+        .filter_args
+        .resolve_named_query(base_url, client)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     resolve_filtered_tag_id(&mut review_args.filter_args, base_url, client).await?;
     let open_command = review_args.open_command.as_deref();
     let open_command_card = review_args.open_command_card.as_deref();

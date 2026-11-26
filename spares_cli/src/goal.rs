@@ -8,30 +8,97 @@ use reqwest::Client;
 use spares_core::api::goal::PACE_DAYS;
 use spares_core::schema::goal::GoalMilestoneStatus;
 use spares_core::schema::goal::GoalPartStatus;
+use spares_core::schema::goal::GoalSearch;
 use spares_core::schema::goal::GoalStatus;
 
 use crate::args::GoalArgs;
 use crate::utils::ensure_ok;
 
-pub(crate) async fn handle(args: GoalArgs, base_url: &str, client: &Client) -> Result<(), Error> {
+/// How the goals are going, from the host.
+async fn statuses(base_url: &str, client: &Client) -> Result<Vec<GoalStatus>, Error> {
     let response = client
         .get(format!("{base_url}/api/goals/status"))
         .send()
         .await
         .map_err(|e| miette!("{e}"))?;
-    let mut statuses: Vec<GoalStatus> = ensure_ok(response)
+    ensure_ok(response)
+        .await?
+        .json()
+        .await
+        .map_err(|e| miette!("{e}"))
+}
+
+/// `statuses` with only the goal named `name`, or an error if there is none.
+fn only_goal(mut statuses: Vec<GoalStatus>, name: &str) -> Result<GoalStatus, Error> {
+    let names = statuses
+        .iter()
+        .map(|status| status.name.clone())
+        .collect::<Vec<_>>();
+    statuses.retain(|status| status.name == name);
+    statuses.pop().ok_or_else(|| no_goal(name, &names))
+}
+
+fn no_goal(name: &str, names: &[String]) -> Error {
+    miette!(
+        help = if names.is_empty() {
+            "Goals are `[goals.<name>]` tables of config.toml".to_string()
+        } else {
+            format!("The goals are: {}", names.join(", "))
+        },
+        "No goal is named `{name}`"
+    )
+}
+
+/// The search of the cards of goal `goal`, or of its part `part`, for `--goal` and `--part`.
+pub(crate) async fn goal_query(
+    goal: &str,
+    part: Option<&str>,
+    base_url: &str,
+    client: &Client,
+) -> Result<String, Error> {
+    let response = client
+        .get(format!("{base_url}/api/goals"))
+        .send()
+        .await
+        .map_err(|e| miette!("{e}"))?;
+    let searches: Vec<GoalSearch> = ensure_ok(response)
         .await?
         .json()
         .await
         .map_err(|e| miette!("{e}"))?;
+    let names = searches
+        .iter()
+        .map(|search| search.name.clone())
+        .collect::<Vec<_>>();
+    let search = searches
+        .into_iter()
+        .find(|search| search.name == goal)
+        .ok_or_else(|| no_goal(goal, &names))?;
+    let Some(part) = part else {
+        return Ok(search.query);
+    };
+    let names = search
+        .parts
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    search
+        .parts
+        .iter()
+        .find(|(name, _)| name == part)
+        .map(|(_, query)| query.clone())
+        .ok_or_else(|| {
+            miette!(
+                help = format!("The parts of `{goal}` are: {}", names.join(", ")),
+                "Goal `{goal}` has no part `{part}`"
+            )
+        })
+}
+
+pub(crate) async fn handle(args: GoalArgs, base_url: &str, client: &Client) -> Result<(), Error> {
+    let mut statuses = statuses(base_url, client).await?;
     if let Some(name) = &args.name {
-        statuses.retain(|status| &status.name == name);
-        if statuses.is_empty() {
-            return Err(miette!(
-                help = "Goals are `[goals.<name>]` tables of config.toml",
-                "No goal is named `{name}`"
-            ));
-        }
+        statuses = vec![only_goal(statuses, name)?];
     }
     if args.json {
         println!(

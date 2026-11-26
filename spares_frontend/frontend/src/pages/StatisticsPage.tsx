@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDataVersion } from "../dataVersion";
 import { useNavigate } from "react-router-dom";
+import { reviewQueryPath } from "../goals";
 import { loginPath } from "../login";
 import {
   advanceCards,
@@ -438,6 +439,7 @@ function LearnedBar({ part }: { part: GoalPartStatus }) {
 /**
  * The goals of config.toml (`[goals.<name>]`): for each, a row per part with how much is learned,
  * the pace it needs and has, and the recall predicted on the day, then the weeks of the whole goal.
+ * A part's name starts a review of its cards.
  */
 function GoalsSection({ goals }: { goals: GoalStatus[] }) {
   return (
@@ -450,6 +452,7 @@ function GoalsSection({ goals }: { goals: GoalStatus[] }) {
 }
 
 function GoalTable({ goal }: { goal: GoalStatus }) {
+  const navigate = useNavigate();
   const target = goal.retention ?? 0.9;
   const whole = goal.parts[0];
   const labels = whole?.weeks.map((week) => formatDay(week.start)) ?? [];
@@ -568,7 +571,23 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
                 key={part.name}
                 style={i === 0 ? { fontWeight: 600 } : undefined}
               >
-                <td style={{ ...td, whiteSpace: "nowrap" }}>{part.name}</td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  <a
+                    href={reviewQueryPath(part.query)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate(reviewQueryPath(part.query));
+                    }}
+                    title={`Review the cards of ${part.name} due today`}
+                    style={{
+                      color: "inherit",
+                      textDecorationColor: "var(--accent)",
+                      textUnderlineOffset: 3,
+                    }}
+                  >
+                    {part.name}
+                  </a>
+                </td>
                 <td style={td}>
                   <LearnedBar part={part} />
                 </td>
