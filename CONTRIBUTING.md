@@ -20,12 +20,16 @@ open flamegraph.svg
 We follow the Rust community's coding standards. Please run the following before submitting a PR:
 
 ```sh
-# Format code
-cargo fmt
+# Format the files you changed
+rustfmt +nightly --edition 2024 --config skip_children=true <files>
 
 # Check for common issues
 cargo clippy
 ```
+
+`rustfmt.toml` uses options only nightly rustfmt has (`imports_granularity`, `group_imports`): stable `cargo fmt` ignores them and reformats whole crates. `skip_children` keeps rustfmt from following `mod` into other files. It still formats all of each file you give it, so check what it changed besides your edits (with jj: `jj diff --from 'at_operation(<op before>, @)' --to @`).
+
+Spares keeps no code for data that older versions wrote. When a format or schema changes, convert the existing data once, by hand or in a migration, then delete the conversion code.
 
 `spares_core` and `spares_server`'s router also build for the browser, where the web app can keep a copy of the collection. Check that they still do:
 
@@ -57,6 +61,20 @@ spares_server &                     # serves $SPARES_ROOT on 127.0.0.1:8090
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/parsers
 ```
 
+- Give every CLI call both `SPARES_ROOT` and `SPARES_HOST`. Without them, the CLI uses the host you last logged in to, which may be your real one. A wrapper that clears `SPARES_*` variables needs them set again after it.
+- `spares host token <user> --root <root>` prints a Bearer token without a password. It **creates a device** in that root's accounts, so never run it with a real root.
+- Commands that ask for confirmation (`card optimize --apply`, rescheduling) fail when there is no terminal to ask in: pass `--yes`.
+- Set `render_browser_parsers = false`, a top-level key of `users/<id>/config/config.toml` (not `host.toml`), as on a server. Otherwise the host renders Typst notes for the browser, and pushes take minutes.
+
+A scratch host from a copy of a real one:
+
+- `host.toml` holds just `bind = "127.0.0.1:<port>"` (and `frontend_dir`, see below). Drop `[render.copy_notes_to]`: it writes outside the root.
+- Copy the collection with `sqlite3 -readonly <db> ".backup <copy>"`. Copy `accounts.sqlite` with `cp`: `.backup` fails on it in WAL mode.
+- Remove `[sync]` from the copied `users/<id>/config/config.toml` before starting the server. It holds the real upstream's URL and token, and the server syncs on startup. Without `[sync]`, the scratch host is replica 1.
+- Copy `render_assets/` too, or Typst cards fail to compile. For the web app alone, copy `media/`, the user's config, and the card sources from its cache into `<root>/cache/users/<id>/cards`, but not `notes/` or `notes.git`.
+- Copied notes repositories keep their `origin` and `core.hooksPath` pointing at the real ones. Repoint both and run `spares vcs init --repair-hooks` against the scratch host before any push. jj keeps per-repository config in `~/.config/jj/repos`, so delete the scratch entries afterwards.
+- Copy the binaries you run (`cp -c`), so a rebuild can't swap them mid-run.
+
 Sync between hosts is tested with two of them, one the other's upstream (`spares_server/tests/two_hosts.rs`).
 
 An end-to-end test runs a device's copy in headless Chromium, WebKit and Firefox, against a host of its own on an empty collection: setting it up, using it offline, syncing, resolving a conflict, and removing it (see `e2e/local_copy.ts`):
@@ -73,6 +91,62 @@ Pull requests run the native tests, frontend unit tests, and WASM compile check.
 cd spares_frontend/frontend
 SPARES_SEARCH_BENCH=1 bun e2e/local_copy.ts chromium
 ```
+
+Before blaming a change for an e2e failure, run the suite on `main` too: WebKit and Firefox have failed there on their own.
+
+#### In a jj workspace
+
+A new jj workspace has no `svgedit` submodule checkout, `node_modules` or `src/local/pkg`. Clone them from your main checkout (`cp -cR` is an instant copy on APFS), and `target/debug` too, so the first build is incremental:
+
+```sh
+MAIN=<your main checkout>
+for d in node_modules svgedit src/local/pkg; do cp -cR $MAIN/spares_frontend/frontend/$d spares_frontend/frontend/$d; done
+mkdir -p target && cp -cR $MAIN/target/debug target/debug
+cargo build -p spares_server
+cd spares_frontend/frontend && bun run build && SPARES_SERVER_BIN=$PWD/../../target/debug/spares_server bun run e2e
+```
+
+`svgedit` has to be a real directory: vite rejects a symlinked one. `bun run e2e` uses a temporary root of its own and port 8796, and takes about five minutes.
+
+### The web app in a headless browser
+
+To check a change in the web app, or take screenshots of it, build it into a directory of its own and let a scratch host serve it, instead of starting a second `vite` dev server (that one shares `node_modules/.vite` with yours, and opens a tab):
+
+```sh
+cd spares_frontend/frontend
+npx tsc -b && npx vite build --outDir "$SCRATCH/dist" --emptyOutDir
+# in the scratch host.toml: frontend_dir = "<scratch>/dist"
+```
+
+The server has no environment variable for `frontend_dir`. For before/after screenshots, build both versions and point `frontend_dir` at a symlink that you switch between them. A lazily loaded page's loading fallback shows only when it is loaded directly: navigating inside the app keeps the old page until the new one is ready.
+
+With Playwright (`playwright-core`, pointing `executablePath` at the headless shell from `bunx playwright-core install chromium-headless-shell`):
+
+- Log in with `page.request.post("/api/auth/login", {data: {user, password}})`, then set localStorage `spares_credentials` to `{serverUrl, csrfToken, user, schedulerName}`. `schedulerName` must be a real one (e.g. `fsrs`, from `/api/schedulers`), or Statistics fails. Set `spares_vim_keybindings` to `"true"` to test Vim mode.
+- With a Bearer token instead of a password: `extraHTTPHeaders: {authorization: "Bearer …"}` on the context works when the scratch host serves the app itself. Otherwise `page.route("http://app.test/**")` can serve the built files and forward `/api` with the header; then `csrfToken` only needs to be non-empty.
+- `page.route` can also fake an API response, to show a state the data can't.
+- WebKit keeps OPFS (a device's copy) only in `launchPersistentContext`.
+- On macOS, CodeMirror's `Mod` is Cmd: press `ControlOrMeta+Enter`.
+- In Vim mode, press Escape twice: the first may only close autocompletion. The editor applies an outside change to its value about a second after typing stops.
+
+The frontend's lint (react-hooks 7) rejects calling setState synchronously in an effect, even through `useEffectEvent`, and reading refs while computing a memoized value. Defer the call with `queueMicrotask`, or dispatch a DOM event (as `useSubmitKeys` does).
+
+### Clock-dependent tests
+
+A study day ends at `day_starts_at` (4 AM by default), not at midnight. Tests take the hour from `queue::tests::day_starts_at()` and dates from `helpers::study_date`, and a test that needs a time later the same day uses `queue::tests::local_midday()`.
+
+To run the tests at another local time, set `TZ` to a POSIX offset that makes it that time now. The sign is inverted: `TZ=XXX-1:47:30` is UTC+1:47:30. Both chrono's `Local` and SQLite follow it. The offset is the target time minus the current UTC time, wrapped to ±12 hours; check it with `TZ=… date`. Times worth a run are 23:05, 23:52, 23:59:20, 00:00:05, 00:30, 03:52, 03:59:20, 04:00:05 and 04:30. Compute each offset right before its run of `cargo test -p spares_core --lib`.
+
+### On an iPhone in the iOS Simulator
+
+Without the Simulator app, `xcrun simctl` (with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` if the active developer directory is the command-line tools) boots a device, opens URLs (`simctl openurl`; a distinct URL such as `?tab=2` opens a second tab) and takes screenshots (`simctl io booted screenshot`). `safaridriver` can't reach simulators. To drive Safari, talk to the Web Inspector socket (`lsof -aU -c launchd_sim | grep webinspectord_sim`) with its binary-plist RPC:
+
+- A page takes one inspector session, so keep one process holding it, logging the console and running evaluations.
+- `Runtime.evaluate` ignores `awaitPromise`: store a result on `window` and poll for it. It does accept `emulateUserGesture`.
+- Stub `window.confirm` and `alert` first: native dialogs block evaluation. Errors thrown in evaluated code have the stack `@`, so wrap the code in try/catch.
+- Edit a CodeMirror editor through its view (`.cm-content`'s `cmTile.view.dispatch`), never through `innerText`.
+- To go offline, stop the proxy the device reaches the host through: Safari never fires `online` afterwards. `simctl privacy grant` kills Safari.
+- The device's copy is under the simulator's `…/FileSystem/spares/.opaque/`, as SQLite after a 4096-byte header.
 
 ## Documentation
 
