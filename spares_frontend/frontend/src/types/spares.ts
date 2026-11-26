@@ -918,3 +918,47 @@ export interface ImportSharedResponse {
   missing_media: string[];
   skipped_files: string[];
 }
+
+/** One week of a {@link GoalPartStatus}. */
+export interface GoalWeek {
+  /** The week's first day, `YYYY-MM-DD` */
+  start: string;
+  /** Cards first studied by the end of the week */
+  learned: number;
+  /** Reviews of the cards during the week, crams left out */
+  reviews: number;
+}
+
+/** How the cards of a goal, or of one of its parts, are going. */
+export interface GoalPartStatus {
+  name: string;
+  cards: number;
+  new: number;
+  learning: number;
+  review: number;
+  suspended: number;
+  /** Cards first studied in the last 14 days */
+  learned_recently: number;
+  /** New cards a day that learn the rest by `learned_by`; `null` once it has come */
+  new_per_day_needed: number | null;
+  /** When the new cards would all be learned at the last 14 days' pace */
+  projected_learned_by: string | null;
+  /** The average recall predicted on the goal's day, without another review */
+  mean_recall_on_date: number | null;
+  /** Studied cards below the goal's retention (0.9 if none) on the day without another review */
+  below_retention_on_date: number;
+  /** The last weeks, oldest first */
+  weeks: GoalWeek[];
+}
+
+/** A `[goals.<name>]` table of config.toml and how it is going (`spares goal status`). */
+export interface GoalStatus {
+  name: string;
+  date: string;
+  learned_by: string;
+  retention: number | null;
+  days_to_learned_by: number;
+  days_to_date: number;
+  /** The whole goal first, then each of its parts */
+  parts: GoalPartStatus[];
+}

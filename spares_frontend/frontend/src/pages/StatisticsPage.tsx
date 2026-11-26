@@ -8,6 +8,7 @@ import {
   getReviewHistory,
   getStatistics,
   getStatisticsGraphs,
+  getGoalStatus,
   getStepsStats,
   optimizeScheduler,
   postponeCards,
@@ -35,6 +36,8 @@ import { useRecentSearches } from "../hooks/useRecentSearches";
 import { runOnServer, useLocalStatus } from "../local/copy";
 import {
   type AnswerGroup,
+  type GoalPartStatus,
+  type GoalStatus,
   type OptimizeResponse,
   type PassFail,
   type StatisticsGraphsResponse,
@@ -359,6 +362,188 @@ const FORECAST_SPECS = [
   { key: "learning", label: "Learning", color: "var(--chart-learning)" },
   { key: "review", label: "Review", color: "var(--chart-mature)" },
 ];
+
+/** `YYYY-MM-DD` as a short date, like "May 1, 2027". */
+function formatDay(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** How much of a part is learned, as a thin bar under its count. */
+function LearnedBar({ part }: { part: GoalPartStatus }) {
+  const studied = part.cards - part.suspended;
+  const learned = studied - part.new;
+  const fraction = studied === 0 ? 0 : learned / studied;
+  return (
+    <div>
+      <span style={{ fontVariantNumeric: "tabular-nums" }}>
+        {learned} / {studied}
+      </span>
+      <div
+        role="presentation"
+        style={{
+          height: 4,
+          marginTop: 4,
+          borderRadius: 2,
+          background: "var(--border-subtle)",
+          minWidth: 80,
+        }}
+      >
+        <div
+          style={{
+            width: `${Math.round(fraction * 100)}%`,
+            height: "100%",
+            borderRadius: 2,
+            background: "var(--chart-mature)",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The goals of config.toml (`[goals.<name>]`): for each, a row per part with how much is learned,
+ * the pace it needs and has, and the recall predicted on the day, then the weeks of the whole goal.
+ */
+function GoalsSection({ goals }: { goals: GoalStatus[] }) {
+  return (
+    <>
+      {goals.map((goal) => (
+        <GoalTable key={goal.name} goal={goal} />
+      ))}
+    </>
+  );
+}
+
+function GoalTable({ goal }: { goal: GoalStatus }) {
+  const target = goal.retention ?? 0.9;
+  const whole = goal.parts[0];
+  const labels = whole?.weeks.map((week) => formatDay(week.start)) ?? [];
+  const reviews: Series[] = whole
+    ? [
+        {
+          key: "reviews",
+          label: "Reviews",
+          color: "var(--chart-bar)",
+          values: whole.weeks.map((week) => week.reviews),
+        },
+      ]
+    : [];
+  const pace = (part: GoalPartStatus) => {
+    if (part.new === 0) return "Done";
+    if (part.projected_learned_by === null) return "No pace yet";
+    const late = part.projected_learned_by > goal.learned_by;
+    return (
+      <span style={late ? { color: "var(--error)" } : undefined}>
+        {formatDay(part.projected_learned_by)}
+      </span>
+    );
+  };
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h3 className="stat-subheading">{goal.name}</h3>
+      <p style={{ ...note, marginTop: 0 }}>
+        {formatDay(goal.date)} · {goal.days_to_date} days left · new cards
+        learned by {formatDay(goal.learned_by)} ({goal.days_to_learned_by}{" "}
+        days)
+        {goal.retention !== null &&
+          ` · recall target ${Math.round(goal.retention * 100)}%`}
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 14 }}>
+          <thead>
+            <tr>
+              <th style={th}>Part</th>
+              <th style={th}>Learned</th>
+              <th style={{ ...th, textAlign: "right" }}>New</th>
+              <th style={{ ...th, textAlign: "right" }}>Learning</th>
+              <th
+                style={{ ...th, textAlign: "right" }}
+                title="New cards a day that learn the rest in time"
+              >
+                Needed / day
+              </th>
+              <th
+                style={{ ...th, textAlign: "right" }}
+                title="Cards first studied in the last 14 days"
+              >
+                Last 14 days
+              </th>
+              <th
+                style={th}
+                title="When the new cards would all be learned at the last 14 days' pace"
+              >
+                At this pace
+              </th>
+              <th
+                style={{ ...th, textAlign: "right" }}
+                title="The average recall predicted on the day, if the studied cards were not reviewed again"
+              >
+                Recall on the day
+              </th>
+              <th
+                style={{ ...th, textAlign: "right" }}
+                title="Studied cards that would be below the target on the day without another review"
+              >
+                Below {Math.round(target * 100)}%
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {goal.parts.map((part, i) => (
+              <tr
+                key={part.name}
+                style={i === 0 ? { fontWeight: 600 } : undefined}
+              >
+                <td style={{ ...td, whiteSpace: "nowrap" }}>{part.name}</td>
+                <td style={td}>
+                  <LearnedBar part={part} />
+                </td>
+                <td style={numeric}>{part.new}</td>
+                <td style={numeric}>{part.learning}</td>
+                <td style={numeric}>
+                  {part.new_per_day_needed === null
+                    ? "–"
+                    : part.new_per_day_needed.toFixed(1)}
+                </td>
+                <td style={numeric}>{part.learned_recently}</td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>{pace(part)}</td>
+                <td style={numeric}>
+                  {part.mean_recall_on_date === null
+                    ? "–"
+                    : `${Math.round(part.mean_recall_on_date * 100)}%`}
+                </td>
+                <td style={numeric}>{part.below_retention_on_date}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {whole && whole.weeks.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <BarChart
+            title={`${goal.name}: reviews and cards learned by week`}
+            labels={labels}
+            series={reviews}
+            labelHeading="Week of"
+            mergeToFit={false}
+            line={{
+              label: "Learned",
+              color: "var(--chart-line)",
+              values: whole.weeks.map((week) => week.learned),
+              merge: "last",
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ForecastSection({ graphs }: { graphs: StatisticsGraphsResponse }) {
   const { labels, series, total } = useMemo(() => {
@@ -1376,9 +1561,18 @@ export default function StatisticsPage() {
     [scheduler, query, view.periodDays, view.forecastDays, date],
   );
   const historyRequest = useCallback(() => getReviewHistory(query), [query]);
+  const goalsRequest = useCallback(() => getGoalStatus(), []);
   const todayResult = useStatisticsRequest(todayRequest, enabled, revision);
   const graphResult = useStatisticsRequest(graphsRequest, enabled, revision);
   const historyResult = useStatisticsRequest(historyRequest, enabled, revision);
+  // Goals are about today and the server's config.toml, so they are shown as they are, and left
+  // out where they can't be fetched, as offline.
+  const goalsResult = useStatisticsRequest(
+    goalsRequest,
+    enabled && isToday,
+    revision,
+  );
+  const goals = goalsResult.data?.length ? goalsResult.data : null;
   const loading =
     todayResult.loading || graphResult.loading || historyResult.loading;
   const failure = todayResult.error ?? graphResult.error;
@@ -1517,6 +1711,7 @@ export default function StatisticsPage() {
 
       <SectionBar
         titles={[
+          goals && "Goals",
           (statistics || graphs) && todayTitle,
           statistics && "Due",
           graphs && "Forecast",
@@ -1533,6 +1728,13 @@ export default function StatisticsPage() {
           statistics && "Scheduling",
         ]}
       />
+
+      {goals && (
+        <>
+          <SectionTitle>Goals</SectionTitle>
+          <GoalsSection goals={goals} />
+        </>
+      )}
 
       {(statistics || graphs) && (
         <div style={{ opacity: loading ? 0.5 : 1 }}>
