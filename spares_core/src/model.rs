@@ -78,8 +78,7 @@ pub struct Card {
     pub due: DateTime<Utc>,
     pub stability: f64, // changes after every review
     /// FSRS-7's fast stability, which same-day reviews move most. Equal to `stability` under
-    /// FSRS-6, and 0 (read as `stability`) for a card last scheduled before FSRS-7.
-    #[serde(default)]
+    /// FSRS-6.
     pub stability_fast: f64,
     pub difficulty: f64, // changes after every review
     /// Values between 70% and 97% are considered reasonable. See <https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS>.
@@ -300,8 +299,6 @@ pub struct NoteLink {
     pub searched_keyword: String,
     pub matched_keyword: Option<String>,
     pub score: Option<Score>,
-    #[serde(default)]
-    #[sqlx(default)]
     pub relation: LinkRelation,
 }
 
@@ -622,6 +619,87 @@ mod tests {
             ),
             "{err}"
         );
+    }
+
+    /// The backfill gives every stored card a fast stability equal to its stability: card rows,
+    /// sync bases and the cards undo events keep, wherever they are in the payload. A card's
+    /// changes (`{"before", "after"}`) aren't a card, so they aren't touched.
+    #[sqlx::test(migrations = false)]
+    async fn migration_backfill_stability_fast_writes_it_into_every_card(pool: SqlitePool) {
+        use serde_json::json;
+
+        let migrator = crate::collection::migrator();
+        migrator.run_to(20_261_126_200_000, &pool).await.unwrap();
+        let card = |id: i64, stability: f64| {
+            json!({"id": id, "note_id": 1, "order": 1, "back_type": 0, "created_at": 0,
+                   "updated_at": 0, "due": 0, "stability": stability, "difficulty": 5.0,
+                   "desired_retention": 0.9, "special_state": null, "state": 2,
+                   "custom_data": {}})
+        };
+        let changes = json!({"card_id": 1, "stability": {"before": 1.0, "after": 2.0}});
+        let events = [
+            json!({"notes": [{"cards": {"a": [card(1, 3.0)], "b": [card(1, 4.0), card(2, 0.5)]}}]}),
+            json!({"deleted_cards": [card(3, 7.0)]}),
+            json!([changes]),
+        ];
+        let mut conn = pool.acquire().await.unwrap();
+        for statement in [
+            "PRAGMA foreign_keys = OFF",
+            "INSERT INTO parser (id, name) VALUES (1, 'markdown')",
+            "INSERT INTO note (id, data, custom_data, parser_id) VALUES (1, '', '{}', 1)",
+            r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
+               desired_retention, state, custom_data, stability_fast)
+               VALUES (1, 1, 1, 0, 0, 6.0, 5.0, 0.9, 2, '{}', 0),
+                      (2, 1, 2, 0, 0, 0.0, 0.0, 0.9, 0, '{}', 0)"#,
+        ] {
+            sqlx::query(statement).execute(&mut *conn).await.unwrap();
+        }
+        sqlx::query("INSERT INTO sync_base (kind, oid, snapshot) VALUES ('card', 1, ?)")
+            .bind(card(1, 2.0).to_string())
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        for (i, payload) in events.iter().enumerate() {
+            sqlx::query("INSERT INTO event (id, kind, payload) VALUES (?, 7, ?)")
+                .bind(i64::try_from(i).unwrap() + 1)
+                .bind(payload.to_string())
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+        }
+        drop(conn);
+
+        migrator.run(&pool).await.unwrap();
+
+        let cards: Vec<(f64, f64)> =
+            sqlx::query_as("SELECT stability, stability_fast FROM card ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(cards, [(6.0, 6.0), (0.0, 0.0)]);
+        let base: String = sqlx::query_scalar("SELECT snapshot FROM sync_base")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&base).unwrap()["stability_fast"],
+            2.0
+        );
+        let payloads: Vec<serde_json::Value> =
+            sqlx::query_scalar::<_, String>("SELECT payload FROM event ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .map(|payload| serde_json::from_str(payload).unwrap())
+                .collect();
+        let fast = |card: &serde_json::Value| card["stability_fast"].as_f64();
+        let notes = &payloads[0]["notes"][0]["cards"];
+        assert_eq!(fast(&notes["a"][0]), Some(3.0));
+        assert_eq!(fast(&notes["b"][0]), Some(4.0));
+        assert_eq!(fast(&notes["b"][1]), Some(0.5));
+        assert_eq!(fast(&payloads[1]["deleted_cards"][0]), Some(7.0));
+        assert_eq!(payloads[2], events[2]);
     }
 
     #[test]

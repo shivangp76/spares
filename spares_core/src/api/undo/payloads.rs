@@ -187,8 +187,7 @@ pub struct CreateNotesPayload {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeleteNotesPayload {
     pub notes: Vec<NoteSnapshot>,
-    /// What deleting the notes' cards detached from them, for cards that had any. Empty in events
-    /// recorded before it was kept.
+    /// What deleting the notes' cards detached from them, for cards that had any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub card_links: Vec<CardLinks>,
     /// [`auto_delete`](Tag::auto_delete) tags deleted because these notes were the last to have
@@ -410,7 +409,6 @@ pub struct FilteredTagExit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_tag: Option<Tag>,
     /// With `deleted_tag`, the reviews done under the tag, whose `tag_id` deleting it cleared.
-    /// Empty in events recorded before they were kept.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review_log_ids: Vec<i64>,
 }

@@ -96,17 +96,6 @@ pub fn model(config: &SparesExternalConfig) -> Result<FSRS, Error> {
     })
 }
 
-/// The fast stability of a card with `stability` and `stability_fast`, as stored: a card last
-/// scheduled before FSRS-7, or synced from a replica that predates it, has none (0), and the fsrs
-/// crate takes a memory state without one to have it equal the stability.
-pub fn stability_fast(stability: f64, stability_fast: f64) -> f64 {
-    if stability_fast > 0.0 {
-        stability_fast
-    } else {
-        stability
-    }
-}
-
 /// The memory state FSRS remembers for `card`, which must not be new.
 pub fn memory_state(card: &Card) -> MemoryState {
     fsrs_memory_state(CardMemory::from(card))
@@ -213,8 +202,7 @@ impl Curve {
                 let factor2 = f64::from(w[26]).powf(-1.0 / decay2) - 1.0;
                 let memory = format!(
                     "SELECT {stability} AS s, \
-                     MAX(CASE WHEN c.stability_fast > 0 THEN c.stability_fast ELSE c.stability END, \
-                         {STABILITY_MIN:?}) AS sf, \
+                     MAX(c.stability_fast, {STABILITY_MIN:?}) AS sf, \
                      MIN(MAX(c.difficulty, {difficulty_min:?}), {difficulty_max:?}) AS d, \
                      {days} AS t"
                 );
@@ -278,7 +266,7 @@ fn fsrs_memory_state(memory: CardMemory) -> MemoryState {
     MemoryState {
         stability: memory.stability as f32,
         difficulty: memory.difficulty as f32,
-        stability_fast: stability_fast(memory.stability, memory.stability_fast) as f32,
+        stability_fast: memory.stability_fast as f32,
     }
 }
 
@@ -364,8 +352,8 @@ mod tests {
             (0.01, 0.02, 9.0),
             (3.0, 1.0, 1.0),
             (40.0, 25.0, 7.5),
-            // Last scheduled before FSRS-7
-            (10.0, 0.0, 4.0),
+            // Scheduled under FSRS-6
+            (10.0, 10.0, 4.0),
         ]
         .into_iter()
         .map(|(stability, stability_fast, difficulty)| CardMemory {
