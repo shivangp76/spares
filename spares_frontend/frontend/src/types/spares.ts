@@ -149,6 +149,11 @@ export type StudyAction =
 export interface SubmitStudyActionRequest {
   scheduler_name: string;
   action: StudyAction;
+  /**
+   * Names a rating or bury, so that sending it again (with the same request) carries it out once:
+   * a retry gets the first attempt's response. Make one with `newActionId`.
+   */
+  action_id?: string;
   next_review?: { filter?: ReviewFilter; include_front_html?: boolean };
 }
 

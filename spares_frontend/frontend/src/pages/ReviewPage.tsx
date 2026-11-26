@@ -31,6 +31,7 @@ import {
   getTagByName,
   getTodayStatistics,
   isNetworkError,
+  newActionId,
   nextReviewAvailableAt,
   postReview,
   redoEvent,
@@ -98,6 +99,7 @@ import {
   type ReviewFilter,
   type ReviewHistoryResponse,
   type StatisticsResponse,
+  type SubmitStudyActionRequest,
 } from "../types/spares";
 import {
   backPath,
@@ -321,6 +323,19 @@ interface RatedCard {
   card: GetReviewCardResponse;
   /** The rating's event */
   eventId: number;
+  recallMs: number;
+  rateMs: number;
+  typedAnswers: string[];
+}
+
+/**
+ * A rating as sent: its request, which carries its `action_id`, and what showing the next card
+ * needs once it is recorded. Sent again unchanged by Retry, so that a rating that went through
+ * with its response lost is not recorded twice.
+ */
+interface RatingAttempt {
+  request: SubmitStudyActionRequest;
+  card: GetReviewCardResponse;
   recallMs: number;
   rateMs: number;
   typedAnswers: string[];
@@ -651,6 +666,8 @@ export default function ReviewPage() {
   const pendingUndo = useRef<Promise<boolean> | null>(null);
   // A rating being sent while the review shows its loading page
   const pendingRating = useRef<Promise<void> | null>(null);
+  // The rating whose sending failed, while its error shows, for Retry to send again
+  const failedRating = useRef<RatingAttempt | null>(null);
   // Shortcuts pressed meanwhile, to run once it is recorded
   const queuedKeys = useRef<string[]>([]);
   // Bumped after a rating, so that the shortcuts pressed meanwhile run
@@ -694,6 +711,7 @@ export default function ReviewPage() {
       supplied?: GetReviewCardResponse | null,
     ) => {
       const generation = ++loadGeneration.current;
+      failedRating.current = null;
       setPhase("loading");
       setFrontRendered(false);
       setTypedAnswers([]);
@@ -970,17 +988,16 @@ export default function ReviewPage() {
     if (!card || !credentials || recallDuration.current === null) return;
     const rateMs = rateDuration.current ?? Date.now() - rateStart.current;
     const recallMs = recallDuration.current;
-    const recallSeconds = msToSeconds(recallMs);
-    const rateSeconds = msToSeconds(rateMs);
+    failedRating.current = null;
     setPhase("submitting");
     if (!(await undoWentThrough())) return;
-    try {
-      const generation = loadGeneration.current;
-      const timeboxDue =
-        config?.timebox &&
-        Date.now() - timebox.current.start >= config.timebox * 1000;
-      const res = await submitAction({
+    const timeboxDue =
+      config?.timebox &&
+      Date.now() - timebox.current.start >= config.timebox * 1000;
+    await sendRating({
+      request: {
         scheduler_name: credentials.schedulerName,
+        action_id: newActionId(),
         next_review: timeboxDue
           ? undefined
           : { filter: activeFilter, include_front_html: true },
@@ -988,12 +1005,36 @@ export default function ReviewPage() {
           Rate: {
             card_id: card.card_id,
             rating: ratingId,
-            recall_duration: recallSeconds,
-            rate_duration: rateSeconds,
+            recall_duration: msToSeconds(recallMs),
+            rate_duration: msToSeconds(rateMs),
             tag_id: tagId,
           },
         },
-      });
+      },
+      card,
+      recallMs,
+      rateMs,
+      typedAnswers,
+    });
+  }
+
+  /** Sends the rating that failed again, as it was, with its `action_id`. */
+  async function retryRating() {
+    const attempt = failedRating.current;
+    if (!attempt) return;
+    failedRating.current = null;
+    setPhase("submitting");
+    await sendRating(attempt);
+  }
+
+  /** Sends a rating, and shows the next card once it is recorded. */
+  async function sendRating(attempt: RatingAttempt) {
+    const { request, card, recallMs, rateMs, typedAnswers } = attempt;
+    const recallSeconds = msToSeconds(recallMs);
+    const rateSeconds = msToSeconds(rateMs);
+    try {
+      const generation = loadGeneration.current;
+      const res = await submitAction(request);
       setSessionRateMs((ms) => ms + rateMs);
       setReviewedCount((c) => c + 1);
       lastEventId.current = res.event_id;
@@ -1036,10 +1077,12 @@ export default function ReviewPage() {
           : undefined,
       );
     } catch (e) {
+      failedRating.current = attempt;
       setError(errorMessage(e));
       setPhase("error");
     }
   }
+
 
   /** Starts the next timebox and shows the next card. */
   function continueAfterTimebox() {
@@ -1075,6 +1118,7 @@ export default function ReviewPage() {
     runCardAction(async () => {
       const res = await submitAction({
         scheduler_name: schedulerName,
+        action_id: newActionId(),
         action: { Bury: { card_id: cardId } },
       });
       return res.event_id;
@@ -2540,14 +2584,22 @@ export default function ReviewPage() {
           </pre>
           <button
             onClick={() =>
-              card || sessionStarted
-                ? loadCard(activeFilter)
-                : setPhase("landing")
+              failedRating.current
+                ? retryRating()
+                : card || sessionStarted
+                  ? loadCard(activeFilter)
+                  : setPhase("landing")
             }
           >
             Retry
           </button>
-          <button onClick={() => setPhase("landing")} style={{ marginLeft: 8 }}>
+          <button
+            onClick={() => {
+              failedRating.current = null;
+              setPhase("landing");
+            }}
+            style={{ marginLeft: 8 }}
+          >
             Back
           </button>
         </div>

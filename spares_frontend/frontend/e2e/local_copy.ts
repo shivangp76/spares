@@ -641,17 +641,22 @@ async function firstReviewAndDrafts(page: Page, engine: string) {
   const notice = page.getByRole("dialog").getByRole("button").last();
   if (await notice.isVisible()) await notice.click();
   await answer.click();
-  // Drop the response only after the host has committed. Retry on this screen
-  // should refetch the queue; replaying a rating is deferred work.
+  // Lose the responses of the first three attempts at the rating, after the host has carried it
+  // out: the first and its two automatic retries, so that the rating shows as failed. Retry
+  // sends it again with its action_id, and every attempt gets the one undo event the rating made.
   await page.evaluate(() => {
     const original = window.fetch;
+    const eventIds: unknown[] = [];
+    let lose = 3;
     window.fetch = async (...args) => {
       const response = await original(...args);
       if (response.url.endsWith("/api/review/submit") && response.ok) {
-        document.documentElement.dataset.submissions = String(
-          Number(document.documentElement.dataset.submissions ?? 0) + 1,
-        );
-        throw new TypeError("Lost rating response");
+        eventIds.push((await response.clone().json()).event_id);
+        document.documentElement.dataset.eventIds = JSON.stringify(eventIds);
+        if (lose > 0) {
+          lose -= 1;
+          throw new TypeError("Lost rating response");
+        }
       }
       return response;
     };
@@ -659,9 +664,15 @@ async function firstReviewAndDrafts(page: Page, engine: string) {
   await page.getByRole("button", { name: /\(1\)/ }).first().click();
   await page.getByRole("button", { name: "Retry" }).click();
   await answer.waitFor();
+  const eventIds: unknown[] = JSON.parse(
+    (await page.locator("html").getAttribute("data-event-ids")) ?? "[]",
+  );
   check(
-    "recovering a lost response fetches the queue once without resubmitting",
-    (await page.locator("html").getAttribute("data-submissions")) === "1",
+    "a rating whose responses were lost is carried out once, however often it is sent",
+    eventIds.length === 4 &&
+      typeof eventIds[0] === "number" &&
+      eventIds.every((id) => id === eventIds[0]),
+    JSON.stringify(eventIds),
   );
   await logIn(page);
   await page.goto(`${ORIGIN}/notes`);

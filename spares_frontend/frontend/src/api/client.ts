@@ -1107,13 +1107,41 @@ export async function getQueuePositions(
   });
 }
 
+/**
+ * An id for a rating or bury (`SubmitStudyActionRequest.action_id`): 32 hex digits. Unlike
+ * `crypto.randomUUID`, this works on a page served over plain HTTP, such as from a laptop on the
+ * local network.
+ */
+export function newActionId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** How long to wait before each new attempt at a study action that couldn't reach the server */
+const SUBMIT_RETRY_DELAYS_MS = [500, 2000];
+
+/**
+ * Submits a study action. One with an `action_id` is sent again, with the same id, if the server
+ * can't be reached: it is carried out once however many attempts arrive, so this is safe even if
+ * an attempt went through and only its response was lost.
+ */
 export async function submitAction(
   req: SubmitStudyActionRequest,
 ): Promise<SubmitStudyActionResponse> {
-  return apiFetch("Submit", "/api/review/submit", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
+  const body = JSON.stringify(req);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await apiFetch<SubmitStudyActionResponse>(
+        "Submit",
+        "/api/review/submit",
+        { method: "POST", body },
+      );
+    } catch (e) {
+      const delay = SUBMIT_RETRY_DELAYS_MS[attempt];
+      if (!req.action_id || !isNetworkError(e) || delay === undefined) throw e;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 /** Reviews `count` cards ahead of time, like `spares card advance`. */
