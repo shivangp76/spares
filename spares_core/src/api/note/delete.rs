@@ -58,16 +58,23 @@ fn delete_file(file_path: &Path) -> Result<(), Error> {
     unreachable!()
 }
 
-/// Deletes a rendered file and the HTML for web clients next to it, if they exist.
-fn delete_rendered_file(output_rendered_filepath: &Path) -> Result<(), Error> {
-    for path in [
-        output_rendered_filepath.to_path_buf(),
-        web_render_filepath(output_rendered_filepath),
-    ] {
-        if path.exists() {
-            delete_file(&path)?;
-            crate::sync::media::rendered_path_changed(&path);
-        }
+/// Removes a file of the cache, if it exists. The cache is made again from the database, so the
+/// file is not sent to the Trash.
+fn remove_cache_file(path: &Path) -> Result<bool, Error> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(Error::Io {
+            source: e,
+            description: format!("Failed to remove {}", path.display()),
+        }),
+    }
+}
+
+/// Removes a rendered file, letting what syncs rendered files know.
+fn remove_rendered_file(path: &Path) -> Result<(), Error> {
+    if remove_cache_file(path)? {
+        crate::sync::media::rendered_path_changed(path);
     }
     Ok(())
 }
@@ -76,16 +83,9 @@ pub fn delete_note_files(
     parser: &dyn Parseable,
     note_id: NoteId,
     card_orders: &[usize],
-    note_data: &str,
 ) -> Result<(), Error> {
     // NOTE: aux files are not recorded, so they cannot be deleted
-    // Delete the following, if they exist:
-    // - Note raw file
-    // - Note rendered file
-    // - All card raw files
-    // - All card rendered files
-    // - All image occlusion rendered files
-    // Do NOT delete all image occlusion raw files, in case they are used elsewhere
+    // Do NOT delete image occlusion raw files, in case they are used elsewhere
 
     // Note raw path. The notes repository keeps its history, so the file is not sent to the Trash.
     let note_raw_path =
@@ -101,96 +101,61 @@ pub fn delete_note_files(
         }
     }
 
-    // Note rendered path
-    let mut note_rendered_path = parser.get_output_rendered_dir(RenderOutputDirectoryType::Note);
-    note_rendered_path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
-    delete_rendered_file(&note_rendered_path)?;
-
-    // Only the number of image occlusions is needed to find their rendered files, so avoid fully parsing them, which requires the original image and clozes files to still exist
-    let image_occlusion_count = parser.get_image_occlusions(note_data)?.len();
-    delete_card_files(parser, note_id, card_orders, image_occlusion_count)
+    delete_output_files(parser, note_id, RenderOutputType::Note)?;
+    delete_card_files(parser, note_id, card_orders)
 }
 
-/// Deletes the raw and rendered files of a note's cards at `card_orders`, and their rendered image
-/// occlusions (of which the note has `image_occlusion_count`).
+/// Deletes both sides' files of a note's cards at `card_orders` (see [`delete_output_files`]).
 pub fn delete_card_files(
     parser: &dyn Parseable,
     note_id: NoteId,
     card_orders: &[usize],
-    image_occlusion_count: usize,
 ) -> Result<(), Error> {
-    for current_card_order in card_orders {
-        // Card front raw path
-        let mut card_front_raw_path = get_output_raw_dir(
-            parser.get_parser_name(),
-            RenderOutputType::Card(*current_card_order, CardSide::Front),
-            None,
-        );
-        card_front_raw_path.push(parser.get_output_filename(
-            RenderOutputType::Card(*current_card_order, CardSide::Front),
-            note_id,
-        ));
-        card_front_raw_path.set_extension(parser.file_extension());
-        if card_front_raw_path.exists() {
-            delete_file(&card_front_raw_path)?;
+    for &order in card_orders {
+        for side in [CardSide::Front, CardSide::Back] {
+            delete_output_files(parser, note_id, RenderOutputType::Card(order, side))?;
         }
+    }
+    Ok(())
+}
 
-        // Card front rendered path
-        let mut card_front_rendered_path =
-            parser.get_output_rendered_dir(RenderOutputDirectoryType::Card);
-        card_front_rendered_path.push(parser.get_output_filename(
-            RenderOutputType::Card(*current_card_order, CardSide::Front),
-            note_id,
-        ));
-        delete_rendered_file(&card_front_rendered_path)?;
-
-        // Card back raw path
-        let mut card_back_raw_path = get_output_raw_dir(
-            parser.get_parser_name(),
-            RenderOutputType::Card(*current_card_order, CardSide::Back),
-            None,
-        );
-        card_back_raw_path.push(parser.get_output_filename(
-            RenderOutputType::Card(*current_card_order, CardSide::Back),
-            note_id,
-        ));
-        card_back_raw_path.set_extension(parser.file_extension());
-        if card_back_raw_path.exists() {
-            delete_file(&card_back_raw_path)?;
-        }
-
-        // Card back rendered path
-        let mut card_back_rendered_path =
-            parser.get_output_rendered_dir(RenderOutputDirectoryType::Card);
-        card_back_rendered_path.push(parser.get_output_filename(
-            RenderOutputType::Card(*current_card_order, CardSide::Back),
-            note_id,
-        ));
-        delete_rendered_file(&card_back_rendered_path)?;
-
-        // Image occlusion rendered paths
-        for i in 0..image_occlusion_count {
-            for side in [CardSide::Front, CardSide::Back] {
-                let mut output_rendered_filepath = get_image_occlusion_rendered_directory();
-                output_rendered_filepath.push(parser.get_output_filename(
-                    RenderOutputType::Card(*current_card_order, side),
-                    note_id,
-                ));
-                let image_occlusion_order_in_card = i + 1;
-                // Both kinds, in case the note was rendered by a parser that makes the other
-                for overlay in [false, true] {
-                    let image_occlusion_card_filepath = get_image_occlusion_card_filepath(
-                        &output_rendered_filepath,
-                        side,
-                        image_occlusion_order_in_card,
-                        overlay,
-                    );
-                    if image_occlusion_card_filepath.exists() {
-                        delete_file(&image_occlusion_card_filepath)?;
-                        crate::sync::media::rendered_path_changed(&image_occlusion_card_filepath);
-                    }
-                }
+/// Deletes what rendering `output` of a note made in the cache, where it exists: a card's raw
+/// file, the rendered file with its HTML for web clients, and a card's rendered image occlusions.
+/// A note's raw file is in the notes directory instead (see [`delete_note_files`]).
+pub fn delete_output_files(
+    parser: &dyn Parseable,
+    note_id: NoteId,
+    output: RenderOutputType,
+) -> Result<(), Error> {
+    let filename = parser.get_output_filename(output, note_id);
+    let directory = match output {
+        RenderOutputType::Note => RenderOutputDirectoryType::Note,
+        RenderOutputType::Card(..) => RenderOutputDirectoryType::Card,
+    };
+    let rendered = parser.get_output_rendered_dir(directory).join(&filename);
+    remove_rendered_file(&rendered)?;
+    remove_rendered_file(&web_render_filepath(&rendered))?;
+    let RenderOutputType::Card(_, side) = output else {
+        return Ok(());
+    };
+    let mut raw = get_output_raw_dir(parser.get_parser_name(), output, None).join(&filename);
+    raw.set_extension(parser.file_extension());
+    remove_cache_file(&raw)?;
+    // A card's image occlusions are numbered from 1, so the first one missing is past the last.
+    // Both kinds are tried, in case the note was rendered by a parser that makes the other.
+    let image_occlusions = get_image_occlusion_rendered_directory().join(&filename);
+    for order_in_card in 1.. {
+        let mut any = false;
+        for overlay in [false, true] {
+            let path =
+                get_image_occlusion_card_filepath(&image_occlusions, side, order_in_card, overlay);
+            if remove_cache_file(&path)? {
+                crate::sync::media::rendered_path_changed(&path);
+                any = true;
             }
+        }
+        if !any {
+            break;
         }
     }
     Ok(())
@@ -281,22 +246,22 @@ pub async fn delete_notes(
     };
     let (payload, event_id) = delete_notes_from_db(db, &note_ids, payload, log).await?;
 
-    // Delete files for all notes (derive parser_id, data, and card orders from snapshots)
+    // Delete files for all notes (derive parser_id and card orders from snapshots)
     let grouped_note_data = payload
         .notes
         .into_iter()
-        .map(|s| (s.parser_id, (s.id, s.data, s.cards)))
+        .map(|s| (s.parser_id, (s.id, s.cards)))
         .into_group_map();
     let mut commit_paths = Vec::new();
     let deleted: Result<(), Error> = async {
         for (parser_id, notes) in grouped_note_data {
             let parser_response = get_parser(db, parser_id).await?;
             let parser = find_parser(parser_response.name.as_str(), all_parsers)?;
-            for (note_id, note_data, card_snapshots) in notes {
+            for (note_id, card_snapshots) in notes {
                 commit_paths.push(notes_vcs::note_rel_path(parser.as_ref(), note_id));
                 let card_orders: Vec<usize> =
                     card_snapshots.iter().map(|c| c.order as usize).collect();
-                delete_note_files(parser.as_ref(), note_id, &card_orders, &note_data)?;
+                delete_note_files(parser.as_ref(), note_id, &card_orders)?;
             }
         }
         Ok(())

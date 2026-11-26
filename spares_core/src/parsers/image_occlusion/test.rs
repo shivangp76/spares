@@ -1126,32 +1126,11 @@ fn test_grouped_shapes_modify_card_hidden() {
 }
 
 #[test]
-fn test_delete_note_files_with_missing_image_occlusion_files() {
-    // A note whose original image and clozes files no longer exist should still have its rendered image occlusion files deleted
+fn test_delete_note_files_deletes_rendered_image_occlusions() {
+    // Found by their names, without reading the note, whose original image and clozes files may be gone
     let parser: Box<dyn Parseable> = Box::new(MarkdownParser::new());
     let note_id: NoteId = "zzzz".parse().unwrap();
     let card_order = 1;
-    let image_occlusion_dir = get_image_occlusion_directory();
-    let original_image_filepath = image_occlusion_dir.join("test-missing.jpg");
-    let clozes_filepath = image_occlusion_dir.join("test-missing_clozes.svg");
-    assert!(!original_image_filepath.exists());
-    assert!(!clozes_filepath.exists());
-    let data = format!(
-        indoc! {r#"
-        test
-        <!--- spares: image occlusion start --->
-        <!--- original_image_filepath = "{}" --->
-        <!--- clozes_filepath = "{}" --->
-        <!--- front_conceal = "all_groupings" --->
-        <!--- back_reveal = "only_answered" --->
-        <!--- back_emphasis = true --->
-        ![Test]({})
-        <!--- spares: image occlusion end --->
-        "#},
-        original_image_filepath.display(),
-        clozes_filepath.display(),
-        original_image_filepath.display(),
-    );
 
     // PNGs and overlays, in case another parser rendered the note
     let rendered_filepaths = [CardSide::Front, CardSide::Back]
@@ -1169,7 +1148,7 @@ fn test_delete_note_files_with_missing_image_occlusion_files() {
         std::fs::write(filepath, "").unwrap();
     }
 
-    delete_note_files(parser.as_ref(), note_id, &[card_order], &data).unwrap();
+    delete_note_files(parser.as_ref(), note_id, &[card_order]).unwrap();
 
     for filepath in &rendered_filepaths {
         assert!(!filepath.exists());

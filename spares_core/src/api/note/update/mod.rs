@@ -872,12 +872,7 @@ async fn update_notes_uncommitted(
                     })?;
                 let parser = get_parser_only(old_parser_name, &parser_factories)?;
                 commit_paths.push(notes_vcs::note_rel_path(parser.as_ref(), note_id));
-                delete_note_files(
-                    parser.as_ref(),
-                    note_id,
-                    &old_card_orders,
-                    old_note.data.as_str(),
-                )?;
+                delete_note_files(parser.as_ref(), note_id, &old_card_orders)?;
             }
         }
 

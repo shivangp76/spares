@@ -278,8 +278,8 @@ async fn update_files(
 ) -> Result<(), Error> {
     let parsers = get_all_parsers();
     for &note_id in changed.iter().chain(deleted) {
-        let current: Option<(String, String, i64)> = sqlx::query_as(
-            "SELECT p.name, n.data, (SELECT COUNT(*) FROM card WHERE note_id = n.id)
+        let current: Option<(String, i64)> = sqlx::query_as(
+            "SELECT p.name, (SELECT COUNT(*) FROM card WHERE note_id = n.id)
              FROM note n JOIN parser p ON p.id = n.parser_id WHERE n.id = ?",
         )
         .bind(note_id)
@@ -287,17 +287,14 @@ async fn update_files(
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
         match current {
-            Some((parser_name, data, card_count)) => {
+            Some((parser_name, card_count)) => {
                 let parser = find_parser(&parser_name, &parsers)?;
                 let card_count = usize::try_from(card_count).unwrap_or(0);
                 let stale: Vec<usize> = card_orders_on_disk(parser.as_ref(), note_id)
                     .into_iter()
                     .filter(|order| *order > card_count)
                     .collect();
-                let image_occlusions = parser
-                    .get_image_occlusions(&data)
-                    .map_or(0, |occlusions| occlusions.len());
-                delete_card_files(parser.as_ref(), note_id, &stale, image_occlusions)?;
+                delete_card_files(parser.as_ref(), note_id, &stale)?;
             }
             None => {
                 // Its parser is gone with it, so every parser's files are checked.
@@ -305,7 +302,7 @@ async fn update_files(
                     let orders: Vec<usize> = card_orders_on_disk(parser.as_ref(), note_id)
                         .into_iter()
                         .collect();
-                    delete_note_files(parser.as_ref(), note_id, &orders, "")?;
+                    delete_note_files(parser.as_ref(), note_id, &orders)?;
                 }
             }
         }

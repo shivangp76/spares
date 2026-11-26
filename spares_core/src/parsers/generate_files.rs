@@ -196,9 +196,10 @@ pub type RenderStates = HashMap<RenderOutputType, RenderState>;
 pub struct RenderStateChanges {
     /// Outputs rendered again
     pub rendered: Vec<(RenderOutputType, RenderState)>,
-    /// Outputs that failed to render, so that they're rendered again, or that the note no longer
-    /// has
+    /// Outputs that failed to render, so that they're rendered again
     pub removed: Vec<RenderOutputType>,
+    /// Outputs the note no longer has, whose files are deleted once they are forgotten
+    pub gone: Vec<RenderOutputType>,
 }
 
 /// One note's files, made by [`create_note_files_bulk`]
@@ -549,7 +550,7 @@ fn write_note_files(
                     .is_some_and(|card| sides(card).contains(&side)),
             };
             crate::collection::lock(changes)
-                .removed
+                .gone
                 .extend(states.keys().filter(|output| !has(output)));
         }
     }

@@ -92,15 +92,16 @@ pub async fn read_render_states(
 /// Stores what rendering `files` changed in their notes' [`RenderStates`]. A note deleted since is
 /// skipped.
 pub async fn write_render_states(db: &SqlitePool, files: &[NoteFiles]) -> Result<(), Error> {
-    if files
-        .iter()
-        .all(|f| f.render_states.rendered.is_empty() && f.render_states.removed.is_empty())
-    {
+    if files.iter().all(|f| {
+        let changes = &f.render_states;
+        changes.rendered.is_empty() && changes.removed.is_empty() && changes.gone.is_empty()
+    }) {
         return Ok(());
     }
     let mut tx = db.begin().await.map_err(sqlx_error)?;
     for files in files {
-        for output in &files.render_states.removed {
+        let changes = &files.render_states;
+        for output in changes.removed.iter().chain(&changes.gone) {
             sqlx::query("DELETE FROM render_output WHERE note_id = ? AND output = ?")
                 .bind(files.note_id)
                 .bind(output_name(*output))
@@ -291,7 +292,15 @@ mod tests {
         render(&pool, true).await;
         assert_ne!(modified(card_1), times[&card_1]);
 
-        // A note with one card fewer
+        // A note with one card fewer: the card is forgotten, and its files deleted
+        let raw = |output| -> PathBuf {
+            let mut path =
+                crate::parsers::get_output_raw_dir(parser.get_parser_name(), output, None)
+                    .join(parser.get_output_filename(output, note_id));
+            path.set_extension(parser.file_extension());
+            path
+        };
+        assert!(raw(card_2).exists());
         sqlx::query("UPDATE note SET data = '{{Paris}} is in France.'")
             .execute(&pool)
             .await
@@ -300,6 +309,10 @@ mod tests {
         let changed = states().await.remove(&note_id).unwrap();
         assert!(!changed.contains_key(&card_2));
         assert_ne!(changed[&note].key, first[&note].key);
+        assert!(!rendered(card_2).exists());
+        assert!(!raw(card_2).exists());
+        assert!(rendered(card_1).exists());
+        assert!(raw(card_1).exists());
 
         // A deleted note's rows go with it
         sqlx::query("DELETE FROM note")

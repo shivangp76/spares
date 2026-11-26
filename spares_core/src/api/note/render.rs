@@ -15,6 +15,7 @@ use crate::api::MAX_ROWS_IN_QUERY;
 use crate::api::browser_render::sync_render_assets;
 use crate::api::execute_batched_query;
 use crate::api::note::create_note_links;
+use crate::api::note::delete_output_files;
 use crate::api::note::get_keywords;
 use crate::api::note::keyword_distance::MATCHER_VERSION;
 use crate::api::note::keyword_distance::NormalizedKeyword;
@@ -627,6 +628,17 @@ async fn render_note_groups(
         let files = files?;
         // Record what rendered, and its dependencies, even if some notes failed to render.
         write_render_states(db, &files).await?;
+        // The files of cards the notes lost, now that nothing names them. A batch reuses its
+        // cards from links made before it rendered (see `RenderReuse`), so it is done with them.
+        if overridden_output_raw_dir.is_none() {
+            for files in &files {
+                for &output in &files.render_states.gone {
+                    if let Err(e) = delete_output_files(parser.as_ref(), files.note_id, output) {
+                        log::warn!("Failed to delete the files of a card a note lost: {e}");
+                    }
+                }
+            }
+        }
         if render && overridden_output_raw_dir.is_none() {
             sync_render_assets(db, parser.as_ref(), requested_note_ids).await?;
         }
