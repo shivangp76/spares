@@ -163,9 +163,16 @@ fn review_keys(config: &SparesExternalConfig, order: ReviewOrder, now: DateTime<
     }
 }
 
-fn new_keys(order: NewCardOrder, now: DateTime<Utc>, zone: Zone) -> Vec<Key> {
+/// `unblocking` is [`unblocking_sql`]'s weight of note `n`, for [`NewCardOrder::Unblocking`].
+fn new_keys(order: NewCardOrder, now: DateTime<Utc>, zone: Zone, unblocking: &str) -> Vec<Key> {
     match order {
         NewCardOrder::Created => vec![asc("n.created_at"), asc("n.id"), asc("c.\"order\"")],
+        NewCardOrder::Unblocking => vec![
+            desc(unblocking),
+            asc("n.created_at"),
+            asc("n.id"),
+            asc("c.\"order\""),
+        ],
         NewCardOrder::NewestFirst => {
             vec![desc("n.created_at"), desc("n.id"), asc("c.\"order\"")]
         }
@@ -267,11 +274,15 @@ fn render(keys: &[Key]) -> String {
 /// [`QueuePreset::review_order`], with cards of presets that order differently gathered as
 /// [`QueuePreset::review_order`] describes. `caps` should be [`QueueCaps::showable`], so the new
 /// cards a preset's limit holds back are not counted when spreading them over the reviews.
+///
+/// `unblocking` is the weight of note `n` for [`NewCardOrder::Unblocking`], from
+/// [`unblocking_sql`], or `0` if no preset orders by it.
 pub(crate) fn queue_order_by(
     external_config: &SparesExternalConfig,
     now: DateTime<Utc>,
     caps: &QueueCaps,
     query_sort: &[String],
+    unblocking: &str,
 ) -> String {
     let config = &external_config.queue;
     let now_ts = now.timestamp();
@@ -299,7 +310,7 @@ pub(crate) fn queue_order_by(
             &config.presets,
             config.new_order,
             |preset| preset.new_order,
-            |order| new_keys(order, now, external_config.zone()),
+            |order| new_keys(order, now, external_config.zone(), unblocking),
         ),
     );
     within_kind.extend(only(
@@ -468,6 +479,100 @@ pub(crate) fn waiting_on_links(
     })
 }
 
+/// The weight of each note for [`NewCardOrder::Unblocking`]: the most new cards along any chain
+/// of notes waiting behind it. `new[i]` is how many new cards note `i` has, and `dependents[i]`
+/// the notes with new cards that link to it, each newer than it, as notes are in order of age, so
+/// the links make no cycle.
+pub(crate) fn waiting_chain_weights(new: &[u32], dependents: &[Vec<usize>]) -> Vec<u32> {
+    let mut weights = vec![0_u32; new.len()];
+    for note in (0..new.len()).rev() {
+        weights[note] = dependents[note]
+            .iter()
+            .filter(|&&dependent| dependent > note && new[dependent] > 0)
+            .map(|&dependent| new[dependent].saturating_add(weights[dependent]))
+            .max()
+            .unwrap_or(0);
+    }
+    weights
+}
+
+/// Whether some preset, or the top level, orders new cards by [`NewCardOrder::Unblocking`].
+pub(crate) fn orders_by_unblocking(config: &QueueConfig) -> bool {
+    config.new_order == NewCardOrder::Unblocking
+        || config
+            .presets
+            .values()
+            .any(|preset| preset.new_order == Some(NewCardOrder::Unblocking))
+}
+
+/// The weight of note `n` for [`NewCardOrder::Unblocking`], as a SQL expression: see
+/// [`waiting_chain_weights`]. `0` unless [`orders_by_unblocking`].
+///
+/// The notes are those with new cards that aren't suspended, among `query_card_ids` (comma
+/// separated) if the review has a query, linked as [`waiting_on_links`] reads links: by
+/// [`QueueConfig::linked_note_max_score`], only a newer note waiting on an older one.
+pub(crate) async fn unblocking_sql(
+    db: &SqlitePool,
+    config: &QueueConfig,
+    query_card_ids: Option<&str>,
+) -> Result<String, Error> {
+    if !orders_by_unblocking(config) {
+        return Ok("0".to_string());
+    }
+    let in_query = query_card_ids
+        .map(|ids| format!(" AND c.id IN ({ids})"))
+        .unwrap_or_default();
+    let notes_sql = format!(
+        "SELECT c.note_id FROM card c WHERE c.state IN ({new}) \
+         AND (c.special_state IS NULL OR c.special_state IN ({}, {})){in_query}",
+        SpecialState::SchedulerBuried as u8,
+        SpecialState::BuriedUntilLaterToday as u8,
+        new = state_ids_sql(&[StateRole::New]),
+    );
+    let notes: Vec<(crate::model::NoteId, i64, u32)> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT n.id, n.created_at, COUNT(*) FROM ({notes_sql}) w JOIN note n ON n.id = w.note_id \
+         GROUP BY n.id ORDER BY n.created_at, n.id"
+    )))
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    let index = notes
+        .iter()
+        .enumerate()
+        .map(|(index, (id, _, _))| (*id, index))
+        .collect::<HashMap<_, _>>();
+    let links: Vec<(crate::model::NoteId, crate::model::NoteId)> =
+        sqlx::query_as(AssertSqlSafe(format!(
+            "SELECT DISTINCT nl.parent_note_id, nl.linked_note_id FROM note_link nl \
+             WHERE nl.score <= ? AND nl.parent_note_id IN ({notes_sql}) \
+             AND nl.linked_note_id IN ({notes_sql})"
+        )))
+        .bind(config.linked_note_max_score)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    let mut dependents = vec![Vec::new(); notes.len()];
+    for (parent, linked) in links {
+        if let (Some(&parent), Some(&linked)) = (index.get(&parent), index.get(&linked))
+            && linked < parent
+        {
+            dependents[linked].push(parent);
+        }
+    }
+    let new = notes.iter().map(|(_, _, count)| *count).collect::<Vec<_>>();
+    let whens = waiting_chain_weights(&new, &dependents)
+        .into_iter()
+        .zip(&notes)
+        .filter(|(weight, _)| *weight > 0)
+        .map(|(weight, (id, _, _))| format!("WHEN {} THEN {weight}", id.packed()))
+        .join(" ");
+    Ok(if whens.is_empty() {
+        "0".to_string()
+    } else {
+        format!("(CASE n.id {whens} ELSE 0 END)")
+    })
+}
+
 /// A card of [`ordered_queue`].
 #[derive(FromRow)]
 pub(crate) struct QueueRow {
@@ -520,6 +625,7 @@ pub(crate) async fn ordered_queue(
         requested_date,
         &filter.caps.showable(&cards_left_by_state),
         &filter.query_sort,
+        &filter.unblocking,
     );
     let query_str = formatdoc! {"
         SELECT {REVIEW_CARD_COLUMNS}, c.due as due, {preset_sql} as preset
@@ -740,7 +846,8 @@ pub(crate) mod tests {
                 },
                 now,
                 &caps,
-                query_sort
+                query_sort,
+                "0"
             )
         );
         sqlx::query_scalar(AssertSqlSafe(query))
@@ -1304,6 +1411,7 @@ mod daily_limit_tests {
                 query_sort: Vec::new(),
                 filter_cards_clause: "TRUE".to_string(),
                 waiting_clause: None,
+                unblocking: "0".to_string(),
             };
             get_cards_left_by_state_and_time_estimate(&pool, &filter)
                 .await
@@ -1597,7 +1705,7 @@ mod sibling_tests {
 
     fn burying(new: bool, review: bool) -> SparesExternalConfig {
         let mut config = SparesExternalConfig::default();
-        config.queue.bury_new_siblings = new;
+        config.queue.bury_new_siblings = new.into();
         config.queue.bury_review_siblings = review;
         config
     }
@@ -1669,6 +1777,135 @@ mod sibling_tests {
         // A review from yesterday, synced late
         rate(&pool, &burying(true, true), ids[1], now - Duration::days(1)).await;
         assert_eq!(special_states(&pool, &ids[2..]).await, [None, None]);
+    }
+
+    /// Links note `from`'s card's note to `to`'s, with a score that holds it back.
+    async fn link_cards(pool: &SqlitePool, from: CardId, to: CardId) {
+        sqlx::query(
+            r#"INSERT INTO note_link
+                (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score)
+            VALUES ((SELECT note_id FROM card WHERE id = ?), (SELECT note_id FROM card WHERE id = ?),
+                0, 'keyword', 'keyword', 0)"#,
+        )
+        .bind(from)
+        .bind(to)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Notes of `cards` cards each, a day apart, oldest first, with their cards in order.
+    async fn notes_of(pool: &SqlitePool, cards: &[usize], now: DateTime<Utc>) -> Vec<Vec<CardId>> {
+        let parser = create_parser_helper(pool, "markdown").await;
+        let mut notes = Vec::new();
+        for (i, count) in cards.iter().enumerate() {
+            let data = (0..*count).map(|c| format!("{{{{n{i}c{c}}}}}")).join(" ");
+            let at = now - Duration::days(30) + Duration::days(i64::try_from(i).unwrap());
+            let created = create_notes(
+                pool,
+                CreateNotesRequest {
+                    parser_id: parser.id,
+                    requests: vec![CreateNoteRequest {
+                        data,
+                        keywords: Vec::new(),
+                        tags: Vec::new(),
+                        is_suspended: false,
+                        custom_data: serde_json::Map::new(),
+                    }],
+                },
+                at,
+                &get_all_parsers(),
+                false,
+            )
+            .await
+            .unwrap();
+            let note_id = created.notes[0].id;
+            notes.push(
+                sqlx::query_scalar(r#"SELECT id FROM card WHERE note_id = ? ORDER BY "order""#)
+                    .bind(note_id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap(),
+            );
+        }
+        notes
+    }
+
+    /// `"unless_blocking"` buries the new siblings of a note nothing waits on, but not those of a
+    /// note that a newer note with new cards links to.
+    #[sqlx::test]
+    async fn unless_blocking_keeps_the_head_of_a_chain_together(pool: SqlitePool) {
+        let now = Utc::now();
+        let notes = notes_of(&pool, &[2, 2, 2, 1], now).await;
+        link_cards(&pool, notes[1][0], notes[0][0]).await;
+        link_cards(&pool, notes[3][0], notes[2][0]).await;
+        let mut config = SparesExternalConfig::default();
+        config.queue.bury_new_siblings = crate::config::BuryNewSiblings::UnlessBlocking;
+        config.queue.new_after_linked_notes = true;
+        rate(&pool, &config, notes[0][0], now).await;
+        assert_eq!(special_states(&pool, &[notes[0][1]]).await, [None]);
+        rate(&pool, &config, notes[1][0], now).await;
+        assert_eq!(
+            special_states(&pool, &[notes[1][1]]).await,
+            [Some(SpecialState::SchedulerBuried)]
+        );
+        // Without links holding cards back, nothing blocks, so it buries like `true`.
+        config.queue.new_after_linked_notes = false;
+        rate(&pool, &config, notes[2][0], now).await;
+        assert_eq!(
+            special_states(&pool, &[notes[2][1]]).await,
+            [Some(SpecialState::SchedulerBuried)]
+        );
+    }
+
+    #[test]
+    fn waiting_chains_are_weighed_by_their_new_cards() {
+        // 0 <- 1 <- 2, and 0 <- 3; note 4 waits on nothing and nothing waits on it.
+        let new = [1, 2, 3, 1, 5];
+        let dependents = [vec![1, 3], vec![2], vec![], vec![], vec![]];
+        assert_eq!(waiting_chain_weights(&new, &dependents), [5, 3, 0, 0, 0]);
+        // A dependent with no new cards left holds nothing back, so doesn't count.
+        let new = [1, 0, 3, 1, 5];
+        assert_eq!(waiting_chain_weights(&new, &dependents), [1, 3, 0, 0, 0]);
+    }
+
+    /// `"unblocking"` puts the head of the longest waiting chain first, then notes in the order
+    /// they were created, counting only the cards the review's query finds.
+    #[sqlx::test]
+    async fn unblocking_orders_by_waiting_chains(pool: SqlitePool) {
+        let now = Utc::now();
+        // A, B, C, D, oldest first: D waits on C, which waits on B. A waits on nothing.
+        let notes = notes_of(&pool, &[1, 1, 1, 1], now).await;
+        let [a, b, c, d] = [notes[0][0], notes[1][0], notes[2][0], notes[3][0]];
+        link_cards(&pool, c, b).await;
+        link_cards(&pool, d, c).await;
+        let mut config = SparesExternalConfig::default();
+        config.queue.new_order = NewCardOrder::Unblocking;
+        let order = async |config: &SparesExternalConfig, query_ids: Option<&str>| {
+            let unblocking = unblocking_sql(&pool, &config.queue, query_ids)
+                .await
+                .unwrap();
+            let query = format!(
+                "SELECT c.id FROM {} c JOIN note n ON c.note_id = n.id ORDER BY {}",
+                crate::api::preset::cards_with_preset(&config.queue.presets),
+                queue_order_by(config, now, &QueueCaps::default(), &[], &unblocking)
+            );
+            sqlx::query_scalar::<_, CardId>(AssertSqlSafe(query))
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+        assert_eq!(order(&config, None).await, [b, c, a, d]);
+        // A review of A, B and C: D isn't among its cards, so C holds nothing back.
+        let ids = format!("{a}, {b}, {c}");
+        assert_eq!(order(&config, Some(&ids)).await, [b, a, c, d]);
+        // A preset's order works the same, and without one it is the creation order.
+        config.queue.new_order = NewCardOrder::Created;
+        assert_eq!(order(&config, None).await, [a, b, c, d]);
+        assert_eq!(
+            unblocking_sql(&pool, &config.queue, None).await.unwrap(),
+            "0"
+        );
     }
 }
 
@@ -1938,6 +2175,7 @@ mod linked_note_tests {
             query_sort: Vec::new(),
             filter_cards_clause: "TRUE".to_string(),
             waiting_clause: None,
+            unblocking: "0".to_string(),
         };
         let (by_state, _) = get_cards_left_by_state_and_time_estimate(&pool, &filter)
             .await
@@ -2742,7 +2980,8 @@ pub(crate) mod preset_tests {
                     },
                     now,
                     &QueueCaps::default(),
-                    &[]
+                    &[],
+                    "0"
                 )
             );
             sqlx::query_scalar::<_, CardId>(AssertSqlSafe(query))
@@ -2844,7 +3083,10 @@ pub(crate) mod preset_tests {
             .unwrap();
         // The top level does not bury, but `exam` does
         let config = parse(EXAMPLE);
-        assert!(!config.queue.bury_new_siblings);
+        assert_eq!(
+            config.queue.bury_new_siblings,
+            crate::config::BuryNewSiblings::No
+        );
         let scheduler = get_scheduler_from_string("fsrs").unwrap();
         rate_card_with_config(
             &pool,
@@ -2896,7 +3138,7 @@ mod interleave_tests {
         let query = format!(
             "SELECT c.id FROM {} c JOIN note n ON c.note_id = n.id ORDER BY {}",
             cards_with_preset(&config.queue.presets),
-            queue_order_by(&config, now, caps, query_sort)
+            queue_order_by(&config, now, caps, query_sort, "0")
         );
         sqlx::query_scalar(AssertSqlSafe(query))
             .fetch_all(pool)

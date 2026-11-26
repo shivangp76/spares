@@ -512,6 +512,7 @@ mod tests {
             query_sort: Vec::new(),
             filter_cards_clause: "TRUE".to_string(),
             waiting_clause: None,
+            unblocking: "0".to_string(),
         };
         get_cards_left_by_state_and_time_estimate(pool, &filter)
             .await
@@ -658,6 +659,7 @@ mod tests {
             query_sort: Vec::new(),
             filter_cards_clause: "TRUE".to_string(),
             waiting_clause: None,
+            unblocking: "0".to_string(),
         };
         let (by_state, time) = get_cards_left_by_state_and_time_estimate(&pool, &filter)
             .await

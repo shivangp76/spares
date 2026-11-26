@@ -48,6 +48,7 @@ use crate::api::preset::resolve_preset_queries;
 use crate::api::queue::QueueCaps;
 use crate::api::queue::linked_notes_clause;
 use crate::api::queue::queue_order_by;
+use crate::api::queue::unblocking_sql;
 use crate::api::queue::waiting_on_links;
 use crate::api::statistics::local_time::Zone;
 use crate::api::study_pace::MIN_CARD_REVIEWS;
@@ -63,6 +64,7 @@ use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::Transition;
 use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::validate_bury_target;
+use crate::config::BuryNewSiblings;
 use crate::config::LeechAction;
 use crate::config::LeechConfig;
 use crate::config::QueuePreset;
@@ -767,6 +769,9 @@ pub(crate) struct ReviewFilterQuery {
     pub(crate) held_back_clause: Option<String>,
     /// The sort the query (or the filtered tag's query) asks for, for [`queue_order_by`].
     pub(crate) query_sort: Vec<String>,
+    /// The weight of note `n` for [`NewCardOrder::Unblocking`](crate::config::NewCardOrder::Unblocking),
+    /// for [`queue_order_by`]: [`unblocking_sql`](crate::api::queue::unblocking_sql), or `0`.
+    pub(crate) unblocking: String,
     /// The cards of the filter, whether or not review would show them today, as a SQL condition
     /// over `c` with nothing to bind: those matching the query, those in the filtered tag, or
     /// `TRUE` for the default review.
@@ -826,6 +831,7 @@ pub(crate) async fn build_review_filter_query(
     let waiting_clause = (!is_filtered_tag)
         .then(|| waiting_on_links(&config.queue, card_due_limit, query_card_ids.as_deref()))
         .flatten();
+    let unblocking = unblocking_sql(db, &config.queue, query_card_ids.as_deref()).await?;
     let buried_state = SpecialState::BuriedUntilLaterToday as u8;
     let learning_states = step_states().iter().join(", ");
     let learn_ahead_until = (requested_date + config.queue.learn_ahead_limit).timestamp();
@@ -891,6 +897,7 @@ pub(crate) async fn build_review_filter_query(
         query_sort,
         filter_cards_clause,
         waiting_clause,
+        unblocking,
     }))
 }
 
@@ -1089,6 +1096,7 @@ pub async fn get_review_card(
         card_due_limit,
         caps,
         query_sort,
+        unblocking,
         ..
     } = review_filter;
 
@@ -1097,6 +1105,7 @@ pub async fn get_review_card(
         requested_date,
         &caps.showable(&cards_left_by_state),
         &query_sort,
+        &unblocking,
     );
     let query_str = formatdoc! {"
         SELECT {REVIEW_CARD_COLUMNS}
@@ -1922,6 +1931,38 @@ pub(crate) async fn tag_leech(
     Ok(())
 }
 
+/// Whether newer notes with new cards link to note `note_id`, so that
+/// [`QueueConfig::new_after_linked_notes`](crate::config::QueueConfig::new_after_linked_notes)
+/// holds them back while it has new cards, for
+/// [`BuryNewSiblings::UnlessBlocking`]. Always `false` with that setting off.
+async fn holds_back_new_cards(
+    db: &SqlitePool,
+    config: &SparesExternalConfig,
+    note_id: NoteId,
+) -> Result<bool, Error> {
+    if !config.queue.new_after_linked_notes {
+        return Ok(false);
+    }
+    sqlx::query_scalar(AssertSqlSafe(format!(
+        "SELECT EXISTS (SELECT 1 FROM note_link nl \
+         JOIN note ln ON ln.id = nl.linked_note_id \
+         JOIN note pn ON pn.id = nl.parent_note_id \
+         JOIN card pc ON pc.note_id = pn.id \
+         WHERE nl.linked_note_id = ? AND nl.score <= ? \
+         AND (ln.created_at, ln.id) < (pn.created_at, pn.id) \
+         AND pc.state IN ({}) \
+         AND (pc.special_state IS NULL OR pc.special_state IN ({}, {})))",
+        state_ids_sql(&[StateRole::New]),
+        SpecialState::SchedulerBuried as u8,
+        SpecialState::BuriedUntilLaterToday as u8,
+    )))
+    .bind(note_id)
+    .bind(config.queue.linked_note_max_score)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })
+}
+
 /// Buries the siblings of `card` (the other cards of its note) that
 /// [`QueueConfig::bury_new_siblings`](crate::config::QueueConfig::bury_new_siblings) and
 /// [`QueueConfig::bury_review_siblings`](crate::config::QueueConfig::bury_review_siblings) say
@@ -1933,8 +1974,13 @@ async fn bury_siblings(
     reviewed_at: DateTime<Utc>,
 ) -> Result<Vec<UpdateCardPayload>, Error> {
     let queue = &config.queue;
+    let bury_new = match queue.bury_new_siblings {
+        BuryNewSiblings::No => false,
+        BuryNewSiblings::Yes => true,
+        BuryNewSiblings::UnlessBlocking => !holds_back_new_cards(db, config, card.note_id).await?,
+    };
     let roles = [
-        (queue.bury_new_siblings, StateRole::New),
+        (bury_new, StateRole::New),
         (queue.bury_review_siblings, StateRole::Review),
     ]
     .into_iter()

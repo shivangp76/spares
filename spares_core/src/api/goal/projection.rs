@@ -16,6 +16,8 @@ use crate::Error;
 use crate::api::preset::preset_index;
 use crate::api::preset::preset_sql;
 use crate::api::preset::resolve_preset_queries;
+use crate::api::queue::waiting_chain_weights;
+use crate::config::BuryNewSiblings;
 use crate::config::NewCardOrder;
 use crate::config::SparesExternalConfig;
 use crate::model::CardId;
@@ -70,7 +72,7 @@ pub(crate) struct SimPreset {
     /// Its own daily limit of new cards, if it has one
     pub(crate) limit: Option<u32>,
     pub(crate) order: NewCardOrder,
-    pub(crate) bury_new_siblings: bool,
+    pub(crate) bury_new_siblings: BuryNewSiblings,
 }
 
 /// What [`simulate`] runs on.
@@ -109,6 +111,60 @@ pub(crate) struct SimOutput {
     pub(crate) studied_on: Vec<Vec<Option<u32>>>,
     /// For each preset of [`SimInput::presets`], summed over the runs
     pub(crate) presets: Vec<PresetUse>,
+}
+
+impl PresetUse {
+    /// Counts a day on which the preset still had new cards, of which it took `taken` and
+    /// `held_back` waited on links. `top_level_left` is whether the top-level limit had room left,
+    /// since slots it took aren't the links' doing.
+    fn count_day(&mut self, limit: u32, taken: u32, held_back: u32, top_level_left: bool) {
+        self.slots += u64::from(limit);
+        if top_level_left {
+            let unused = limit.saturating_sub(taken);
+            self.lost_to_links += u64::from(unused.min(held_back));
+        }
+    }
+}
+
+/// Whether some new card of `input` comes in a random order, so it takes several runs.
+fn draws_at_random(input: &SimInput) -> bool {
+    input
+        .cards
+        .iter()
+        .filter(|card| card.start == Start::New)
+        .any(|card| {
+            matches!(
+                input.preset(card).order,
+                NewCardOrder::Random | NewCardOrder::RandomNote
+            )
+        })
+}
+
+/// The notes that link to each note of `input`, which it holds back.
+fn dependents(input: &SimInput) -> Vec<Vec<usize>> {
+    let mut dependents = vec![Vec::new(); input.notes.len()];
+    for (note, sim_note) in input.notes.iter().enumerate() {
+        for &prerequisite in &sim_note.prerequisites {
+            dependents[prerequisite].push(note);
+        }
+    }
+    dependents
+}
+
+/// At the start of day `day`, the notes holding their dependents back (with a new card, or today
+/// a card in its steps), and each note's new cards, `new_left` being the cards still new.
+fn note_states(input: &SimInput, new_left: &[bool], day: u32) -> (Vec<bool>, Vec<u32>) {
+    let mut busy = vec![false; input.notes.len()];
+    let mut new_cards = vec![0_u32; input.notes.len()];
+    for (card, new) in input.cards.iter().zip(new_left) {
+        if *new || (day == 0 && card.start == Start::Learning) {
+            busy[card.note] = true;
+        }
+        if *new {
+            new_cards[card.note] += 1;
+        }
+    }
+    (busy, new_cards)
 }
 
 impl SimInput {
@@ -152,25 +208,19 @@ fn draw(value: i64, day: u32, run: u64) -> i64 {
 /// their steps. It also leaves out other study, which shares the top-level limit, and today's
 /// cards already studied, which use up some of today's limits.
 pub(crate) fn simulate(input: &SimInput) -> SimOutput {
-    let random = input
-        .cards
+    let runs = if draws_at_random(input) {
+        RANDOM_RUNS
+    } else {
+        1
+    };
+    let orders = input
+        .presets
         .iter()
-        .filter(|card| card.start == Start::New)
-        .any(|card| {
-            matches!(
-                input.preset(card).order,
-                NewCardOrder::Random | NewCardOrder::RandomNote
-            )
-        });
-    let runs = if random { RANDOM_RUNS } else { 1 };
-    // The order groups of `keys_by_preset`: each order, in the order of the first preset using it,
-    // the top level's last
-    let mut orders: Vec<NewCardOrder> = Vec::new();
-    for preset in input.presets.iter().chain([&input.top_level]) {
-        if !orders.contains(&preset.order) {
-            orders.push(preset.order);
-        }
-    }
+        .chain([&input.top_level])
+        .map(|preset| preset.order)
+        .unique()
+        .collect::<Vec<_>>();
+    let dependents = dependents(input);
     let mut presets = vec![PresetUse::default(); input.presets.len()];
     let mut studied_on = Vec::new();
     for run in 0..runs {
@@ -185,13 +235,12 @@ pub(crate) fn simulate(input: &SimInput) -> SimOutput {
             if remaining == 0 {
                 break;
             }
-            // The notes holding their dependents back
-            let mut busy = vec![false; input.notes.len()];
-            for (card, new) in input.cards.iter().zip(&new_left) {
-                if *new || (day == 0 && card.start == Start::Learning) {
-                    busy[card.note] = true;
-                }
-            }
+            let (busy, new_cards) = note_states(input, &new_left, day);
+            let weights = if input.hold_on_links {
+                waiting_chain_weights(&new_cards, &dependents)
+            } else {
+                vec![0; input.notes.len()]
+            };
             let held = |card: &SimCard| {
                 input.hold_on_links
                     && input.notes[card.note]
@@ -199,7 +248,7 @@ pub(crate) fn simulate(input: &SimInput) -> SimOutput {
                         .iter()
                         .any(|&prerequisite| busy[prerequisite])
             };
-            let queue = day_queue(input, &orders, &new_left, day, run);
+            let queue = day_queue(input, &orders, &new_left, &weights, day, run);
 
             let mut taken_total = 0_u32;
             let mut taken = vec![0_u32; input.presets.len()];
@@ -223,7 +272,13 @@ pub(crate) fn simulate(input: &SimInput) -> SimOutput {
                     }
                     continue;
                 }
-                if preset.bury_new_siblings && touched[card.note] {
+                let buries = match preset.bury_new_siblings {
+                    BuryNewSiblings::No => false,
+                    BuryNewSiblings::Yes => true,
+                    // A note holding back others with new cards is learned in a day.
+                    BuryNewSiblings::UnlessBlocking => weights[card.note] == 0,
+                };
+                if buries && touched[card.note] {
                     continue;
                 }
                 touched[card.note] = true;
@@ -236,16 +291,12 @@ pub(crate) fn simulate(input: &SimInput) -> SimOutput {
                 }
             }
             if day < input.count_until {
+                let top_level_left = taken_total < input.daily_limit;
                 for (p, preset) in input.presets.iter().enumerate() {
                     let Some(limit) = preset.limit.filter(|_| had_new[p]) else {
                         continue;
                     };
-                    presets[p].slots += u64::from(limit);
-                    // Slots the top-level limit took aren't the links' doing.
-                    if taken_total < input.daily_limit {
-                        let unused = limit.saturating_sub(taken[p]);
-                        presets[p].lost_to_links += u64::from(unused.min(held_back[p]));
-                    }
+                    presets[p].count_day(limit, taken[p], held_back[p], top_level_left);
                 }
             }
         }
@@ -258,12 +309,14 @@ pub(crate) fn simulate(input: &SimInput) -> SimOutput {
 }
 
 /// The indices of the cards still new, `new_left`, in the order review shows them on day `day` of
-/// run `run`. `orders` are the order groups of `keys_by_preset` in [`crate::api::queue`]: each
-/// order, in the order of the first preset using it.
+/// run `run`, with each note's `weights` for [`NewCardOrder::Unblocking`]. `orders` are the order
+/// groups of `keys_by_preset` in [`crate::api::queue`]: each order, in the order of the first
+/// preset using it, the top level's last.
 fn day_queue(
     input: &SimInput,
     orders: &[NewCardOrder],
     new_left: &[bool],
+    weights: &[u32],
     day: u32,
     run: u64,
 ) -> Vec<usize> {
@@ -276,11 +329,18 @@ fn day_queue(
             orders.iter().position(|o| *o == order).unwrap_or(0)
         };
         let within = match order {
-            NewCardOrder::Created => (note.created_at, note.id.packed(), card.order),
-            NewCardOrder::NewestFirst => (-note.created_at, -note.id.packed(), card.order),
-            NewCardOrder::Random => (draw(card.id, day, run), 0, 0),
+            NewCardOrder::Created => (0, note.created_at, note.id.packed(), card.order),
+            NewCardOrder::NewestFirst => (0, -note.created_at, -note.id.packed(), card.order),
+            NewCardOrder::Random => (0, draw(card.id, day, run), 0, 0),
             NewCardOrder::RandomNote => (
+                0,
                 draw(note.id.packed(), day, run),
+                note.id.packed(),
+                card.order,
+            ),
+            NewCardOrder::Unblocking => (
+                -i64::from(weights[card.note]),
+                note.created_at,
                 note.id.packed(),
                 card.order,
             ),
@@ -438,13 +498,13 @@ mod tests {
                 name: "exam".to_string(),
                 limit: Some(limit),
                 order: NewCardOrder::Created,
-                bury_new_siblings: bury,
+                bury_new_siblings: bury.into(),
             }],
             top_level: SimPreset {
                 name: String::new(),
                 limit: None,
                 order: NewCardOrder::Created,
-                bury_new_siblings: false,
+                bury_new_siblings: BuryNewSiblings::No,
             },
             daily_limit: u32::MAX,
             hold_on_links: true,
@@ -535,6 +595,49 @@ mod tests {
         );
     }
 
+    /// `"unless_blocking"` learns a note others wait on in a day, and spreads the rest.
+    #[test]
+    fn unless_blocking_learns_the_heads_of_chains_at_once() {
+        let mut input = chain(3, 3, 10, true);
+        input.presets[0].bury_new_siblings = BuryNewSiblings::UnlessBlocking;
+        let day = Some;
+        assert_eq!(
+            days(&simulate(&input)),
+            [
+                day(0),
+                day(0),
+                day(0),
+                day(1),
+                day(1),
+                day(1),
+                day(2),
+                day(3),
+                day(4)
+            ]
+        );
+    }
+
+    /// `"unblocking"` starts with the head of the longest chain.
+    #[test]
+    fn unblocking_starts_the_longest_chain_first() {
+        // Notes 0 and 1 stand alone, then a chain of 2 -> 3 -> 4, a card each, a card a day.
+        let mut input = chain(5, 1, 1, false);
+        input.notes[1].prerequisites.clear();
+        input.notes[2].prerequisites.clear();
+        let day = Some;
+        assert_eq!(
+            days(&simulate(&input)),
+            [day(0), day(1), day(2), day(3), day(4)],
+            "created order"
+        );
+        input.presets[0].order = NewCardOrder::Unblocking;
+        assert_eq!(
+            days(&simulate(&input)),
+            [day(2), day(3), day(0), day(1), day(4)],
+            "the chain's head first, then its next note, which note 4 still waits on"
+        );
+    }
+
     /// A note's cards learning today hold its dependents back until tomorrow, and cards already
     /// learned aren't studied again.
     #[test]
@@ -558,7 +661,7 @@ mod tests {
             name: "other".to_string(),
             limit: Some(1),
             order: NewCardOrder::Created,
-            bury_new_siblings: false,
+            bury_new_siblings: BuryNewSiblings::No,
         });
         // Cards 1 and 2 (the older notes) are of `other`, 3 and 4 of `exam`, newest first.
         input.cards[0].preset = Some(1);

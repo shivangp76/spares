@@ -315,10 +315,6 @@ impl Default for EasyDaysConfig {
 #[serde_with::serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each bool is an independent setting of config.toml"
-)]
 pub struct QueueConfig {
     /// The order of review cards (cards that graduated from their learning steps). Defaults to
     /// [`ReviewOrder::Due`].
@@ -402,7 +398,12 @@ pub struct QueueConfig {
     /// filtered tag (the cards of a filtered tag were picked to be studied together), and
     /// undoing the rating unburies them. Buried siblings are listed by `c.scheduler_buried`
     /// queries and unburied with `spares card unbury`.
-    pub bury_new_siblings: bool,
+    ///
+    /// `"unless_blocking"` buries them except for a note that newer notes with new cards link
+    /// to, which [`Self::new_after_linked_notes`] holds back until it is learned. Such a note is
+    /// then learned in a day and lets the notes waiting on it through, while every other note
+    /// still spreads its cards over days. See [`BuryNewSiblings`].
+    pub bury_new_siblings: BuryNewSiblings,
     /// Whether rating a card buries the review cards of its note that are due today until the
     /// next day. Defaults to `false`. See [`Self::bury_new_siblings`].
     ///
@@ -547,7 +548,7 @@ impl Default for QueueConfig {
             learn_ahead_limit: Duration::minutes(20),
             timebox: None,
             auto_advance: None,
-            bury_new_siblings: false,
+            bury_new_siblings: BuryNewSiblings::No,
             bury_review_siblings: false,
             tag_buried: TagBuriedConfig::default(),
             new_after_linked_notes: false,
@@ -737,9 +738,9 @@ pub struct QueuePreset {
     #[serde_as(as = "Option<Vec<serde_with::DurationSeconds<i64>>>")]
     pub relearning_steps: Option<Vec<Duration>>,
     /// Whether rating a card of this preset buries the new cards of its note, in place of
-    /// [`QueueConfig::bury_new_siblings`]. Siblings are cards of the same note, so they always
-    /// share the preset.
-    pub bury_new_siblings: Option<bool>,
+    /// [`QueueConfig::bury_new_siblings`]: `true`, `false` or `"unless_blocking"`. Siblings are
+    /// cards of the same note, so they always share the preset.
+    pub bury_new_siblings: Option<BuryNewSiblings>,
     /// Whether rating a card of this preset buries its note's review cards due today, in place
     /// of [`QueueConfig::bury_review_siblings`].
     pub bury_review_siblings: Option<bool>,
@@ -810,7 +811,7 @@ pub enum ReviewOrder {
 /// The order of new cards. See [`QueueConfig::new_order`].
 ///
 /// Cards that tie are shown in the order of their ids.
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Hash, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NewCardOrder {
     /// `"created"`: cards of the oldest notes first, and a note's cards in the order they appear
@@ -825,6 +826,63 @@ pub enum NewCardOrder {
     /// `"random_note"`: a random order of notes, with each note's cards together, in the order
     /// they appear in it. It is the same all day and changes the next day.
     RandomNote,
+    /// `"unblocking"`: first the cards of the notes that the most new cards wait on, through
+    /// [`QueueConfig::new_after_linked_notes`], then as [`Self::Created`]. A note's weight is the
+    /// most new cards along any chain of notes held back behind it: notes with new cards that
+    /// link to it, the notes with new cards that link to those, and so on. So the head of a long
+    /// chain comes before a note nothing waits on, and learning it lets the chain through
+    /// sooner.
+    ///
+    /// Only the cards of the review count: those its search finds, if it has one, as only those
+    /// hold each other back. Working it out reads the links of their notes once per card shown.
+    Unblocking,
+}
+
+/// Whether rating a new card buries the other new cards of its note. See
+/// [`QueueConfig::bury_new_siblings`]. Written `true`, `false` or `"unless_blocking"`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BuryNewSiblings {
+    /// `false`
+    #[default]
+    No,
+    /// `true`
+    Yes,
+    /// `"unless_blocking"`: except for a note that newer notes with new cards link to
+    UnlessBlocking,
+}
+
+impl From<bool> for BuryNewSiblings {
+    fn from(bury: bool) -> Self {
+        if bury { Self::Yes } else { Self::No }
+    }
+}
+
+impl Serialize for BuryNewSiblings {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::No => serializer.serialize_bool(false),
+            Self::Yes => serializer.serialize_bool(true),
+            Self::UnlessBlocking => serializer.serialize_str("unless_blocking"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BuryNewSiblings {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Written {
+            Bool(bool),
+            Text(String),
+        }
+        match Written::deserialize(deserializer)? {
+            Written::Bool(bury) => Ok(bury.into()),
+            Written::Text(text) if text == "unless_blocking" => Ok(Self::UnlessBlocking),
+            Written::Text(text) => Err(serde::de::Error::custom(format!(
+                "`{text}` is not true, false or \"unless_blocking\""
+            ))),
+        }
+    }
 }
 
 /// How new cards and review cards are combined. See [`QueueConfig::new_review_mix`].

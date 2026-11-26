@@ -721,6 +721,7 @@ mod tests {
             query_sort: Vec::new(),
             filter_cards_clause: "TRUE".to_string(),
             waiting_clause: waiting_on_links(&config, card_due_limit, None),
+            unblocking: "0".to_string(),
         };
         let rows = cards_of_filter(&pool, &filter, &ids.iter().copied().collect())
             .await
