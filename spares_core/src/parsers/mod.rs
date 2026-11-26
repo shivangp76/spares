@@ -20,6 +20,7 @@ use crate::config::get_files_dir;
 use crate::config::is_test_mode;
 use crate::helpers::get_or_compile_regex;
 use crate::model::CustomData;
+use crate::model::LinkRelation;
 use crate::model::NoteId;
 use crate::platform::is_file;
 use crate::platform::read_to_string;
@@ -56,6 +57,14 @@ pub enum ConstructFileDataType<'a> {
     Note,
     /// Card order
     Card(usize, &'a CardData, CardSide),
+}
+
+/// A link to another note, as [`Parseable::get_linked_notes_with_relations`] finds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkedNoteMatch {
+    /// Where the link's text, the keyword it looks for, is in the note.
+    pub range: Range<usize>,
+    pub relation: LinkRelation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -103,7 +112,25 @@ pub trait Parseable: Send + Sync {
         Ok(notes_data)
     }
 
+    /// Where the text of each link to another note is in `data`, in order.
     fn get_linked_notes(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError>;
+
+    /// [`Self::get_linked_notes`] with each link's [`LinkRelation`]. A parser whose links can't
+    /// say which way they point makes every link a prerequisite. An error if a link names a
+    /// relation that doesn't exist.
+    fn get_linked_notes_with_relations(
+        &self,
+        data: &str,
+    ) -> Result<Vec<LinkedNoteMatch>, LibraryError> {
+        Ok(self
+            .get_linked_notes(data)?
+            .into_iter()
+            .map(|range| LinkedNoteMatch {
+                range,
+                relation: LinkRelation::Prerequisite,
+            })
+            .collect())
+    }
 
     fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError>;
 

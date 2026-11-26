@@ -1,5 +1,8 @@
 #let se(..f) = [[#text(fill: olive, ..f)]] // settings
-#let lin(keyword, note_link: none) = if note_link != none [
+// `rel` says which way the link points: "prerequisite" (the default), "dependent" or "related"
+#let lin(keyword, note_link: none, rel: "prerequisite") = if (
+  rel not in ("prerequisite", "dependent", "related")
+) { panic("rel: of #lin must be \"prerequisite\", \"dependent\" or \"related\", not " + repr(rel)) } else if note_link != none [
   [#link(note_link, keyword)] // linked note
 ] else [
   #text(fill: green, keyword)

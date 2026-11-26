@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use data_parser::KEYWORD_FUNC_NAME;
+use data_parser::LINK_RELATION_ARG;
 use data_parser::LINKED_NOTE_FUNC_NAME;
 use data_parser::TypstDataParser;
 use indoc::indoc;
@@ -14,6 +15,7 @@ use serde::Deserialize;
 
 use crate::Error;
 use crate::LibraryError;
+use crate::NoteErrorKind;
 use crate::helpers::get_or_compile_regex;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
@@ -21,6 +23,7 @@ use crate::parsers::ClozeReplacement;
 use crate::parsers::ConstructFileDataType;
 use crate::parsers::ConstructImageOcclusionType;
 use crate::parsers::GenerateNoteFilesRequest;
+use crate::parsers::LinkedNoteMatch;
 use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
@@ -71,6 +74,37 @@ impl Parseable for TypstParser {
         // We cannot use regex here since then braces won't properly match up. For example, `#lin("test(a)") ( )` or `#lin[test[a]]` or `#lin[a [b]] a #test[]`.
         // Regex::new(r"(?s)#lin\(([^,\n]*)(?:, note_link: ([^\n\)]*))?\)").unwrap()
         Ok(TypstDataParser::cached(data).linked_notes.clone())
+    }
+
+    fn get_linked_notes_with_relations(
+        &self,
+        data: &str,
+    ) -> Result<Vec<LinkedNoteMatch>, LibraryError> {
+        let parsed = TypstDataParser::cached(data);
+        parsed
+            .linked_notes
+            .iter()
+            .zip(&parsed.link_relations)
+            .map(|(range, relation)| match relation {
+                Ok(relation) => Ok(LinkedNoteMatch {
+                    range: range.clone(),
+                    relation: *relation,
+                }),
+                Err(at) => Err(LibraryError::Note(NoteErrorKind::InvalidSettings {
+                    description: format!(
+                        "`{LINK_RELATION_ARG}:` of a link is `{}`, which isn't a relation.",
+                        &data[at.clone()]
+                    ),
+                    advice: Some(format!(
+                        "Write `{LINK_RELATION_ARG}: \"dependent\"` for a link to a note that \
+                         builds on this one, `{LINK_RELATION_ARG}: \"related\"` for one where \
+                         neither builds on the other, or leave it out for a prerequisite."
+                    )),
+                    src: data.to_string(),
+                    at: at.clone().into(),
+                })),
+            })
+            .collect()
     }
 
     fn get_embedded_keywords(&self, data: &str) -> Result<Vec<Range<usize>>, LibraryError> {

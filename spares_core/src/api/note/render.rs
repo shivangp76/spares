@@ -330,6 +330,7 @@ fn rematch_note_links(
                     .as_ref()
                     .map(|x| x.matched_keyword.clone()),
                 score: matched_keyword_data.as_ref().map(|x| x.score),
+                relation: existing_link.relation,
             };
             Some((link, target_changed))
         })

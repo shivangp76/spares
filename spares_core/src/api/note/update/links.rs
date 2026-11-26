@@ -23,8 +23,8 @@ pub(crate) async fn update_note_links(
             .map_err(|e| Error::Sqlx { source: e })?;
 
     // Reparse linked notes from new note data
-    let new_linked_note_ranges = new_parser
-        .get_linked_notes(new_data)
+    let new_links = new_parser
+        .get_linked_notes_with_relations(new_data)
         .map_err(Error::Library)?;
 
     // Create a hashmap from old note links: searched_keyword -> (matched_keyword, linked_note_id, score)
@@ -33,22 +33,11 @@ pub(crate) async fn update_note_links(
         .map(|nl| (nl.searched_keyword.clone(), nl.clone()))
         .collect();
 
-    // Check if old and new linked notes match up exactly by (order, searched_keyword)
-    let mut links_match_exactly = old_note_links.len() == new_linked_note_ranges.len();
-    if links_match_exactly {
-        for (i, range) in new_linked_note_ranges.iter().enumerate() {
-            let new_searched_keyword = new_data[range.clone()].to_string();
-            if let Some(old_link) = old_note_links.get(i) {
-                if old_link.searched_keyword != new_searched_keyword {
-                    links_match_exactly = false;
-                    break;
-                }
-            } else {
-                links_match_exactly = false;
-                break;
-            }
-        }
-    }
+    // Check if old and new linked notes match up exactly by (order, searched_keyword, relation)
+    let links_match_exactly = old_note_links.len() == new_links.len()
+        && old_note_links.iter().zip(&new_links).all(|(old, new)| {
+            old.searched_keyword == new_data[new.range.clone()] && old.relation == new.relation
+        });
 
     if !links_match_exactly {
         // Delete all linked notes for this note
@@ -59,11 +48,11 @@ pub(crate) async fn update_note_links(
             .map_err(|e| Error::Sqlx { source: e })?;
 
         // Create new note links, preserving matched info where possible
-        let new_note_links: Vec<NoteLink> = new_linked_note_ranges
+        let new_note_links: Vec<NoteLink> = new_links
             .into_iter()
             .enumerate()
-            .map(|(i, range)| {
-                let searched_keyword = new_data[range].to_string();
+            .map(|(i, link)| {
+                let searched_keyword = new_data[link.range].to_string();
                 // Try to find matching info from old note links by searched_keyword
                 let nl_opt = old_note_links_map.get(&searched_keyword);
 
@@ -76,6 +65,7 @@ pub(crate) async fn update_note_links(
                         .map(|nl| nl.matched_keyword.clone())
                         .unwrap_or_default(),
                     score: nl_opt.map(|nl| nl.score).unwrap_or_default(),
+                    relation: link.relation,
                 }
             })
             .collect();

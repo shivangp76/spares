@@ -198,16 +198,17 @@ pub async fn create_notes(
         // Note Links
         note_link_entries.extend(
             parser
-                .get_linked_notes(&note_data)?
+                .get_linked_notes_with_relations(&note_data)?
                 .into_iter()
                 .enumerate()
-                .map(|(i, linked_note_range)| NoteLink {
+                .map(|(i, link)| NoteLink {
                     parent_note_id: note_id,
                     linked_note_id: None,
                     order: i as u32,
-                    searched_keyword: note_data[linked_note_range].to_string(),
+                    searched_keyword: note_data[link.range].to_string(),
                     matched_keyword: None,
                     score: None,
+                    relation: link.relation,
                 }),
         );
 
@@ -646,10 +647,10 @@ pub(crate) async fn create_note_links_on(
     conn: &mut sqlx::sqlite::SqliteConnection,
     note_link_entries: &[NoteLink],
 ) -> Result<(), Error> {
-    for chunk in note_link_entries.chunks(max_rows_for(6)) {
+    for chunk in note_link_entries.chunks(max_rows_for(7)) {
         let query_str = format!(
-            "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, matched_keyword, score) VALUES {}",
-            placeholders_2d(chunk.len(), 6)
+            "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, matched_keyword, score, relation) VALUES {}",
+            placeholders_2d(chunk.len(), 7)
         );
         let mut query = sqlx::query(AssertSqlSafe(query_str));
         for NoteLink {
@@ -659,6 +660,7 @@ pub(crate) async fn create_note_links_on(
             searched_keyword,
             matched_keyword,
             score,
+            relation,
         } in chunk
         {
             query = query.bind(parent_note_id);
@@ -667,6 +669,7 @@ pub(crate) async fn create_note_links_on(
             query = query.bind(searched_keyword);
             query = query.bind(matched_keyword);
             query = query.bind(score);
+            query = query.bind(relation);
         }
         query
             .execute(&mut *conn)

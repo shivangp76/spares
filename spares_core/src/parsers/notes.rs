@@ -285,11 +285,12 @@ fn complete_note(
     }
 
     // Get linked notes
-    let linked_notes = output_parser.get_linked_notes(new_data.as_str());
+    // With their relations, so that a `rel:` naming no relation is reported where the note is read
+    let linked_notes = output_parser.get_linked_notes_with_relations(new_data.as_str());
     match linked_notes {
         Ok(ln) => local_settings
             .linked_notes
-            .extend(ln.into_iter().map(|range| new_data[range].to_string())),
+            .extend(ln.into_iter().map(|link| new_data[link.range].to_string())),
         Err(e) => local_settings.errors_and_warnings.push(e),
     }
 

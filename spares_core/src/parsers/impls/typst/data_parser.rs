@@ -4,6 +4,7 @@ use typst_syntax::LinkedNode;
 use typst_syntax::SyntaxKind;
 use typst_syntax::parse;
 
+use crate::model::LinkRelation;
 use crate::parsers::ClozeMatch;
 
 const CLOZE_FUNC_NAME: &str = "cl";
@@ -18,9 +19,16 @@ pub struct TypstDataParser {
     /// and all nested `#cl[…]` calls it contains, sorted start→end (outer first).
     pub clozes: Vec<Vec<ClozeMatch>>,
     pub linked_notes: Vec<Range<usize>>,
+    /// The relation of each of [`Self::linked_notes`], from its `rel:` argument, or where the
+    /// value of a `rel:` that names no relation is.
+    pub link_relations: Vec<Result<LinkRelation, Range<usize>>>,
     pub settings: Vec<Range<usize>>,
     pub keywords: Vec<Range<usize>>,
 }
+
+/// The named argument of `#lin` that says which way the link points, as in
+/// `#lin(rel: "dependent")[X]`
+pub(super) const LINK_RELATION_ARG: &str = "rel";
 
 /// How many notes' texts [`TypstDataParser::cached`] keeps parsed, per thread
 const CACHED_PARSES: usize = 4;
@@ -62,6 +70,7 @@ impl TypstDataParser {
         Self {
             clozes: collector.cloze_groups,
             linked_notes: collector.linked_notes,
+            link_relations: collector.link_relations,
             settings: collector.settings,
             keywords: collector.keywords,
         }
@@ -75,6 +84,7 @@ struct Collector {
     /// comes first, matching the original parser's contract).
     cloze_groups: Vec<Vec<ClozeMatch>>,
     linked_notes: Vec<Range<usize>>,
+    link_relations: Vec<Result<LinkRelation, Range<usize>>>,
     settings: Vec<Range<usize>>,
     keywords: Vec<Range<usize>>,
     /// Nesting depth of `#cl[…]` calls currently being walked. Used to avoid
@@ -110,6 +120,7 @@ impl Collector {
                 LINKED_NOTE_FUNC_NAME => {
                     if let Some(range) = first_content_block_range(node, offset) {
                         self.linked_notes.push(range);
+                        self.link_relations.push(link_relation(node, offset));
                     }
                 }
                 SETTINGS_FUNC_NAME => {
@@ -376,6 +387,49 @@ fn parse_content_block(block: &LinkedNode<'_>, block_offset: usize) -> Option<Co
     })
 }
 
+/// The relation a `#lin` call's `rel:` argument names, [`LinkRelation::Prerequisite`] without
+/// one, or where its value is if it isn't a string naming a relation.
+fn link_relation(call: &LinkedNode<'_>, call_offset: usize) -> Result<LinkRelation, Range<usize>> {
+    let Some((args, args_off)) = args_child(call, call_offset) else {
+        return Ok(LinkRelation::Prerequisite);
+    };
+    let mut child_off = args_off;
+    for child in args.children() {
+        let len = child.len();
+        if child.kind() == SyntaxKind::Named {
+            let mut name = None;
+            let mut value = None;
+            let mut named_off = child_off;
+            for part in child.children() {
+                let part_len = part.len();
+                match part.kind() {
+                    SyntaxKind::Ident if name.is_none() => {
+                        name = Some(part.leaf_text().to_string());
+                    }
+                    SyntaxKind::Colon | SyntaxKind::Space => {}
+                    kind if name.is_some() && value.is_none() => {
+                        let text = part.leaf_text().to_string();
+                        value = Some((kind, text, named_off..named_off + part_len));
+                    }
+                    _ => {}
+                }
+                named_off += part_len;
+            }
+            if name.as_deref() == Some(LINK_RELATION_ARG) {
+                let Some((kind, text, range)) = value else {
+                    return Err(child_off..child_off + len);
+                };
+                let relation = (kind == SyntaxKind::Str)
+                    .then(|| text.trim_matches('"').to_string())
+                    .and_then(|name| LinkRelation::from_name(&name));
+                return relation.ok_or(range);
+            }
+        }
+        child_off += len;
+    }
+    Ok(LinkRelation::Prerequisite)
+}
+
 /// Return the content range (inside `[…]`) of the *first* `ContentBlock` arg of
 /// a function call. Used for `#lin`, `#se`, `#key`.
 fn first_content_block_range(call: &LinkedNode<'_>, call_offset: usize) -> Option<Range<usize>> {
@@ -433,6 +487,57 @@ mod tests {
         let input = "Test $ a &= b #[(bc of #lin[Rule A])] \\ b &=c $";
         let parser = TypstDataParser::new(input);
         assert_eq!(parser.linked_notes, vec![28..34]);
+    }
+
+    /// The text and relation of each link in `input`
+    fn links_with_relations(input: &str) -> Vec<(&str, Result<LinkRelation, &str>)> {
+        let parser = TypstDataParser::new(input);
+        parser
+            .linked_notes
+            .iter()
+            .zip(&parser.link_relations)
+            .map(|(range, relation)| {
+                let relation = relation.clone().map_err(|at| &input[at]);
+                (&input[range.clone()], relation)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_linked_note_relations() {
+        use LinkRelation::*;
+        let input = indoc! { r#"
+            By #lin[a [b]], used in #lin(rel: "dependent")[c [d]] and
+            #lin([e], rel: "related"), as #lin(rel: "prerequisite")[f] says.
+            $ x = #lin(rel: "dependent")[g] $ #cl[ #lin(rel:"related")[h] ][o:1]
+            #lin(note_link: "x.typ", rel: "dependent")[i]
+        "# };
+        assert_eq!(
+            links_with_relations(input),
+            [
+                ("a [b]", Ok(Prerequisite)),
+                ("c [d]", Ok(Dependent)),
+                ("e", Ok(Related)),
+                ("f", Ok(Prerequisite)),
+                ("g", Ok(Dependent)),
+                ("h", Ok(Related)),
+                ("i", Ok(Dependent)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_linked_note_bad_relation() {
+        let input = r#"#lin(rel: "dependant")[a] #lin(rel: dependent)[b] #lin(rel: 1)[c] #lin(other: 1)[d]"#;
+        assert_eq!(
+            links_with_relations(input),
+            [
+                ("a", Err(r#""dependant""#)),
+                ("b", Err("dependent")),
+                ("c", Err("1")),
+                ("d", Ok(LinkRelation::Prerequisite)),
+            ]
+        );
     }
 
     #[test]

@@ -2080,6 +2080,71 @@ mod tests {
         assert_eq!(a_kws, vec!["kw_a"], "note A's keywords must be rolled back");
     }
 
+    /// A link's relation is stored on create, and an edit that changes only a link's relation
+    /// still updates its row. A `rel:` naming no relation is refused.
+    #[sqlx::test]
+    async fn test_update_note_link_relations(pool: SqlitePool) {
+        use crate::model::LinkRelation;
+        let parser = create_parser_helper(&pool, "typst").await;
+        let note = |rel: &str| format!("#lin[a] and #lin(rel: \"{rel}\")[b] #cl[x]");
+        let res = create_notes(
+            &pool,
+            CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: note("dependent"),
+                    keywords: vec![],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            },
+            Utc::now(),
+            &get_all_parsers(),
+            false,
+        )
+        .await
+        .unwrap();
+        let id = res.notes[0].id;
+        let relations = async || -> Vec<(String, LinkRelation)> {
+            sqlx::query_as(
+                r#"SELECT searched_keyword, relation FROM note_link WHERE parent_note_id = ? ORDER BY "order""#,
+            )
+            .bind(id)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+        assert_eq!(
+            relations().await,
+            [
+                ("a".to_string(), LinkRelation::Prerequisite),
+                ("b".to_string(), LinkRelation::Dependent)
+            ]
+        );
+        let update = async |data: String| {
+            update_notes(
+                &pool,
+                UpdateNotesRequest {
+                    selector: NotesSelector::Ids(vec![id]),
+                    data: Some(data),
+                    parser_id: None,
+                    keywords: None,
+                    tags: UpdateTags::None,
+                    custom_data: None,
+                },
+                Utc::now(),
+                &get_all_parsers(),
+                false,
+            )
+            .await
+        };
+        update(note("related")).await.unwrap();
+        assert_eq!(relations().await[1].1, LinkRelation::Related);
+        assert!(update(note("dependant")).await.is_err());
+        assert_eq!(relations().await[1].1, LinkRelation::Related);
+    }
+
     /// Keyword rows are chunked at the *row* level, so a single note with many keywords stays
     /// below `SQLite`'s bound-parameter limit.
     #[sqlx::test]

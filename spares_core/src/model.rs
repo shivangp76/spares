@@ -247,6 +247,49 @@ impl ReviewLogKind {
     }
 }
 
+/// Which way a link between two notes points: which of them builds on the other.
+///
+/// In a Typst note, `#lin[X]` is a [`Self::Prerequisite`], and `#lin(rel: "dependent")[X]` and
+/// `#lin(rel: "related")[X]` are the other two. Other parsers only have prerequisites.
+///
+/// Whatever its relation, a link is shown with its note, matched to a keyword and found by
+/// `linked_to_note` and the other link searches. The relation only decides what builds on what:
+/// which cards wait for which in the queue (`new_after_linked_notes`,
+/// `reviews_after_linked_notes`, `new_order = "unblocking"`), the walks of `prerequisite_of` and
+/// `dependent_of`, the note graph's arrows and a goal's projection. Those all read the
+/// `note_prerequisite` view, which turns every link into a (note, prerequisite) pair.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[repr(u8)]
+pub enum LinkRelation {
+    /// The note with the link builds on the note it links to, as in "by #lin[Fubini's theorem]".
+    #[default]
+    Prerequisite = 0,
+    /// The note it links to builds on the note with the link, as in "used in
+    /// #lin(rel: \"dependent\")[the chain rule]".
+    Dependent = 1,
+    /// Neither builds on the other, as in "compare #lin(rel: \"related\")[Riemann sums]".
+    Related = 2,
+}
+
+impl LinkRelation {
+    /// The value of `rel:` that writes this relation, as in `#lin(rel: "dependent")[X]`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Prerequisite => "prerequisite",
+            Self::Dependent => "dependent",
+            Self::Related => "related",
+        }
+    }
+
+    /// The relation a `rel:` value writes, if it is one.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Prerequisite, Self::Dependent, Self::Related]
+            .into_iter()
+            .find(|relation| relation.as_str() == name)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct NoteLink {
     pub parent_note_id: NoteId,
@@ -257,6 +300,9 @@ pub struct NoteLink {
     pub searched_keyword: String,
     pub matched_keyword: Option<String>,
     pub score: Option<Score>,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub relation: LinkRelation,
 }
 
 /// Tree-like structure using colons, like <https://hledger.org/account-names.html>
