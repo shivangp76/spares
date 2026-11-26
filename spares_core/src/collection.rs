@@ -58,7 +58,7 @@ pub const NOTES_REPO_DIR_NAME: &str = "notes.git";
 
 /// The migrations of a collection's database, for a host's collections and a device's copy.
 ///
-/// They start from a baseline (`20261126200000_baseline`) that replaced the migrations before it.
+/// They start from a baseline (`20261126235900_baseline`) that replaced the migrations before it.
 /// A database those made lists them in `_sqlx_migrations`, so this ignores applied migrations it
 /// doesn't have, which sqlx refuses by default.
 pub fn migrator() -> sqlx::migrate::Migrator {

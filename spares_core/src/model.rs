@@ -528,7 +528,7 @@ mod tests {
     use sqlx::SqlitePool;
 
     /// The last migration the baseline replaced
-    const LAST_OLD_MIGRATION: i64 = 20_261_126_120_000;
+    const LAST_OLD_MIGRATION: i64 = 20_261_126_200_000;
 
     /// Rows of `_sqlx_migrations` as the migrations before the baseline left them, by version.
     async fn pretend_old_migrations_ran(pool: &SqlitePool, versions: &[i64]) {
@@ -571,7 +571,7 @@ mod tests {
             .await
             .unwrap();
         let before = schema(&pool).await;
-        let old = [20_240_326_145_400, 20_261_124_110_000, LAST_OLD_MIGRATION];
+        let old = [20_240_326_145_400, 20_261_126_120_000, LAST_OLD_MIGRATION];
         pretend_old_migrations_ran(&pool, &old).await;
 
         migrator.run(&pool).await.unwrap();
@@ -610,185 +610,15 @@ mod tests {
     ) {
         let migrator = crate::collection::migrator();
         migrator.run(&pool).await.unwrap();
-        pretend_old_migrations_ran(&pool, &[20_261_124_110_000, 20_261_125_060_000]).await;
+        // A device's copy that last opened before the previous baseline
+        pretend_old_migrations_ran(&pool, &[20_261_124_110_000, 20_261_126_120_000]).await;
 
         let err = migrator.run(&pool).await.unwrap_err();
         assert!(
-            err.to_string().contains(
-                "open_this_collection_with_a_spares_from_just_before_the_2026_11_26_baseline_first"
-            ),
+            err.to_string()
+                .contains("open_this_collection_with_the_spares_of_2026_11_26_first"),
             "{err}"
         );
-    }
-
-    /// On a database the old migrations made, the baseline gives every stored card a fast
-    /// stability equal to its stability: card rows, sync bases and the cards undo events keep,
-    /// wherever they are in the payload. A card's changes (`{"before", "after"}`) aren't a card,
-    /// so they aren't touched.
-    #[sqlx::test(migrations = false)]
-    async fn migration_baseline_writes_a_fast_stability_into_every_card(pool: SqlitePool) {
-        use serde_json::json;
-
-        let migrator = crate::collection::migrator();
-        migrator.run(&pool).await.unwrap();
-        let card = |id: i64, stability: f64| {
-            json!({"id": id, "note_id": 1, "order": 1, "back_type": 0, "created_at": 0,
-                   "updated_at": 0, "due": 0, "stability": stability, "difficulty": 5.0,
-                   "desired_retention": 0.9, "special_state": null, "state": 2,
-                   "custom_data": {}})
-        };
-        let changes = json!({"card_id": 1, "stability": {"before": 1.0, "after": 2.0}});
-        let events = [
-            json!({"notes": [{"cards": {"a": [card(1, 3.0)], "b": [card(1, 4.0), card(2, 0.5)]}}]}),
-            json!({"deleted_cards": [card(3, 7.0)]}),
-            json!([changes]),
-        ];
-        let mut conn = pool.acquire().await.unwrap();
-        for statement in [
-            "PRAGMA foreign_keys = OFF",
-            "INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)",
-            "INSERT INTO note (id, data, custom_data, parser_id, created_at, updated_at, usn) VALUES (1, '', '{}', 1, strftime('%s', 'now'), strftime('%s', 'now'), -1)",
-            r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
-               desired_retention, state, custom_data, stability_fast, created_at, updated_at, usn)
-               VALUES (1, 1, 1, 0, 0, 6.0, 5.0, 0.9, 2, '{}', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1),
-                      (2, 1, 2, 0, 0, 0.0, 0.0, 0.9, 0, '{}', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1)"#,
-        ] {
-            sqlx::query(statement).execute(&mut *conn).await.unwrap();
-        }
-        sqlx::query("INSERT INTO sync_base (kind, oid, snapshot) VALUES ('card', 1, ?)")
-            .bind(card(1, 2.0).to_string())
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        for (i, payload) in events.iter().enumerate() {
-            sqlx::query("INSERT INTO event (id, kind, payload, created_at) VALUES (?, 7, ?, strftime('%s', 'now'))")
-                .bind(i64::try_from(i).unwrap() + 1)
-                .bind(payload.to_string())
-                .execute(&mut *conn)
-                .await
-                .unwrap();
-        }
-        drop(conn);
-        pretend_old_migrations_ran(&pool, &[LAST_OLD_MIGRATION]).await;
-
-        migrator.run(&pool).await.unwrap();
-
-        let cards: Vec<(f64, f64)> =
-            sqlx::query_as("SELECT stability, stability_fast FROM card ORDER BY id")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-        assert_eq!(cards, [(6.0, 6.0), (0.0, 0.0)]);
-        let base: String = sqlx::query_scalar("SELECT snapshot FROM sync_base")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&base).unwrap()["stability_fast"],
-            2.0
-        );
-        let payloads: Vec<serde_json::Value> =
-            sqlx::query_scalar::<_, String>("SELECT payload FROM event ORDER BY id")
-                .fetch_all(&pool)
-                .await
-                .unwrap()
-                .iter()
-                .map(|payload| serde_json::from_str(payload).unwrap())
-                .collect();
-        let fast = |card: &serde_json::Value| card["stability_fast"].as_f64();
-        let notes = &payloads[0]["notes"][0]["cards"];
-        assert_eq!(fast(&notes["a"][0]), Some(3.0));
-        assert_eq!(fast(&notes["b"][0]), Some(4.0));
-        assert_eq!(fast(&notes["b"][1]), Some(0.5));
-        assert_eq!(fast(&payloads[1]["deleted_cards"][0]), Some(7.0));
-        assert_eq!(payloads[2], events[2]);
-    }
-
-    /// On a database the old migrations made, whose tables had defaults and loose types, the
-    /// baseline keeps every row (and the rowids of the tables without an integer key), and leaves
-    /// every table STRICT, without defaults, refusing a value of the wrong type.
-    #[sqlx::test(migrations = false)]
-    async fn migration_baseline_makes_old_tables_strict_and_keeps_their_rows(pool: SqlitePool) {
-        let migrator = crate::collection::migrator();
-        migrator.run(&pool).await.unwrap();
-        // Two tables as the old migrations made them, filled relying on their defaults
-        sqlx::raw_sql(
-            r"PRAGMA foreign_keys = OFF;
-               DROP TABLE note_keyword;
-               CREATE TABLE note_keyword (
-                   note_id INTEGER NOT NULL,
-                   keyword VARCHAR NOT NULL,
-                   embedded INTEGER NOT NULL CHECK (embedded IN (0, 1)),
-                   FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE
-               );
-               DROP TABLE event;
-               CREATE TABLE event (
-                   id INTEGER PRIMARY KEY NOT NULL,
-                   kind STRING NOT NULL,
-                   created_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
-                   group_id INTEGER,
-                   reverts_event_id INTEGER UNIQUE,
-                   payload TEXT NOT NULL,
-                   FOREIGN KEY (reverts_event_id) REFERENCES event(id)
-               );
-               INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1);
-               INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn)
-               VALUES (1, 'a', 0, 0, '{}', 1, -1);
-               INSERT INTO note_keyword (rowid, note_id, keyword, embedded) VALUES (7, 1, 'k', 0);
-               INSERT INTO event (id, kind, payload) VALUES (1, 6, '{}');
-               PRAGMA foreign_keys = ON;",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        let rows = async || -> (i64, String, i64, i64, String) {
-            sqlx::query_as(
-                "SELECT (SELECT rowid FROM note_keyword), (SELECT keyword FROM note_keyword),
-                        (SELECT kind FROM event), (SELECT created_at FROM event),
-                        (SELECT data FROM note)",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-        };
-        let before = rows().await;
-        pretend_old_migrations_ran(&pool, &[LAST_OLD_MIGRATION]).await;
-
-        migrator.run(&pool).await.unwrap();
-
-        assert_eq!(rows().await, before);
-        let loose: Vec<String> = sqlx::query_scalar(
-            "SELECT name FROM pragma_table_list
-             WHERE schema = 'main' AND type = 'table' AND NOT strict
-                 AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'note_fts%'
-                 AND name != '_sqlx_migrations'",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(loose, Vec::<String>::new());
-        let defaults: Vec<String> = sqlx::query_scalar(
-            "SELECT m.name || '.' || p.name FROM sqlite_master m, pragma_table_info(m.name) p
-             WHERE m.type = 'table' AND m.name != '_sqlx_migrations' AND p.dflt_value IS NOT NULL",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(defaults, Vec::<String>::new());
-        let wrong_type = sqlx::query("UPDATE event SET kind = 'six'")
-            .execute(&pool)
-            .await
-            .unwrap_err();
-        assert!(
-            wrong_type
-                .to_string()
-                .contains("cannot store TEXT value in INTEGER column")
-        );
-        let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(foreign_keys, 1);
     }
 
     #[test]

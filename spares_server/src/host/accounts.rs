@@ -311,7 +311,7 @@ mod tests {
         )
         .await
         .unwrap();
-        pretend_old_migrations_ran(&db, &[20_261_101_140_000, 20_261_101_180_000]).await;
+        pretend_old_migrations_ran(&db, &[20_261_101_180_000, 20_261_126_230_000]).await;
         db.close().await;
 
         let db = open(&path).await.unwrap();
@@ -322,12 +322,13 @@ mod tests {
             .unwrap();
         assert_eq!(name, "kept");
 
-        pretend_old_migrations_ran(&db, &[20_261_101_140_000, 20_261_101_150_000]).await;
+        // An `accounts.sqlite` whose last migration was the baseline of 2026-11-24
+        pretend_old_migrations_ran(&db, &[20_261_101_180_000, 20_261_124_110_000]).await;
         db.close().await;
         let err = open(&path).await.unwrap_err();
         assert!(
             err.to_string()
-                .contains("open_this_host_with_a_spares_from_before_2026_11_24_first"),
+                .contains("open_this_host_with_the_spares_of_2026_11_26_first"),
             "{err}"
         );
         std::fs::remove_dir_all(dir).unwrap();
