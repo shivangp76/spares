@@ -486,6 +486,8 @@ pub async fn open_collection(
             // Before serving: settle a push the host stopped in the middle of, and commit or
             // revert note files left uncommitted.
             spares_core::notes_vcs::startup(&collection.db).await;
+            // After serving starts, once per process: files of notes and cards that are gone.
+            spares_core::api::note::stale_files::prune_in_background(collection.db.clone());
             Ok::<_, Error>(())
         })
         .await?;

@@ -29,6 +29,12 @@ async fn e2e_undo_create_notes_restores_state(pool: SqlitePool) {
     use crate::api::note::create_notes;
 
     let parser = create_parser_helper(&pool, "markdown").await;
+    // Card files are in a directory every test shares, so the note has an id of its own
+    sqlx::query("INSERT INTO id_counter (replica, tbl, last) VALUES (0, 'note', ?)")
+        .bind(crate::model::NoteId::from_letters("undc").unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
     let request = CreateNotesRequest {
         parser_id: parser.id,
         requests: vec![CreateNoteRequest {
@@ -51,6 +57,18 @@ async fn e2e_undo_create_notes_restores_state(pool: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(count, 1, "note must exist after creation");
+    let card_file = {
+        use crate::parsers::Parseable;
+        use crate::parsers::generate_files::CardSide;
+        use crate::parsers::generate_files::RenderOutputType;
+        let parser = crate::parsers::impls::markdown::MarkdownParser::new();
+        let output = RenderOutputType::Card(1, CardSide::Front);
+        let mut path = crate::parsers::get_output_raw_dir(parser.get_parser_name(), output, None)
+            .join(parser.get_output_filename(output, note_id));
+        path.set_extension(parser.file_extension());
+        path
+    };
+    assert!(card_file.exists());
 
     // Undo CreateNotes
     undo_event(
@@ -77,6 +95,10 @@ async fn e2e_undo_create_notes_restores_state(pool: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(card_count, 0, "undo CreateNotes must remove cards");
+    assert!(
+        !card_file.exists(),
+        "undo CreateNotes must remove the card files"
+    );
 }
 
 #[sqlx::test]
@@ -176,7 +198,10 @@ async fn e2e_undo_delete_notes_restores_note(pool: SqlitePool) {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(stale, 0, "undo DeleteNotes must stamp restored cards with the restore time");
+    assert_eq!(
+        stale, 0,
+        "undo DeleteNotes must stamp restored cards with the restore time"
+    );
 }
 
 #[sqlx::test]

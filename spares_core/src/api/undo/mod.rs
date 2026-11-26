@@ -417,6 +417,7 @@ pub async fn undo_event(
     let reverted = revert_events(db, &events).await;
     // Undo changes the database only, so the notes' files are regenerated from it, also if part
     // of the group was already reverted when an event failed.
+    delete_files_of_deleted_notes_logged(db, &note_ids).await;
     notes_vcs::reconcile_after(db, note_ids, "undo").await;
     let undo_event_ids = reverted?;
     Ok(Some(UndoEventResponse {
@@ -467,12 +468,24 @@ pub async fn redo_event(
     let redone_events = summarize_all(db, &events).await?;
     let note_ids = affected_note_ids(db, &events).await?;
     let reverted = revert_events(db, &events).await;
+    delete_files_of_deleted_notes_logged(db, &note_ids).await;
     notes_vcs::reconcile_after(db, note_ids, "redo").await;
     let redo_event_ids = reverted?;
     Ok(Some(RedoEventResponse {
         redone_events,
         redo_event_ids,
     }))
+}
+
+/// Deletes the files of those of `note_ids` that reverting events deleted. The database has
+/// changed, so a failure is logged rather than returned.
+async fn delete_files_of_deleted_notes_logged(db: &SqlitePool, note_ids: &[NoteId]) {
+    let note_ids = note_ids.iter().copied().collect();
+    if let Err(e) =
+        crate::api::note::stale_files::delete_files_of_deleted_notes(db, &note_ids).await
+    {
+        log::error!("Failed to delete the files of deleted notes: {e}");
+    }
 }
 
 /// Notes whose files reverting `events` changes: notes they create, delete or update, and notes
