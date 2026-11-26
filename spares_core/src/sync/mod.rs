@@ -76,7 +76,9 @@
 //!   table whose row is never committed.
 //!
 //! `note_link` and embedded keywords are derived from the text, so they aren't tracked or sent;
-//! they are rebuilt wherever a note is applied. `event` and `app_state` aren't synced.
+//! they are rebuilt wherever a note is applied. So after a change to how links are matched, each
+//! host rebuilds its own (`POST /api/notes/generate_files` with `include_linked_notes`): a sync
+//! doesn't carry the new links. `event` and `app_state` aren't synced.
 //! `render_asset` and `render_package` rows are sent in full on every push, since assets are only
 //! added on the laptop, and the server keeps a row's newer file. A device sends none, and
 //! gets the server's in a pull whenever they differ from its own (`render_assets_digest`), so it

@@ -256,7 +256,8 @@ impl ReviewLogKind {
 /// which cards wait for which in the queue (`new_after_linked_notes`,
 /// `reviews_after_linked_notes`, `new_order = "unblocking"`), the walks of `prerequisite_of` and
 /// `dependent_of`, the note graph's arrows and a goal's projection. Those all read the
-/// `note_prerequisite` view, which turns every link into a (note, prerequisite) pair.
+/// `note_prerequisite` view, which turns every link into a (note, prerequisite) pair. New code
+/// that asks what a note builds on reads that view too, not `note_link`.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
 #[repr(u8)]

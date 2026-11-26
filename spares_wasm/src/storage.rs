@@ -93,6 +93,12 @@ pub(crate) fn sqlx_error(e: sqlx::Error) -> JsValue {
 async fn connect(file: &str) -> Result<SqlitePool, JsValue> {
     // SAHPool is one connection per file, and has no WAL. `mmap_size` isn't set, unlike on the
     // server: there is no memory map in a browser.
+    //
+    // With one connection, code inside a transaction that also reads through the pool waits for
+    // the connection its own transaction holds, forever. Code that runs in a transaction takes
+    // the transaction's `&mut SqliteConnection` all the way down (the `*_on` functions in
+    // spares_core). A server test reproduces this with `open_collection(.., 1)`, as
+    // `handlers/review_tests.rs` does.
     let options = SqliteConnectOptions::new()
         .filename(file)
         .create_if_missing(true)
