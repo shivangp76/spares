@@ -4,8 +4,6 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fs::read_to_string;
-use std::fs::write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -31,6 +29,12 @@ use spares_core::parsers::Parseable;
 use spares_core::parsers::get_all_parsers;
 
 use crate::utils::with_spinner;
+
+mod writeback;
+
+use writeback::Fingerprint;
+use writeback::SourceLocks;
+use writeback::WriteBack;
 
 #[derive(Args, Debug)]
 pub(crate) struct ImportArgs {
@@ -338,13 +342,23 @@ where
         // count is the number of file paths, always fits in u64
         ProgressBar::new(file_paths.len() as u64)
     };
+    // Held until the rewrites are written back, so another import of the files waits for this
+    // one, and then reads them as it left them
+    let paths: Vec<&Path> = file_paths.iter().map(AsRef::as_ref).collect();
+    let locks = SourceLocks::lock(&paths, quiet).await?;
     let mut files = Vec::with_capacity(file_paths.len());
+    let mut fingerprints = Vec::with_capacity(file_paths.len());
     for file_path in file_paths.iter().progress_with(progress_bar) {
         let file_path = file_path.as_ref();
-        let contents = read_to_string(file_path).map_err(|e| Error::Io {
+        let bytes = std::fs::read(file_path).map_err(|e| Error::Io {
             description: format!("Failed to read {}", file_path.display()),
             source: e,
         })?;
+        let contents = String::from_utf8(bytes.clone()).map_err(|e| Error::Io {
+            description: format!("Failed to read {}", file_path.display()),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+        })?;
+        fingerprints.push(Fingerprint::new(bytes));
         let contents = match media_uploader {
             Some(uploader) => {
                 uploader
@@ -375,26 +389,50 @@ where
 
     // Written only after the database changed, so a crash in between leaves the file as it was
     // and the database consistent. Rewriting is idempotent, so the next import does it again.
-    if !dry_run {
-        for rewritten in &outcome.rewritten {
-            let file_path = file_paths[rewritten.file].as_ref();
-            let tmp_path = file_path.with_extension("tmp");
-            write(&tmp_path, &rewritten.contents).map_err(|e| Error::Io {
-                description: format!("Failed to write {}", tmp_path.display()),
-                source: e,
-            })?;
-            std::fs::rename(&tmp_path, file_path).map_err(|e| Error::Io {
-                description: format!(
-                    "Failed to rename {} to {}",
-                    tmp_path.display(),
-                    file_path.display()
-                ),
-                source: e,
-            })?;
+    // See `writeback` for how edits made meanwhile are kept.
+    if dry_run {
+        return Ok(());
+    }
+    let mut diverged = Vec::new();
+    for rewritten in &outcome.rewritten {
+        let file_path = file_paths[rewritten.file].as_ref();
+        let written = writeback::write_back(
+            &locks,
+            file_path,
+            &fingerprints[rewritten.file],
+            rewritten.contents.as_bytes(),
+        )?;
+        if let WriteBack::Diverged { kept } = written {
+            diverged.push((file_path.to_path_buf(), kept));
         }
     }
-
-    Ok(())
+    drop(locks);
+    if diverged.is_empty() {
+        return Ok(());
+    }
+    for (file_path, kept) in &diverged {
+        eprintln!(
+            "{} {} changed while it was being imported, so spares left it as it is now.\n  \
+             The import itself went through, as listed above, from the file as it was when the \
+             import read it.\n  \
+             The file as spares would have written it, which matches the database now (the ids \
+             of its live notes' clozes, say), is {}.\n  \
+             Bring the import's changes into your file (compare them with `diff {} {}`), or \
+             replace your file with it if your edits can go, then import the file again.",
+            "Warning:".black().on_bright_yellow(),
+            file_path.display(),
+            kept.display(),
+            file_path.display(),
+            kept.display(),
+        );
+    }
+    Err(Error::Io {
+        description: format!(
+            "{} file(s) changed during the import and weren't rewritten",
+            diverged.len()
+        ),
+        source: std::io::Error::other("the import's rewrites were written next to them"),
+    })
 }
 
 #[cfg(test)]
@@ -1586,6 +1624,95 @@ mod tests {
             false,
         )
         .await
+    }
+
+    /// Two imports of a live file at once: the second waits for the first to write the file back,
+    /// then reads the ids it gave the clozes, so the notes are created once.
+    #[sqlx::test(migrations = "../spares_core/migrations")]
+    async fn simultaneous_imports_of_a_file_create_its_notes_once(pool: SqlitePool) {
+        enable_test_mode();
+        create_parser(
+            &pool,
+            CreateParserRequest {
+                name: "markdown".to_string(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("spares_test_simultaneous_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("together.md");
+        std::fs::write(&file_path, live_file(&["A {{ a }}", "B {{ b }}"])).unwrap();
+
+        let (first, second) = tokio::join!(
+            import_live_file(&pool, &file_path),
+            import_live_file(&pool, &file_path)
+        );
+        first.unwrap();
+        second.unwrap();
+        let contents = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(contents.matches("[id:").count(), 2, "{contents}");
+        let (notes, cards): (i64, i64) =
+            sqlx::query_as("SELECT (SELECT COUNT(*) FROM note), (SELECT COUNT(*) FROM card)")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((notes, cards), (2, 2));
+        let mut names = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["together.md"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A dry run writes no file: neither the rewrite nor a temporary file.
+    #[sqlx::test(migrations = "../spares_core/migrations")]
+    async fn a_dry_run_writes_no_file(pool: SqlitePool) {
+        enable_test_mode();
+        create_parser(
+            &pool,
+            CreateParserRequest {
+                name: "markdown".to_string(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("spares_test_dry_run_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("dry.md");
+        let contents = live_file(&["A {{ a }}"]);
+        std::fs::write(&file_path, &contents).unwrap();
+        let mut adapter =
+            SparesAdapter::new(SparesRequestProcessor::Database { pool: pool.clone() });
+        let markdown = get_all_parsers()
+            .into_iter()
+            .map(|x| x())
+            .find(|p| p.get_parser_name() == "markdown")
+            .unwrap();
+        import_from_files(
+            &mut adapter,
+            Some(markdown.as_ref()),
+            None,
+            &[&file_path],
+            true,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&file_path).unwrap(), contents);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let notes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(notes, 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The live notes' cards by cloze uid: (card id, note's block order, card order, stability).
