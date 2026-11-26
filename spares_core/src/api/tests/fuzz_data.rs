@@ -335,12 +335,11 @@ pub fn generate_review_logs(
             .iter()
             .fold((initial_card, Vec::new()), |acc, (review, reviewed_at)| {
                 let (card, mut review_logs): (_, Vec<ReviewLog>) = acc;
-                let previous_review_log = review_logs.last();
                 let (new_card, new_review_log) = scheduler
                     .schedule(
                         &SparesExternalConfig::default(),
                         &card,
-                        previous_review_log.cloned(),
+                        &review_logs,
                         review.rating,
                         *reviewed_at,
                         review.recall_duration,

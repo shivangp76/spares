@@ -294,6 +294,9 @@ pub trait SrsScheduler: Send + Sync {
     ) -> Vec<Vec<(RatingSubmission, DateTime<Utc>)>>;
 
     /// Note that `RatingId` is used instead of a general `Rating` enum to support different schedulers having different options. For example, FSRS has 4 ratings (Again, Hard, Good, Easy), but another scheduler might just have 2, such as Pass and Fail.
+    ///
+    /// `review_logs` are the reviews of the card before this one, oldest first, since its last
+    /// forget, as the scheduler produced them.
     #[allow(
         clippy::too_many_arguments,
         reason = "the fields of one review, plus the config"
@@ -302,7 +305,7 @@ pub trait SrsScheduler: Send + Sync {
         &self,
         config: &SparesExternalConfig,
         card: &Card,
-        previous_review_log: Option<ReviewLog>,
+        review_logs: &[ReviewLog],
         rating: RatingId,
         reviewed_at: DateTime<Utc>,
         recall_duration: Duration,
@@ -535,7 +538,7 @@ pub trait SrsScheduler: Send + Sync {
             ..Card::new(first_review_log.reviewed_at)
         };
         let mut history = Vec::with_capacity(review_logs.len());
-        let mut previous_review_log: Option<ReviewLog> = None;
+        let mut previous_review_logs: Vec<ReviewLog> = Vec::new();
         for review_log in review_logs {
             match review_log.kind {
                 ReviewLogKind::Forget => {
@@ -555,7 +558,7 @@ pub trait SrsScheduler: Send + Sync {
                     // `last_review` entirely. It is kept because it is what the log actually
                     // means, and a scheduler that does consult the previous review would
                     // otherwise silently compute intervals across the forget.
-                    previous_review_log = None;
+                    previous_review_logs.clear();
                 }
                 ReviewLogKind::Review => {
                     let rating = review_log.rating.ok_or_else(|| {
@@ -573,16 +576,16 @@ pub trait SrsScheduler: Send + Sync {
                     let (new_card, new_review_log) = self.schedule(
                         config,
                         &card,
-                        previous_review_log,
+                        &previous_review_logs,
                         rating,
                         review_log.reviewed_at,
                         recall_duration,
                         rate_duration,
                     )?;
                     card = new_card;
-                    previous_review_log = Some(new_review_log);
+                    previous_review_logs.push(new_review_log);
                 }
-                // Recorded for statistics only. Not even `previous_review_log` moves: the next
+                // Recorded for statistics only. Not even `previous_review_logs` grow: the next
                 // review's elapsed time is measured from the last real review, as cramming a card
                 // the night before must not make it look like it was just reviewed.
                 // A postponement or advance, likewise: the next review is measured from the last
@@ -602,7 +605,7 @@ pub trait SrsScheduler: Send + Sync {
 /// a forget and a review can land in the same second.
 ///
 /// Use this wherever an interval is derived from the log (elapsed time, the anchor for a new due
-/// date, the `previous_review_log` handed to [`SrsScheduler::schedule`]). Do *not* use it when
+/// date, the `review_logs` handed to [`SrsScheduler::schedule`]). Do *not* use it when
 /// feeding [`SrsScheduler::compute_memory_state`], which needs the forget markers themselves.
 ///
 /// `review_logs` must hold replayed rows only, as `fetch_review_logs_for_replay` returns them:
@@ -913,7 +916,7 @@ mod tests {
             &self,
             _config: &SparesExternalConfig,
             _card: &Card,
-            _previous_review_log: Option<ReviewLog>,
+            _review_logs: &[ReviewLog],
             _rating: RatingId,
             _reviewed_at: DateTime<Utc>,
             _recall_duration: Duration,

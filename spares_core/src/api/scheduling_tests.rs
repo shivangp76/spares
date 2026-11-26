@@ -296,6 +296,20 @@ async fn review_log_records_the_interval_actually_given(pool: SqlitePool) {
     );
 }
 
+/// Rates `card_id` Good whenever it is due until it is in review, and returns its due date then.
+/// FSRS-7 can bring a weak card back within the day, in relearning, where failing it would not
+/// be another lapse.
+async fn recall_until_in_review(pool: &SqlitePool, card_id: CardId) -> DateTime<Utc> {
+    for _ in 0..10 {
+        let card = fetch_card(pool, card_id).await;
+        if card.state == REVIEW {
+            return card.due;
+        }
+        rate(pool, card_id, GOOD, card.due).await;
+    }
+    panic!("card {card_id} never got back to review");
+}
+
 #[sqlx::test]
 async fn leeches_are_cards_with_many_lapses(pool: SqlitePool) {
     let threshold = read_external_config().unwrap().leech.lapses_threshold;
@@ -308,11 +322,12 @@ async fn leeches_are_cards_with_many_lapses(pool: SqlitePool) {
         let mut at = at;
         rate(&pool, card_id, GOOD, at).await;
         rate(&pool, card_id, GOOD, at + Duration::days(1)).await;
+        at = recall_until_in_review(&pool, card_id).await;
         for _ in 0..lapses {
             at += Duration::days(10);
             rate(&pool, card_id, AGAIN, at).await;
             rate(&pool, card_id, GOOD, at + Duration::hours(1)).await;
-            rate(&pool, card_id, GOOD, at + Duration::days(1)).await;
+            at = recall_until_in_review(&pool, card_id).await;
         }
     }
     // Fails more often, but only ever during its first learning step.
@@ -473,7 +488,21 @@ async fn rating_walks_the_learning_steps(pool: SqlitePool) {
 
     at += steps[1];
     rate(&pool, card_id, GOOD, at).await;
-    assert_eq!(fetch_card(&pool, card_id).await.state, REVIEW);
+    // Past its last step: in review, or brought back within the day by FSRS-7 itself, after the
+    // Again.
+    let card = fetch_card(&pool, card_id).await;
+    let same_day: Option<bool> = sqlx::query_scalar(
+        "SELECT json_extract(custom_data, '$.same_day') FROM review_log WHERE card_id = ?
+         ORDER BY reviewed_at DESC, id DESC LIMIT 1",
+    )
+    .bind(card_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        card.state == REVIEW || (card.state == LEARNING && same_day == Some(true)),
+        "{card:?}"
+    );
 }
 
 /// `at` without its fraction of a second, as the database stores it.

@@ -56,9 +56,10 @@ Adapters allow spares to interface with different spaced repetition software. Sp
 
 ## Scheduling
 
-Cards are scheduled with [FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS), which targets each card's desired retention. Scheduling is set in `config.toml`, whose settings are documented on `spares_core::config::SparesExternalConfig`:
+Cards are scheduled with [FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS)-7, which targets each card's desired retention (FSRS-6 or older parameters in `fsrs_parameters` schedule with that version instead). Scheduling is set in `config.toml`, whose settings are documented on `spares_core::config::SparesExternalConfig`:
 
 - New cards first go through learning steps, and forgotten cards through relearning steps, as in Anki (`learning_steps`, `relearning_steps`).
+- FSRS-7 models memory within a day, so it can bring a card back later the same day outside its steps: an interval under 12 hours is given to the second, at least `fsrs_minimum_interval` (a minute by default), until the card has had `fsrs_maximum_same_day_reviews` reviews that day (5 by default). Set `fsrs_minimum_interval = 43200` to keep intervals to whole days.
 - A review's due date is chosen among a few days around the one FSRS proposes, preferring days with fewer cards due, away from the note's other cards, and avoiding easy days (`load_balance`, `disperse_siblings`, `[easy_days]`; see `spares_core::schedulers::placement`).
 - The `[queue]` table sets the order cards are shown in (`QueueConfig`), and `new_cards_daily_limit` and `reviews_daily_limit` how many.
 - `[queue.presets.<name>]` tables give the cards of notes with some tags, or the cards a search finds (`query`), their own limits, orders, steps and sibling burying, as deck presets do in Anki (`QueuePreset`).

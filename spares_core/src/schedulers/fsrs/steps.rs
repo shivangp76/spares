@@ -13,6 +13,13 @@
 //!
 //! With no steps configured, a card graduates on its first answer. Steps are not part of the
 //! model: FSRS accounts for whatever same-day reviews happen.
+//!
+//! FSRS-7 models memory within a day too, so its intervals can be shorter than a day. One under
+//! 12 hours is given as it is, to the second, when same-day reviews are allowed (see
+//! [`SameDay`]): the card then waits in learning, or relearning if it had been in review, since
+//! only those states are due at a time of day rather than on a day. Its next answer is scheduled
+//! as for a card in review, except that Again starts its steps again. Longer intervals, and every
+//! interval of FSRS-6, are rounded to whole days, at least one.
 
 use chrono::Duration;
 use fsrs_rs::FSRS;
@@ -38,6 +45,75 @@ pub struct Step {
     pub state: State,
     pub memory: MemoryState,
     pub interval: Duration,
+    /// Whether `interval` is one FSRS gave within the day, rather than a step or whole days.
+    pub same_day: bool,
+}
+
+/// Whether FSRS may bring a card back on the day it is reviewed, outside its steps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SameDay {
+    /// The shortest delay it may then give, or `None` if it may not, as under FSRS-6 or once the
+    /// card has had as many reviews that day as allowed.
+    pub minimum: Option<Duration>,
+    /// Whether the card's previous review gave it such a delay, so that it is past its steps.
+    pub previous: bool,
+}
+
+#[cfg(test)]
+impl SameDay {
+    /// Every interval in whole days.
+    pub const NEVER: Self = Self {
+        minimum: None,
+        previous: false,
+    };
+}
+
+/// The longest interval given as it is, rather than rounded to whole days.
+const SAME_DAY_LIMIT: Duration = Duration::hours(12);
+
+/// An interval FSRS gave, as the card gets it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Interval {
+    /// Within the day, to the second.
+    SameDay(Duration),
+    /// A whole number of days, at least one.
+    Days(i64),
+}
+
+impl Interval {
+    fn duration(self) -> Duration {
+        match self {
+            Self::SameDay(delay) => delay,
+            Self::Days(days) => Duration::days(days),
+        }
+    }
+
+    fn whole_days(self) -> i64 {
+        match self {
+            Self::SameDay(_) => 0,
+            Self::Days(days) => days,
+        }
+    }
+
+    /// The shorter of `self` and `other`.
+    fn at_most(self, other: Self) -> Self {
+        if self.duration() <= other.duration() {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// `self`, made longer than `shorter` if it is not: by a day in days, by a minute within one.
+    fn after(self, shorter: Self) -> Self {
+        match (self, shorter) {
+            (Self::Days(days), _) => Self::Days(days.max(shorter.whole_days() + 1)),
+            (Self::SameDay(delay), Self::SameDay(shorter)) => {
+                Self::SameDay(delay.max(shorter + Duration::minutes(1)))
+            }
+            (Self::SameDay(_), Self::Days(days)) => Self::Days(days + 1),
+        }
+    }
 }
 
 /// The step a card in learning is on, given the delay it was last given.
@@ -73,6 +149,7 @@ pub fn next_step(
     desired_retention: f32,
     elapsed_days: f32,
     previous_delay: Option<Duration>,
+    same_day: SameDay,
     rating: Rating,
 ) -> Result<Step, FSRSError> {
     let NextStates {
@@ -81,59 +158,83 @@ pub fn next_step(
         good,
         easy,
     } = model.next_states_with_elapsed_days(memory, desired_retention, elapsed_days)?;
-    let days =
-        |interval: f32| Duration::days(interval.round().clamp(1.0, MAXIMUM_INTERVAL_DAYS) as i64);
-    let graduated = |rating: Rating| {
+    let days = |interval: f32| interval.round().clamp(1.0, MAXIMUM_INTERVAL_DAYS) as i64;
+    let interval = |interval: f32| {
+        if let Some(minimum) = same_day.minimum {
+            #[expect(clippy::cast_possible_truncation, reason = "within half a day")]
+            let exact = Duration::milliseconds(
+                (f64::from(interval) * 86_400_000.0).clamp(0.0, 86_400_000.0) as i64,
+            )
+            .max(minimum);
+            if exact < SAME_DAY_LIMIT {
+                return Interval::SameDay(Duration::seconds(exact.num_seconds().max(1)));
+            }
+        }
+        Interval::Days(days(interval))
+    };
+    // A delay within the day keeps the card in `steps_state`, as only steps are due at a time
+    // of day; whole days put it in review.
+    let given = |interval: Interval, steps_state: State| match interval {
+        Interval::SameDay(delay) => (steps_state, delay, true),
+        Interval::Days(days) => (State::Review, Duration::days(days), false),
+    };
+    let graduated = |rating: Rating, steps_state: State| {
         let interval = match rating {
-            Rating::Again => days(again.interval),
-            Rating::Hard => days(hard.interval).min(days(good.interval)),
-            Rating::Good => days(good.interval),
-            Rating::Easy => days(easy.interval).max(days(good.interval) + Duration::days(1)),
+            Rating::Again => interval(again.interval),
+            Rating::Hard => interval(hard.interval).at_most(interval(good.interval)),
+            Rating::Good => interval(good.interval),
+            Rating::Easy => interval(easy.interval).after(interval(good.interval)),
         };
-        (State::Review, interval)
+        given(interval, steps_state)
     };
-    let in_steps = |steps: &[Duration], current: usize, learning_state: State| {
-        if steps.is_empty() {
-            return graduated(rating);
-        }
-        match rating {
-            Rating::Again => (learning_state, steps[0]),
-            Rating::Hard if current == 0 => (learning_state, first_step_hard_delay(steps)),
-            Rating::Hard => (learning_state, steps[current]),
-            Rating::Good => steps
-                .get(current + 1)
-                .map_or_else(|| graduated(Rating::Good), |next| (learning_state, *next)),
-            Rating::Easy => graduated(Rating::Easy),
-        }
-    };
-    let (state, interval) = match state {
-        State::New => in_steps(steps.learning, 0, State::Learning),
-        State::Learning => in_steps(
-            steps.learning,
-            current_step(steps.learning, previous_delay),
-            State::Learning,
-        ),
-        State::Relearning => in_steps(
-            steps.relearning,
-            current_step(steps.relearning, previous_delay),
-            State::Relearning,
-        ),
-        State::Review => match (rating, steps.relearning.first()) {
-            (Rating::Again, Some(first)) => (State::Relearning, *first),
-            (Rating::Again, None) => graduated(Rating::Again),
+    // As for a card in review, past its steps, which Again takes it back to.
+    let reviewed =
+        |again_steps: &[Duration], steps_state: State| match (rating, again_steps.first()) {
+            (Rating::Again, Some(first)) => (steps_state, *first, false),
+            (Rating::Again, None) => given(interval(again.interval), steps_state),
             _ => {
                 // Better ratings never give shorter intervals.
-                let hard_interval = days(hard.interval).min(days(good.interval));
-                let good_interval = days(good.interval).max(hard_interval + Duration::days(1));
-                let easy_interval = days(easy.interval).max(good_interval + Duration::days(1));
+                let hard_interval = interval(hard.interval).at_most(interval(good.interval));
+                let good_interval = interval(good.interval).after(hard_interval);
+                let easy_interval = interval(easy.interval).after(good_interval);
                 let interval = match rating {
                     Rating::Hard => hard_interval,
                     Rating::Good => good_interval,
                     _ => easy_interval,
                 };
-                (State::Review, interval)
+                given(interval, steps_state)
             }
-        },
+        };
+    let in_steps = |steps: &[Duration], current: usize, learning_state: State| {
+        if steps.is_empty() {
+            return graduated(rating, learning_state);
+        }
+        match rating {
+            Rating::Again => (learning_state, steps[0], false),
+            Rating::Hard if current == 0 => (learning_state, first_step_hard_delay(steps), false),
+            Rating::Hard => (learning_state, steps[current], false),
+            Rating::Good => steps.get(current + 1).map_or_else(
+                || graduated(Rating::Good, learning_state),
+                |next| (learning_state, *next, false),
+            ),
+            Rating::Easy => graduated(Rating::Easy, learning_state),
+        }
+    };
+    let (state, delay, given_same_day) = match state {
+        State::New => in_steps(steps.learning, 0, State::Learning),
+        State::Learning if same_day.previous => reviewed(steps.learning, State::Learning),
+        State::Learning => in_steps(
+            steps.learning,
+            current_step(steps.learning, previous_delay),
+            State::Learning,
+        ),
+        State::Relearning if same_day.previous => reviewed(steps.relearning, State::Relearning),
+        State::Relearning => in_steps(
+            steps.relearning,
+            current_step(steps.relearning, previous_delay),
+            State::Relearning,
+        ),
+        State::Review => reviewed(steps.relearning, State::Relearning),
     };
     let memory = match rating {
         Rating::Again => again.memory,
@@ -144,7 +245,8 @@ pub fn next_step(
     Ok(Step {
         state,
         memory,
-        interval,
+        interval: delay,
+        same_day: given_same_day,
     })
 }
 
@@ -179,6 +281,7 @@ mod tests {
             0.9,
             elapsed_days,
             previous_delay,
+            SameDay::NEVER,
             rating,
         )
         .unwrap()
@@ -334,6 +437,7 @@ mod tests {
                     0.9,
                     elapsed_days,
                     None,
+                    SameDay::NEVER,
                     rating,
                 )
                 .unwrap()
@@ -357,6 +461,7 @@ mod tests {
                 desired_retention,
                 10.0,
                 None,
+                SameDay::NEVER,
                 Rating::Good,
             )
             .unwrap()
@@ -364,5 +469,139 @@ mod tests {
         };
         assert!(interval(0.8) > interval(0.9));
         assert!(interval(0.9) > interval(0.97));
+    }
+
+    /// A weak memory, whose intervals FSRS-7 gives within the day.
+    fn weak() -> MemoryState {
+        MemoryState {
+            stability: 0.05,
+            difficulty: 8.0,
+            stability_fast: 0.02,
+        }
+    }
+
+    fn same_day_step(
+        steps: LearningSteps,
+        state: State,
+        memory: MemoryState,
+        same_day: SameDay,
+        rating: Rating,
+    ) -> Step {
+        next_step(
+            &FSRS::new(&fsrs_rs::DEFAULT_PARAMETERS).unwrap(),
+            steps,
+            state,
+            Some(memory),
+            0.9,
+            0.1,
+            None,
+            same_day,
+            rating,
+        )
+        .unwrap()
+    }
+
+    const ALLOWED: SameDay = SameDay {
+        minimum: Some(Duration::minutes(1)),
+        previous: false,
+    };
+
+    #[test]
+    fn fsrs7_brings_a_weak_card_back_within_the_day() {
+        let lapse = same_day_step(NO_STEPS, State::Review, weak(), ALLOWED, Rating::Again);
+        assert!(lapse.same_day, "{lapse:?}");
+        assert_eq!(
+            lapse.state,
+            State::Relearning,
+            "only steps are due at a time of day"
+        );
+        assert!(lapse.interval >= Duration::minutes(1) && lapse.interval < SAME_DAY_LIMIT);
+        // The same answer in whole days, when same-day reviews are not allowed
+        let rounded = same_day_step(
+            NO_STEPS,
+            State::Review,
+            weak(),
+            SameDay::NEVER,
+            Rating::Again,
+        );
+        assert_eq!((rounded.state, rounded.same_day), (State::Review, false));
+        assert_eq!(rounded.interval, Duration::days(1));
+        // A strong memory still gets days
+        let strong = same_day_step(NO_STEPS, State::Review, reviewed(), ALLOWED, Rating::Good);
+        assert_eq!((strong.state, strong.same_day), (State::Review, false));
+    }
+
+    #[test]
+    fn the_minimum_interval_is_the_least_a_card_waits() {
+        let minimum = |minimum| SameDay {
+            minimum: Some(minimum),
+            previous: false,
+        };
+        let lapse = same_day_step(
+            NO_STEPS,
+            State::Review,
+            weak(),
+            minimum(Duration::hours(3)),
+            Rating::Again,
+        );
+        assert!(
+            lapse.same_day && lapse.interval >= Duration::hours(3),
+            "{lapse:?}"
+        );
+        // A minimum of half a day or more keeps intervals to whole days.
+        let lapse = same_day_step(
+            NO_STEPS,
+            State::Review,
+            weak(),
+            minimum(Duration::hours(12)),
+            Rating::Again,
+        );
+        assert_eq!((lapse.state, lapse.same_day), (State::Review, false));
+        assert_eq!(lapse.interval, Duration::days(1));
+    }
+
+    #[test]
+    fn steps_come_before_same_day_intervals() {
+        let lapse = same_day_step(STEPS, State::Review, weak(), ALLOWED, Rating::Again);
+        assert_eq!(
+            (lapse.state, lapse.interval, lapse.same_day),
+            (State::Relearning, RELEARNING[0], false)
+        );
+        let first = same_day_step(STEPS, State::Learning, weak(), ALLOWED, Rating::Again);
+        assert_eq!((first.interval, first.same_day), (LEARNING[0], false));
+    }
+
+    /// A card FSRS-7 brought back within the day is past its steps: it is answered as in review,
+    /// except that Again starts its steps again.
+    #[test]
+    fn a_card_brought_back_within_the_day_is_past_its_steps() {
+        let previous = SameDay {
+            previous: true,
+            ..ALLOWED
+        };
+        for state in [State::Learning, State::Relearning] {
+            let good = same_day_step(STEPS, state, weak(), previous, Rating::Good);
+            assert!(good.same_day || good.state == State::Review, "{good:?}");
+            assert_ne!(good.interval, LEARNING[1]);
+            let again = same_day_step(STEPS, state, weak(), previous, Rating::Again);
+            let first_step = if state == State::Learning {
+                LEARNING[0]
+            } else {
+                RELEARNING[0]
+            };
+            assert_eq!((again.state, again.interval), (state, first_step));
+        }
+    }
+
+    #[test]
+    fn better_ratings_give_longer_intervals_within_the_day_too() {
+        for memory in [weak(), learning(), reviewed()] {
+            let [hard, good, easy] = [Rating::Hard, Rating::Good, Rating::Easy]
+                .map(|rating| same_day_step(NO_STEPS, State::Review, memory, ALLOWED, rating));
+            assert!(
+                hard.interval < good.interval && good.interval < easy.interval,
+                "{hard:?} {good:?} {easy:?}"
+            );
+        }
     }
 }

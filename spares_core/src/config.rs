@@ -1083,6 +1083,25 @@ pub struct SparesExternalConfig {
     /// have its own.
     #[serde_as(as = "Vec<serde_with::DurationSeconds<i64>>")]
     pub relearning_steps: Vec<Duration>,
+    /// The shortest delay FSRS-7 gives a card within a day, outside its steps, in seconds.
+    /// Defaults to 60, a minute.
+    ///
+    /// FSRS-7 models memory within a day, so the interval it gives can be under a day, as after a
+    /// lapse with no [relearning steps](Self::relearning_steps), or while a card's memory is
+    /// still weak. An interval under 12 hours is then given as it is, to the second, rather than
+    /// rounded up to a day, and the card waits in learning, or relearning if it had been in
+    /// review, like a card on a step. This is the least it waits. Set it to 43200 (12 hours) or
+    /// more to keep every interval FSRS gives to whole days, as under FSRS-6, which this does not
+    /// apply to.
+    #[serde_as(as = "serde_with::DurationSeconds<i64>")]
+    pub fsrs_minimum_interval: Duration,
+    /// The most reviews a card may have in a day of study before FSRS-7 gives it a later day.
+    /// Defaults to 5.
+    ///
+    /// Every review of the day counts, steps included, but steps are never cut short: this only
+    /// stops FSRS-7 itself bringing the card back the same day (see
+    /// [`Self::fsrs_minimum_interval`]). 0 or 1 never does.
+    pub fsrs_maximum_same_day_reviews: u32,
     /// The FSRS model's parameters: 34 for FSRS-7, which cards are scheduled with by default. 21
     /// for FSRS-6, or 19 or 17 from FSRS-5 or FSRS-4.5, schedule with that version instead, so
     /// parameters from Anki work too. Empty to use the FSRS-7 defaults, which are fitted to many
@@ -1277,6 +1296,8 @@ impl Default for SparesExternalConfig {
             private_tag_name: "private".to_string(),
             learning_steps: vec![Duration::minutes(1), Duration::minutes(10)],
             relearning_steps: vec![Duration::minutes(10)],
+            fsrs_minimum_interval: Duration::minutes(1),
+            fsrs_maximum_same_day_reviews: 5,
             fsrs_parameters: Vec::new(),
             fsrs_optimizer_ignore_reviews_before: None,
             load_balance: true,
@@ -1386,6 +1407,9 @@ impl SparesExternalConfig {
     pub(crate) fn validate(&mut self) -> Result<(), String> {
         validate_steps("learning_steps", &self.learning_steps)?;
         validate_steps("relearning_steps", &self.relearning_steps)?;
+        if self.fsrs_minimum_interval < Duration::seconds(1) {
+            return Err("`fsrs_minimum_interval` must be at least 1 second.".to_string());
+        }
         if self.day_starts_at > 23 {
             return Err(format!(
                 "`day_starts_at` must be an hour from 0 to 23, not {}.",

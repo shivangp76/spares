@@ -55,6 +55,7 @@ use serde_json::Value;
 use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 use steps::LearningSteps;
+use steps::SameDay;
 use steps::next_step;
 use utils::Curve;
 use utils::Rating as FsrsRating;
@@ -74,6 +75,7 @@ use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::helpers::FractionalDays;
 use crate::helpers::get_start_end_local_date;
+use crate::helpers::study_date;
 use crate::model::Card;
 use crate::model::RatingId;
 use crate::model::ReviewLog;
@@ -115,6 +117,10 @@ pub(crate) fn optimal_interval_days(card: &Card) -> f64 {
             .next_interval_for_state(memory_state(card), card.desired_retention as f32),
     )
 }
+
+/// The key of a review log's `custom_data` that is `true` when FSRS-7 gave the card a delay
+/// within the day, outside its steps (see the `steps` module).
+const SAME_DAY_KEY: &str = "same_day";
 
 /// The name review logs and `config.toml` know FSRS by.
 const SCHEDULER_NAME: &str = "fsrs";
@@ -217,7 +223,7 @@ impl SrsScheduler for Fsrs {
                             .schedule(
                                 &SparesExternalConfig::default(),
                                 &card,
-                                previous_review_log.cloned(),
+                                &review_logs,
                                 *rating,
                                 reviewed_at,
                                 recall_duration,
@@ -258,12 +264,16 @@ impl SrsScheduler for Fsrs {
         &self,
         config: &SparesExternalConfig,
         card: &Card,
-        previous_review_log: Option<ReviewLog>,
+        review_logs: &[ReviewLog],
         rating: RatingId,
         reviewed_at: DateTime<Utc>,
         recall_duration: Duration,
         rate_duration: Duration,
     ) -> Result<(Card, ReviewLog), Error> {
+        let reviews = review_logs
+            .iter()
+            .filter(|review_log| review_log.kind == ReviewLogKind::Review);
+        let previous_review_log = reviews.clone().next_back();
         let state = number_to_state(card.state).ok_or(Error::Library(LibraryError::Scheduler(
             SchedulerErrorKind::InvalidState(card.state),
         )))?;
@@ -274,7 +284,7 @@ impl SrsScheduler for Fsrs {
         // Without a previous review there is nothing to measure from. That only happens for a new
         // card, whose first step ignores the elapsed time anyway. FSRS-7 models the time since
         // then as it is, so that same-day reviews count; FSRS-6 counts whole days.
-        let elapsed_days = previous_review_log.as_ref().map_or(0.0, |previous| {
+        let elapsed_days = previous_review_log.map_or(0.0, |previous| {
             let elapsed = (reviewed_at - previous.reviewed_at).max(Duration::zero());
             if model.version() == ModelVersion::Fsrs7 {
                 elapsed.num_fractional_days() as f32
@@ -284,12 +294,26 @@ impl SrsScheduler for Fsrs {
         });
         let memory = (state != State::New).then(|| memory_state(card));
         let previous_delay = previous_review_log
-            .as_ref()
             .and_then(|previous| previous.scheduled_time)
             .map(Duration::seconds);
         let steps = LearningSteps {
             learning: &config.learning_steps,
             relearning: &config.relearning_steps,
+        };
+        // FSRS-7 may bring the card back today, until it has had its reviews for the day.
+        let zone = config.zone();
+        let today = study_date(reviewed_at, zone);
+        let reviews_today = reviews
+            .filter(|review_log| study_date(review_log.reviewed_at, zone) == today)
+            .count()
+            + 1;
+        let same_day = SameDay {
+            minimum: (model.version() == ModelVersion::Fsrs7
+                && reviews_today < config.fsrs_maximum_same_day_reviews as usize)
+                .then_some(config.fsrs_minimum_interval),
+            previous: previous_review_log.is_some_and(|previous| {
+                previous.custom_data.get(SAME_DAY_KEY) == Some(&Value::Bool(true))
+            }),
         };
         let step = next_step(
             &model,
@@ -299,6 +323,7 @@ impl SrsScheduler for Fsrs {
             card.desired_retention as f32,
             elapsed_days,
             previous_delay,
+            same_day,
             fsrs_rating,
         )
         .map_err(|e| {
@@ -329,7 +354,11 @@ impl SrsScheduler for Fsrs {
             recall_duration: Some(recall_duration.num_seconds()),
             rate_duration: Some(rate_duration.num_seconds()),
             previous_state: card.state,
-            custom_data: Value::Object(Map::new()),
+            custom_data: Value::Object(if step.same_day {
+                Map::from_iter([(SAME_DAY_KEY.to_string(), Value::Bool(true))])
+            } else {
+                Map::new()
+            }),
         };
         Ok((new_card, new_review_log))
     }
@@ -641,6 +670,87 @@ mod tests {
             .collect()
     }
 
+    /// Again on a new card, over and over: without steps, FSRS-7 brings it back within the day
+    /// until it has had its reviews for the day, and then on a later day.
+    #[test]
+    fn same_day_reviews_stop_at_the_maximum() {
+        let config = SparesExternalConfig {
+            learning_steps: Vec::new(),
+            relearning_steps: Vec::new(),
+            fsrs_maximum_same_day_reviews: 3,
+            fsrs_minimum_interval: Duration::minutes(5),
+            ..SparesExternalConfig::default()
+        };
+        // Noon, well within a day of study
+        let start = config
+            .zone()
+            .start_of(study_date(Utc::now(), config.zone()))
+            + Duration::hours(8);
+        let mut card = Card::new(start);
+        let mut review_logs = Vec::new();
+        let mut at = start;
+        let mut delays = Vec::new();
+        for _ in 0..3 {
+            let (next, review_log) = Fsrs
+                .schedule(
+                    &config,
+                    &card,
+                    &review_logs,
+                    rating_to_number(FsrsRating::Again),
+                    at,
+                    Duration::seconds(5),
+                    Duration::seconds(2),
+                )
+                .unwrap();
+            delays.push((number_to_state(next.state), next.due - at));
+            at = next.due;
+            card = next;
+            review_logs.push(review_log);
+        }
+        let same_day = |review_log: &ReviewLog| review_log.custom_data.get(SAME_DAY_KEY).cloned();
+        assert_eq!(
+            delays[..2],
+            [
+                (Some(State::Learning), Duration::minutes(5)),
+                (Some(State::Learning), Duration::minutes(5))
+            ],
+            "{delays:?}"
+        );
+        assert_eq!(same_day(&review_logs[1]), Some(Value::Bool(true)));
+        assert_eq!(delays[2], (Some(State::Review), Duration::days(1)));
+        assert_eq!(same_day(&review_logs[2]), None);
+    }
+
+    #[test]
+    fn fsrs6_keeps_whole_days() {
+        let config = SparesExternalConfig {
+            relearning_steps: Vec::new(),
+            fsrs_parameters: fsrs_rs::FSRS6_DEFAULT_PARAMETERS.to_vec(),
+            ..SparesExternalConfig::default()
+        };
+        let now = Utc::now();
+        let card = Card {
+            state: state_to_number(State::Review),
+            stability: 0.05,
+            stability_fast: 0.05,
+            difficulty: 8.0,
+            ..Card::new(now)
+        };
+        let (next, _) = Fsrs
+            .schedule(
+                &config,
+                &card,
+                &[],
+                rating_to_number(FsrsRating::Again),
+                now,
+                Duration::seconds(5),
+                Duration::seconds(2),
+            )
+            .unwrap();
+        assert_eq!(number_to_state(next.state), Some(State::Review));
+        assert_eq!(next.due - now, Duration::days(1));
+    }
+
     #[test]
     fn configured_parameters_are_used() {
         let schedule_good = |config: &SparesExternalConfig| {
@@ -648,7 +758,7 @@ mod tests {
             Fsrs.schedule(
                 config,
                 &Card::new(created_at),
-                None,
+                &[],
                 rating_to_number(FsrsRating::Good),
                 created_at,
                 Duration::seconds(5),

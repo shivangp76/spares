@@ -1612,11 +1612,10 @@ pub(crate) async fn rate_card_with_config(
     // After a forget the newest row is the marker, and reviews before it were explicitly
     // discarded. Handing either to the scheduler would make this review look like a continuation
     // of a lapse rather than the first review of a reset card.
-    let latest_review_log = effective_review_logs(&review_logs).last().cloned();
     let (mut updated_card, mut new_review_log) = scheduler.schedule(
         config,
         &card,
-        latest_review_log,
+        effective_review_logs(&review_logs),
         rating,
         reviewed_at,
         recall_duration,
