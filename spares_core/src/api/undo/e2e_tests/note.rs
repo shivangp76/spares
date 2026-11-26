@@ -109,6 +109,12 @@ async fn e2e_undo_delete_notes_restores_note(pool: SqlitePool) {
         .await
         .unwrap();
     assert!(card_count_before > 0, "note must have cards");
+    // Due a month on, so that a restored card's update time can't be mistaken for its due date
+    sqlx::query("UPDATE card SET due = due + 30 * 86400 WHERE note_id = ?")
+        .bind(note_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Delete note with logging
     delete_notes(
@@ -161,6 +167,16 @@ async fn e2e_undo_delete_notes_restores_note(pool: SqlitePool) {
         card_count_after, card_count_before,
         "undo DeleteNotes must restore cards"
     );
+    // A restored card was last updated when it was restored
+    let stale: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM card WHERE note_id = ? AND abs(updated_at - ?) > 60",
+    )
+    .bind(note_id)
+    .bind(Utc::now().timestamp())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stale, 0, "undo DeleteNotes must stamp restored cards with the restore time");
 }
 
 #[sqlx::test]

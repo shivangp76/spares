@@ -526,7 +526,7 @@ pub(crate) async fn create_notes_event(
                     query = query.bind(card.order);
                     query = query.bind(card.back_type);
                     query = query.bind(restored_at);
-                    query = query.bind(card.due.timestamp());
+                    query = query.bind(restored_at);
                     query = query.bind(card.due.timestamp());
                     query = query.bind(card.stability);
                     query = query.bind(card.stability_fast);
