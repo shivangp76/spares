@@ -1083,10 +1083,12 @@ pub struct SparesExternalConfig {
     /// have its own.
     #[serde_as(as = "Vec<serde_with::DurationSeconds<i64>>")]
     pub relearning_steps: Vec<Duration>,
-    /// The FSRS model's parameters: 21 for FSRS-6, or 19 or 17 from FSRS-5 or FSRS-4.5, so
-    /// parameters from Anki work too. Empty to use the FSRS-6 defaults, which are fitted to many
-    /// people's reviews. `spares card optimize --apply` sets these from your review history. Run
-    /// `spares card reschedule` after changing them by hand.
+    /// The FSRS model's parameters: 34 for FSRS-7, which cards are scheduled with by default. 21
+    /// for FSRS-6, or 19 or 17 from FSRS-5 or FSRS-4.5, schedule with that version instead, so
+    /// parameters from Anki work too. Empty to use the FSRS-7 defaults, which are fitted to many
+    /// people's reviews. `spares card optimize --apply` sets these from your review history, always
+    /// as FSRS-7's. Run `spares card reschedule` after changing them by hand, or after moving from
+    /// FSRS-6 to FSRS-7, so that every card's memory is worked out again by the new model.
     pub fsrs_parameters: Vec<f32>,
     /// The first day of study whose reviews `spares card optimize` learns from, as `"2026-01-31"`,
     /// like Anki's "Ignore reviews before". Unset by default, to learn from every review.
@@ -1422,7 +1424,7 @@ impl SparesExternalConfig {
         }
         if fsrs_rs::check_and_fill_parameters(&self.fsrs_parameters).is_err() {
             return Err(format!(
-                "`fsrs_parameters` must be empty or 17, 19 or 21 finite numbers, not {} values.",
+                "`fsrs_parameters` must be empty or 17, 19, 21 or 34 finite numbers, not {} values.",
                 self.fsrs_parameters.len()
             ));
         }
@@ -2012,6 +2014,14 @@ mod tests {
                 .len(),
             21
         );
+        let fsrs7 = fsrs_rs::DEFAULT_PARAMETERS
+            .iter()
+            .map(|parameter| parameter.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut config = parse(&format!("fsrs_parameters = [{fsrs7}]"));
+        assert_eq!(config.fsrs_parameters.len(), 34);
+        assert!(config.validate().is_ok());
         for invalid in ["fsrs_parameters = [1.0, 2.0]", "fsrs_parameters = [nan]"] {
             let mut config: SparesExternalConfig = toml_edit::de::from_str(invalid).unwrap();
             assert!(config.validate().is_err(), "{invalid} must be rejected");

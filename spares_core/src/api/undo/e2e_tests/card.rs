@@ -593,7 +593,7 @@ async fn e2e_undo_postpone_cards_restores_due(pool: SqlitePool) {
 async fn e2e_undo_postpone_cards_takes_its_review_log_rows(pool: SqlitePool) {
     let card_id = create_card_helper(&pool).await;
     let now = Utc::now();
-    // Rated a month ago, so it is due now
+    // Rated Easy as new half a year ago, so it is due now
     submit_study_action(
         &pool,
         SubmitStudyActionRequest {
@@ -606,7 +606,7 @@ async fn e2e_undo_postpone_cards_takes_its_review_log_rows(pool: SqlitePool) {
                 tag_id: None,
             }),
         },
-        now - chrono::Duration::days(30),
+        now - chrono::Duration::days(180),
     )
     .await
     .unwrap();

@@ -252,8 +252,7 @@ fn fit_stability(pairs: &Pairs, curve: &Curve) -> Option<f64> {
     (index > 0 && index < points as usize).then_some(stability)
 }
 
-/// The memory a step is fitted as: one `stability` for both of FSRS-7's, and the middle
-/// difficulty, which leaves FSRS-7's curve unscaled. FSRS-6's curve only reads the stability.
+/// The memory a step is fitted as, on [`Curve::for_steps`], which only reads the stability.
 fn step_memory(stability: f64) -> CardMemory {
     CardMemory {
         stability,
@@ -301,7 +300,7 @@ mod tests {
         max_minutes: i64,
         seed: u64,
     ) -> Vec<ReviewLog> {
-        let curve = Curve::new(&SparesExternalConfig::default());
+        let curve = Curve::for_steps(&SparesExternalConfig::default());
         let mut rng = StdRng::seed_from_u64(seed);
         let mut logs = Vec::new();
         for card_id in 0..cards {
@@ -329,7 +328,7 @@ mod tests {
 
     #[test]
     fn the_fit_finds_the_stability_reviews_were_generated_with() {
-        let curve = Curve::new(&SparesExternalConfig::default());
+        let curve = Curve::for_steps(&SparesExternalConfig::default());
         // 5 minutes
         let stability = 5.0 / 1440.0;
         let logs = generated(3000, 1, stability, 60, 1);
@@ -351,7 +350,7 @@ mod tests {
 
     #[test]
     fn a_small_group_is_fitted_but_recommends_nothing() {
-        let curve = Curve::new(&SparesExternalConfig::default());
+        let curve = Curve::for_steps(&SparesExternalConfig::default());
         let logs = generated(i64::from(MIN_REVIEWS) - 1, 1, 0.01, 60, 2);
         let (groups, recommended) = steps_stats(&logs, None, &curve, 0.9);
         assert!(group(&groups, StepsGroupKind::Again).interval.is_some());
@@ -360,7 +359,7 @@ mod tests {
 
     #[test]
     fn every_review_recalled_pins_nothing_down() {
-        let curve = Curve::new(&SparesExternalConfig::default());
+        let curve = Curve::for_steps(&SparesExternalConfig::default());
         let pairs = Pairs::from([(600, (50, 0)), (1200, (50, 0))]);
         assert_eq!(fit_stability(&pairs, &curve), None);
         assert_eq!(fit_stability(&Pairs::new(), &curve), None);

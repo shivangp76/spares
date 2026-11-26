@@ -78,10 +78,10 @@ pub fn state_to_number(state: State) -> StateId {
     }
 }
 
-/// The configured FSRS parameters, or the defaults if none are configured.
+/// The configured FSRS parameters, or FSRS-7's defaults if none are configured.
 pub fn parameters(config: &SparesExternalConfig) -> &[f32] {
     if config.fsrs_parameters.is_empty() {
-        &FSRS6_DEFAULT_PARAMETERS
+        &fsrs_rs::DEFAULT_PARAMETERS
     } else {
         &config.fsrs_parameters
     }
@@ -131,8 +131,21 @@ pub enum Curve {
 impl Curve {
     pub fn new(config: &SparesExternalConfig) -> Self {
         let parameters = fsrs_rs::check_and_fill_parameters(parameters(config))
-            .unwrap_or_else(|_| FSRS6_DEFAULT_PARAMETERS.to_vec());
+            .unwrap_or_else(|_| fsrs_rs::DEFAULT_PARAMETERS.to_vec());
         Self::from_parameters(parameters)
+    }
+
+    /// The curve steps stats fit one stability to (see the `steps_stats` module): the configured
+    /// power curve, or FSRS-6's default one under FSRS-7. FSRS-7's curve for a single stability is
+    /// no measure of a step: recall falls to about a quarter in that time, and to 90% almost at
+    /// once.
+    pub fn for_steps(config: &SparesExternalConfig) -> Self {
+        match Self::new(config) {
+            Self::Fsrs7 { .. } => Self::Power {
+                decay: FSRS6_DEFAULT_PARAMETERS[20],
+            },
+            power @ Self::Power { .. } => power,
+        }
     }
 
     /// The curve of `parameters`, as filled in by `check_and_fill_parameters`.

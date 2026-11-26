@@ -3998,7 +3998,7 @@ mod tests {
             [1]
         );
         // A day stands for its start, and a time before the last review for the review itself.
-        assert_eq!(search("c.retrievability[today+400d]<0.6").await, [2, 1]);
+        assert_eq!(search("c.retrievability[today+400d]<0.8").await, [2, 1]);
         assert_eq!(search("c.retrievability[2000-01-01]>0.999").await, [2, 1]);
         for bad in [
             "c.retrievability[soon]<0.5",

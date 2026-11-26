@@ -16,8 +16,6 @@
 
 use chrono::Duration;
 use fsrs_rs::FSRS;
-#[cfg(test)]
-use fsrs_rs::FSRS6_DEFAULT_PARAMETERS;
 use fsrs_rs::FSRSError;
 use fsrs_rs::MemoryState;
 use fsrs_rs::NextStates;
@@ -73,7 +71,7 @@ pub fn next_step(
     state: State,
     memory: Option<MemoryState>,
     desired_retention: f32,
-    elapsed_days: u32,
+    elapsed_days: f32,
     previous_delay: Option<Duration>,
     rating: Rating,
 ) -> Result<Step, FSRSError> {
@@ -82,7 +80,7 @@ pub fn next_step(
         hard,
         good,
         easy,
-    } = model.next_states(memory, desired_retention, elapsed_days)?;
+    } = model.next_states_with_elapsed_days(memory, desired_retention, elapsed_days)?;
     let days =
         |interval: f32| Duration::days(interval.round().clamp(1.0, MAXIMUM_INTERVAL_DAYS) as i64);
     let graduated = |rating: Rating| {
@@ -172,9 +170,9 @@ mod tests {
         previous_delay: Option<Duration>,
         rating: Rating,
     ) -> Step {
-        let elapsed_days = if state == State::Review { 10 } else { 0 };
+        let elapsed_days = if state == State::Review { 10.0 } else { 0.0 };
         next_step(
-            &FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap(),
+            &FSRS::new(&fsrs_rs::DEFAULT_PARAMETERS).unwrap(),
             steps,
             state,
             memory,
@@ -326,10 +324,10 @@ mod tests {
 
     #[test]
     fn better_ratings_give_strictly_longer_review_intervals() {
-        for elapsed_days in [0, 1, 5, 10, 30, 365] {
+        for elapsed_days in [0.0, 0.3, 1.0, 5.0, 10.0, 30.0, 365.0] {
             let intervals = [Rating::Hard, Rating::Good, Rating::Easy].map(|rating| {
                 next_step(
-                    &FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap(),
+                    &FSRS::new(&fsrs_rs::DEFAULT_PARAMETERS).unwrap(),
                     STEPS,
                     State::Review,
                     Some(reviewed()),
@@ -352,12 +350,12 @@ mod tests {
     fn intervals_follow_desired_retention() {
         let interval = |desired_retention| {
             next_step(
-                &FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap(),
+                &FSRS::new(&fsrs_rs::DEFAULT_PARAMETERS).unwrap(),
                 STEPS,
                 State::Review,
                 Some(reviewed()),
                 desired_retention,
-                10,
+                10.0,
                 None,
                 Rating::Good,
             )

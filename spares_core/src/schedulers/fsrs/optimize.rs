@@ -3,14 +3,20 @@
 //! The review log is turned into the training data the `fsrs` crate expects the way Anki does it:
 //! one item per review, holding the card's reviews up to and including it, with the time between
 //! reviews counted in days.
+//!
+//! The parameters fitted are FSRS-7's, which learn from every review after a card's first, same-day
+//! ones included, with the time between reviews as it was. Both the current parameters and the
+//! fitted ones are scored on the reviews on a later day of study than the card's previous review,
+//! each model seeing the history as it counts time, so FSRS-6 parameters can be compared too:
+//! FSRS-6 counts whole days of study.
 use chrono::NaiveDate;
 use fsrs_rs::ComputeParametersInput;
 use fsrs_rs::ComputeParametersVersion;
 use fsrs_rs::FSRS;
-use fsrs_rs::FSRS6_DEFAULT_PARAMETERS;
 use fsrs_rs::FSRSError;
 use fsrs_rs::FSRSItem;
 use fsrs_rs::FSRSReview;
+use fsrs_rs::ModelVersion;
 use fsrs_rs::check_and_fill_parameters;
 use fsrs_rs::compute_parameters;
 use itertools::Itertools;
@@ -22,6 +28,7 @@ use crate::Error;
 use crate::LibraryError;
 use crate::SchedulerErrorKind;
 use crate::api::statistics::local_time::Zone;
+use crate::helpers::FractionalDays;
 use crate::helpers::study_date;
 use crate::model::CardId;
 use crate::model::NEW_CARD_STATE;
@@ -33,10 +40,24 @@ use crate::schema::review::ParametersEvaluation;
 
 #[derive(Debug, Default)]
 pub struct TrainingSet {
+    /// What FSRS-7 is fitted to: an item per review after a card's first.
     items: Vec<FSRSItem>,
     /// The card each item belongs to, aligned with `items`.
     card_ids: Vec<CardId>,
     card_count: usize,
+    /// What parameters are scored on: an item per review on a later day of study than the card's
+    /// previous review, with the time between reviews as FSRS-7 counts it, ...
+    scored_by_time: Vec<FSRSItem>,
+    /// ... and the same items, with the days of study FSRS-6 counts.
+    scored_by_days: Vec<FSRSItem>,
+}
+
+/// One card's part of a [`TrainingSet`].
+#[derive(Debug, Default, PartialEq)]
+struct CardItems {
+    items: Vec<FSRSItem>,
+    scored_by_time: Vec<FSRSItem>,
+    scored_by_days: Vec<FSRSItem>,
 }
 
 /// Builds the training set from every card's review log.
@@ -59,24 +80,26 @@ pub fn training_set(
         };
         let card_review_logs = card_review_logs.cloned().collect::<Vec<_>>();
         let items = card_items(&card_review_logs, zone, ignore_before);
-        if items.is_empty() {
+        if items.items.is_empty() {
             continue;
         }
         training_set.card_count += 1;
         training_set
             .card_ids
-            .extend(std::iter::repeat_n(card_id, items.len()));
-        training_set.items.extend(items);
+            .extend(std::iter::repeat_n(card_id, items.items.len()));
+        training_set.items.extend(items.items);
+        training_set.scored_by_time.extend(items.scored_by_time);
+        training_set.scored_by_days.extend(items.scored_by_days);
     }
     training_set
 }
 
-/// The training items for one card, one per review on a later day than the card's previous review.
+/// The items of one card.
 fn card_items(
     review_logs: &[ReviewLog],
     zone: Zone,
     ignore_before: Option<NaiveDate>,
-) -> Vec<FSRSItem> {
+) -> CardItems {
     // Reviews before a forget were discarded by the user and say nothing about the memory the card
     // has now.
     let reviews = effective_review_logs(review_logs)
@@ -91,7 +114,7 @@ fn card_items(
         .iter()
         .any(|review_log| review_log.scheduler_name != SCHEDULER_NAME)
     {
-        return Vec::new();
+        return CardItems::default();
     }
     // A history that does not start from a new card is missing its beginning, for example because
     // it was imported or its first reviews were ignored, so the model would see the wrong first
@@ -100,12 +123,13 @@ fn card_items(
         .first()
         .is_none_or(|first| first.previous_state != NEW_CARD_STATE)
     {
-        return Vec::new();
+        return CardItems::default();
     }
 
-    let mut items = Vec::new();
-    let mut history = Vec::new();
-    let mut previous_day: Option<NaiveDate> = None;
+    let mut items = CardItems::default();
+    let mut by_time = Vec::new();
+    let mut by_days = Vec::new();
+    let mut previous: Option<&ReviewLog> = None;
     for review_log in reviews {
         let Some(rating) = review_log
             .rating
@@ -114,25 +138,47 @@ fn card_items(
         else {
             // A review without a valid rating cannot be learned from, and dropping it would
             // misstate the time between the reviews around it.
-            return Vec::new();
+            return CardItems::default();
         };
         // Days as the user lives them, so that a review late in the evening and one the next
         // morning are a day apart, while one after midnight still counts for the evening before.
-        let day = study_date(review_log.reviewed_at, zone);
-        let delta_t = previous_day.map_or(0, |previous_day| {
-            u32::try_from((day - previous_day).num_days()).unwrap_or(0)
+        let days = previous.map_or(0, |previous| {
+            u32::try_from(
+                (study_date(review_log.reviewed_at, zone) - study_date(previous.reviewed_at, zone))
+                    .num_days(),
+            )
+            .unwrap_or(0)
         });
-        previous_day = Some(day);
-        history.push(FSRSReview {
+        let elapsed = previous.map_or(0.0, |previous| {
+            (review_log.reviewed_at - previous.reviewed_at)
+                .num_fractional_days()
+                .max(0.0) as f32
+        });
+        let first = previous.is_none();
+        previous = Some(review_log);
+        by_time.push(FSRSReview {
             rating,
-            delta_t: delta_t as f32,
+            delta_t: elapsed,
         });
+        by_days.push(FSRSReview {
+            rating,
+            delta_t: days as f32,
+        });
+        if !first {
+            items.items.push(FSRSItem {
+                reviews: by_time.clone(),
+            });
+        }
         // Only a review on a later day than the previous one says anything about long-term
-        // memory. A same-day review, such as a relearning step after a lapse, stays in the history
-        // of the items after it, but `FSRS::evaluate` cannot score it as an item of its own.
-        if delta_t > 0 {
-            items.push(FSRSItem {
-                reviews: history.clone(),
+        // memory to FSRS-6. A same-day review, such as a relearning step after a lapse, stays in
+        // the history of the items after it, but `FSRS::evaluate` cannot score it under FSRS-6 as
+        // an item of its own.
+        if days > 0 {
+            items.scored_by_time.push(FSRSItem {
+                reviews: by_time.clone(),
+            });
+            items.scored_by_days.push(FSRSItem {
+                reviews: by_days.clone(),
             });
         }
     }
@@ -146,10 +192,20 @@ fn fsrs_error(error: &FSRSError) -> Error {
     }))
 }
 
-fn evaluate(parameters: &[f32], items: Vec<FSRSItem>) -> Result<ParametersEvaluation, Error> {
-    let evaluation = FSRS::new(parameters)
-        .map_err(|e| fsrs_error(&e))?
-        .evaluate(items, |_| true)
+/// Scores `parameters` on the items of their version: `by_time` for FSRS-7, `by_days` before.
+fn evaluate(
+    parameters: &[f32],
+    by_time: &[FSRSItem],
+    by_days: &[FSRSItem],
+) -> Result<ParametersEvaluation, Error> {
+    let model = FSRS::new(parameters).map_err(|e| fsrs_error(&e))?;
+    let items = if model.version() == ModelVersion::Fsrs7 {
+        by_time
+    } else {
+        by_days
+    };
+    let evaluation = model
+        .evaluate(items.to_vec(), |_| true)
         .map_err(|e| fsrs_error(&e))?;
     Ok(ParametersEvaluation {
         log_loss: evaluation.log_loss,
@@ -170,36 +226,35 @@ pub fn optimize(
         items,
         card_ids,
         card_count,
+        scored_by_time,
+        scored_by_days,
     } = training_set;
-    if items.is_empty() {
+    // Without a review on a later day, there would be nothing to score the parameters on.
+    if scored_by_time.is_empty() {
         return Err(Error::Library(LibraryError::Scheduler(
             SchedulerErrorKind::InvalidInput(
-                "There are no reviews to optimize on yet. Only reviews on a later day than the \
-                 card's previous review count."
+                "There are no reviews to optimize on yet. A card needs a review on a later day \
+                 than its first."
                     .to_string(),
             ),
         )));
     }
-    let current_parameters = if current_parameters.is_empty() {
-        FSRS6_DEFAULT_PARAMETERS.to_vec()
-    } else {
-        check_and_fill_parameters(current_parameters).map_err(|e| fsrs_error(&e))?
-    };
+    let current_parameters =
+        check_and_fill_parameters(current_parameters).map_err(|e| fsrs_error(&e))?;
+    let review_count = items.len();
     let optimized_parameters = compute_parameters(ComputeParametersInput {
-        train_set: items.clone(),
+        train_set: items,
         card_ids: Some(card_ids),
-        // Same-day reviews from learning steps are in the log, so fit the short-term parameters too.
-        enable_short_term: true,
         num_relearning_steps: Some(num_relearning_steps),
-        model_version: ComputeParametersVersion::Fsrs6,
+        model_version: ComputeParametersVersion::Fsrs7,
         ..ComputeParametersInput::default()
     })
     .map_err(|e| fsrs_error(&e))?;
-    let current = evaluate(&current_parameters, items.clone())?;
-    let optimized = evaluate(&optimized_parameters, items.clone())?;
+    let current = evaluate(&current_parameters, &scored_by_time, &scored_by_days)?;
+    let optimized = evaluate(&optimized_parameters, &scored_by_time, &scored_by_days)?;
     Ok(OptimizeResponse {
         card_count,
-        review_count: items.len(),
+        review_count,
         current_parameters,
         current,
         optimized_parameters,
@@ -285,7 +340,7 @@ mod tests {
         assert_eq!(set.card_count, 1);
         assert_eq!(set.card_ids, vec![1, 1, 1]);
         assert_eq!(
-            set.items.iter().map(deltas).collect::<Vec<_>>(),
+            set.scored_by_days.iter().map(deltas).collect::<Vec<_>>(),
             vec![
                 vec![(3, 0), (3, 1)],
                 vec![(3, 0), (3, 1), (1, 3)],
@@ -310,7 +365,7 @@ mod tests {
         assert_eq!(set.card_count, 1);
         assert_eq!(set.card_ids, vec![2]);
         assert_eq!(
-            set.items.iter().map(deltas).collect::<Vec<_>>(),
+            set.scored_by_days.iter().map(deltas).collect::<Vec<_>>(),
             vec![vec![(3, 0), (3, 3)]]
         );
         assert_eq!(training_set(&logs, hours(4), Some(day(0))).card_count, 2);
@@ -329,13 +384,39 @@ mod tests {
         ];
         let set = training_set(&logs, hours(4), None);
         assert_eq!(
-            set.items.iter().map(deltas).collect::<Vec<_>>(),
+            set.scored_by_days.iter().map(deltas).collect::<Vec<_>>(),
             vec![vec![(1, 0), (1, 5)], vec![(1, 0), (1, 5), (4, 0), (3, 3)],],
             "the relearning step is kept in the history but is not an item"
         );
         // `FSRS::evaluate` refuses the whole set if any item ends on a same-day review.
-        let parameters = FSRS6_DEFAULT_PARAMETERS.to_vec();
-        assert!(evaluate(&parameters, set.items).is_ok());
+        let fsrs6 = fsrs_rs::FSRS6_DEFAULT_PARAMETERS;
+        assert!(evaluate(&fsrs6, &set.scored_by_time, &set.scored_by_days).is_ok());
+        assert!(evaluate(&[], &set.scored_by_time, &set.scored_by_days).is_ok());
+    }
+
+    /// FSRS-7 learns from every review after the first, with the time between reviews as it was.
+    #[test]
+    fn fsrs7_learns_from_same_day_reviews_too() {
+        let mut relearn = review(1, 5, 4, 3);
+        relearn.id = 6;
+        relearn.reviewed_at = at(5, 18);
+        let logs = vec![review(1, 0, 1, 0), review(1, 5, 1, 2), relearn];
+        let set = training_set(&logs, hours(4), None);
+        let times = |item: &FSRSItem| {
+            item.reviews
+                .iter()
+                .map(|review| (review.rating, review.delta_t))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            set.items.iter().map(times).collect::<Vec<_>>(),
+            vec![
+                vec![(1, 0.0), (1, 5.0)],
+                vec![(1, 0.0), (1, 5.0), (4, 0.25)],
+            ]
+        );
+        assert_eq!(set.card_ids, vec![1, 1]);
+        assert_eq!(set.scored_by_time.len(), 1);
     }
 
     #[test]
@@ -346,7 +427,7 @@ mod tests {
         early.reviewed_at = at(1, 5);
         let set = training_set(&[late, early], hours(4), None);
         assert_eq!(
-            deltas(&set.items[0]),
+            deltas(&set.scored_by_days[0]),
             vec![(3, 0), (3, 1)],
             "six hours apart, but on consecutive days"
         );
@@ -359,22 +440,25 @@ mod tests {
         let mut after_midnight = review(1, 1, 3, 1);
         after_midnight.reviewed_at = at(1, 1);
         assert_eq!(
-            training_set(&[late.clone(), after_midnight.clone()], hours(4), None).items,
+            training_set(&[late.clone(), after_midnight.clone()], hours(4), None).scored_by_days,
             Vec::new(),
             "the same day of study"
         );
         let set = training_set(&[late, after_midnight], hours(0), None);
-        assert_eq!(deltas(&set.items[0]), vec![(3, 0), (3, 1)]);
+        assert_eq!(deltas(&set.scored_by_days[0]), vec![(3, 0), (3, 1)]);
     }
 
+    /// FSRS-7 learns from them, but there is nothing to score parameters on.
     #[test]
-    fn same_day_reviews_alone_give_no_items() {
+    fn same_day_reviews_alone_are_not_scored() {
         let mut second = review(1, 0, 3, 1);
         second.id = 2;
         second.reviewed_at = at(0, 13);
         let set = training_set(&[review(1, 0, 1, 0), second], hours(4), None);
-        assert_eq!(set.items, Vec::new());
-        assert_eq!(set.card_count, 0);
+        assert_eq!(set.items.len(), 1);
+        assert_eq!(set.card_count, 1);
+        assert_eq!(set.scored_by_time, Vec::new());
+        assert!(optimize(set, &[], 1).is_err());
     }
 
     #[test]
@@ -388,7 +472,7 @@ mod tests {
         ];
         let set = training_set(&logs, hours(4), None);
         assert_eq!(
-            set.items.iter().map(deltas).collect::<Vec<_>>(),
+            set.scored_by_days.iter().map(deltas).collect::<Vec<_>>(),
             vec![vec![(3, 0), (2, 2)]]
         );
     }

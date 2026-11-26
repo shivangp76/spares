@@ -149,8 +149,8 @@ mod tests {
             40 * 5,
             "every review after the first day"
         );
-        assert_eq!(response.current_parameters.len(), 21);
-        assert_eq!(response.optimized_parameters.len(), 21);
+        assert_eq!(response.current_parameters.len(), 34, "FSRS-7's defaults");
+        assert_eq!(response.optimized_parameters.len(), 34);
         assert!(response.optimized_parameters.iter().all(|w| w.is_finite()));
         assert!(
             response.optimized.log_loss < response.current.log_loss,

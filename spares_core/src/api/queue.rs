@@ -894,7 +894,27 @@ pub(crate) mod tests {
             .await
         };
         assert_eq!(order(ReviewOrder::Due).await, vec![c, a, b]);
-        assert_eq!(order(ReviewOrder::Retrievability).await, vec![c, a, b]);
+        // Least likely to be recalled first, as the default parameters' curve has it. Under
+        // FSRS-7, b's high difficulty puts it before a, though half as far along its stability.
+        let curve = crate::schedulers::fsrs::utils::Curve::new(&SparesExternalConfig::default());
+        let recall = |stability, difficulty, days| {
+            let memory = crate::schedulers::CardMemory {
+                stability,
+                stability_fast: 0.0,
+                difficulty,
+            };
+            curve.retrievability(memory, days)
+        };
+        let mut by_recall = [
+            (a, recall(10.0, 3.0, 10.0)),
+            (b, recall(200.0, 9.0, 100.0)),
+            (c, recall(2.0, 6.0, 5.0)),
+        ];
+        by_recall.sort_by(|x, y| x.1.total_cmp(&y.1));
+        assert_eq!(
+            order(ReviewOrder::Retrievability).await,
+            by_recall.map(|(card, _)| card).to_vec()
+        );
         assert_eq!(order(ReviewOrder::RelativeOverdueness).await, vec![c, a, b]);
         assert_eq!(
             order(ReviewOrder::DifficultyDescending).await,

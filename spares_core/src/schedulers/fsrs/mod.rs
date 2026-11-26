@@ -1,4 +1,6 @@
-//! The FSRS scheduler, backed by the `fsrs` crate with its default (FSRS-6) parameters.
+//! The FSRS scheduler, backed by the `fsrs` crate: FSRS-7 with its default parameters, or the
+//! version of the configured ones (see
+//! [`fsrs_parameters`](crate::config::SparesExternalConfig::fsrs_parameters)).
 //!
 //! ## `fsrs4anki-helper` features
 //! - Reschedule: Supported. Reschedules every card from its full review history, keeping the
@@ -38,6 +40,7 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
+use fsrs_rs::ModelVersion;
 use itertools::Itertools;
 use rand::RngExt;
 use rand::distr::Distribution;
@@ -102,14 +105,14 @@ pub(crate) fn relearning_state() -> StateId {
     state_to_number(State::Relearning)
 }
 
-/// The interval, in days, after which a card with `stability` is expected to fall to
-/// `desired_retention`. Not rounded, clamped or fuzzed.
+/// The interval, in days, after which `card` is expected to fall to its desired retention under
+/// the default parameters. Not rounded, clamped or fuzzed.
 #[cfg(test)]
-pub(crate) fn optimal_interval_days(stability: f64, desired_retention: f64) -> f64 {
+pub(crate) fn optimal_interval_days(card: &Card) -> f64 {
     f64::from(
-        fsrs_rs::FSRS::new(&fsrs_rs::FSRS6_DEFAULT_PARAMETERS)
+        model(&SparesExternalConfig::default())
             .unwrap()
-            .next_interval(Some(stability as f32), desired_retention as f32, 1),
+            .next_interval_for_state(memory_state(card), card.desired_retention as f32),
     )
 }
 
@@ -267,11 +270,17 @@ impl SrsScheduler for Fsrs {
         let fsrs_rating = number_to_rating(rating).ok_or(Error::Library(
             LibraryError::Scheduler(SchedulerErrorKind::InvalidRating(rating)),
         ))?;
+        let model = model(config)?;
         // Without a previous review there is nothing to measure from. That only happens for a new
-        // card, whose first step ignores the elapsed time anyway.
-        let elapsed_days = previous_review_log.as_ref().map_or(0, |previous| {
-            u32::try_from((reviewed_at - previous.reviewed_at).num_days().max(0))
-                .unwrap_or(u32::MAX)
+        // card, whose first step ignores the elapsed time anyway. FSRS-7 models the time since
+        // then as it is, so that same-day reviews count; FSRS-6 counts whole days.
+        let elapsed_days = previous_review_log.as_ref().map_or(0.0, |previous| {
+            let elapsed = (reviewed_at - previous.reviewed_at).max(Duration::zero());
+            if model.version() == ModelVersion::Fsrs7 {
+                elapsed.num_fractional_days() as f32
+            } else {
+                elapsed.num_days() as f32
+            }
         });
         let memory = (state != State::New).then(|| memory_state(card));
         let previous_delay = previous_review_log
@@ -282,7 +291,6 @@ impl SrsScheduler for Fsrs {
             learning: &config.learning_steps,
             relearning: &config.relearning_steps,
         };
-        let model = model(config)?;
         let step = next_step(
             &model,
             steps,
@@ -654,7 +662,7 @@ mod tests {
             learning_steps: Vec::new(),
             ..SparesExternalConfig::default()
         };
-        let mut parameters = fsrs_rs::FSRS6_DEFAULT_PARAMETERS.to_vec();
+        let mut parameters = fsrs_rs::DEFAULT_PARAMETERS.to_vec();
         // The initial stability after Good.
         parameters[2] *= 4.0;
         let custom = SparesExternalConfig {

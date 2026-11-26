@@ -140,7 +140,7 @@ fn assert_due_near_optimal(card: &Card, last_review: DateTime<Utc>) {
         .unwrap()
         .maximum_interval
         .num_fractional_days();
-    let optimal = optimal_interval_days(card.stability, card.desired_retention).min(maximum);
+    let optimal = optimal_interval_days(card).min(maximum);
     let actual = (card.due - last_review).num_fractional_days();
     let slack = 1.0 + optimal * 0.2;
     assert!(

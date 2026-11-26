@@ -794,10 +794,12 @@ async fn reviews_are_unioned_and_replayed() {
     };
     let (state, stability, stability_fast) = scheduling(&replicas.laptop).await;
     assert!(state != 0 && stability > 0.0 && stability_fast > 0.0);
-    assert_eq!(
-        (state, stability, stability_fast),
-        on_server(scheduling(&replicas.server)).await
-    );
+    // Floats travel in JSON snapshots, so they match within a tolerance.
+    let (server_state, server_stability, server_stability_fast) =
+        on_server(scheduling(&replicas.server)).await;
+    assert_eq!(state, server_state);
+    assert!(super::merge::f64_eq(stability, server_stability));
+    assert!(super::merge::f64_eq(stability_fast, server_stability_fast));
 }
 
 /// A replica on a version before FSRS-7 sends cards without a fast stability.
