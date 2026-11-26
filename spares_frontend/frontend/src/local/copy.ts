@@ -78,11 +78,6 @@ const DOWNLOAD_CONCURRENCY = 4;
 /** How often the bytes downloaded are shown while a file comes */
 const PROGRESS_MS = 250;
 
-// What has been downloaded in older builds. Migrated into IndexedDB on the first refresh.
-const FILES_KEY = copyKey("spares_copy_files");
-const ASSETS_KEY = copyKey("spares_copy_assets");
-// The server's rendered files as last listed (`FileListing`)
-const LISTING_KEY = copyKey("spares_copy_file_listing");
 // Tells the service worker to keep spares_wasm and the Typst compiler offline too (see service-worker.js)
 const SERVICE_WORKER_MARKER = copyKey("spares-local-copy");
 
@@ -538,9 +533,6 @@ async function dropCopy(): Promise<void> {
   stopCopy();
   session += 1;
   await forgetCheckpoints();
-  localStorage.removeItem(FILES_KEY);
-  localStorage.removeItem(ASSETS_KEY);
-  localStorage.removeItem(LISTING_KEY);
   for (const name of [
     SERVICE_WORKER_MARKER,
     COPY_FILES_CACHE,
@@ -661,14 +653,6 @@ async function listFiles(
   return { files: unchanged.concat(files), changed };
 }
 
-function readMap(key: string): Record<string, string | number> {
-  try {
-    return JSON.parse(localStorage.getItem(key) ?? "{}");
-  } catch {
-    return {};
-  }
-}
-
 /** Typst's package registry, as the compiler fetches from it (see src/typst/compiler.ts) */
 function packageUrl(spec: string): string {
   const [namespace, name, version] = spec.split("/");
@@ -727,16 +711,8 @@ async function refreshFromCheckpoint(
   serverUrl: string,
   headers: Record<string, string>,
 ) {
-  // Older copies kept full maps in localStorage. Re-list once and reuse their completed downloads.
-  const migrating = [FILES_KEY, ASSETS_KEY, LISTING_KEY].some(
-    (key) => localStorage.getItem(key) !== null,
-  );
-  const knownFiles: Record<string, string | number> = migrating
-    ? readMap(FILES_KEY)
-    : Object.create(null);
-  const knownAssets = migrating
-    ? { ...readMap(ASSETS_KEY), ...checkpoint.assets }
-    : checkpoint.assets;
+  const knownFiles: Record<string, number> = Object.create(null);
+  const knownAssets = checkpoint.assets;
   for (const file of Object.values(checkpoint.listing.files))
     knownFiles[file.path] = file.mtime;
   const priorFiles = checkpoint.listing.files;
@@ -773,23 +749,10 @@ async function refreshFromCheckpoint(
   const missing = new Map<string, number>();
   for (const file of files) {
     const old = priorFiles[file.path];
-    const downloaded = knownFiles[file.path];
-    // Keep track of the old cached file if the replacement download fails during migration.
-    if (
-      migrating &&
-      !old &&
-      typeof downloaded === "number" &&
-      downloaded !== file.mtime
-    )
-      checkpoint.file({ ...file, mtime: downloaded });
     if (old && old.size !== file.size) delete knownFiles[file.path];
     if (knownFiles[file.path] !== file.mtime)
       missing.set(file.bucket, (missing.get(file.bucket) ?? 0) + 1);
-    else if (migrating || file.bucket in changed) checkpoint.file(file);
-  }
-  if (migrating) {
-    for (const [path, hash] of Object.entries(knownAssets))
-      if (typeof hash === "string") checkpoint.asset(path, hash);
+    else if (file.bucket in changed) checkpoint.file(file);
   }
   for (const [bucket, digest] of Object.entries(changed)) {
     // Invalidate the old digest even if the refresh is interrupted and the server reverts.
@@ -798,10 +761,6 @@ async function refreshFromCheckpoint(
   const save = () =>
     session === started ? checkpoint.save() : Promise.resolve();
   await save();
-  if (migrating && session === started) {
-    for (const key of [FILES_KEY, ASSETS_KEY, LISTING_KEY])
-      localStorage.removeItem(key);
-  }
 
   let next = 0;
   let done = 0;

@@ -114,7 +114,7 @@ fn ref_update_problems(updates: &[(String, String, String)], has_update_hook: bo
     }
     if names.contains(&ANKI) && !has_update_hook {
         problems.push(
-            "this repository's hooks are older than pushing to `anki`; run `spares vcs init --repair-hooks`".to_string(),
+            "this repository has no hook that writes to Anki; run `spares vcs init --repair-hooks`".to_string(),
         );
     }
     problems
@@ -397,10 +397,10 @@ mod tests {
             both.iter().any(|p| p.contains("cannot be pushed together")),
             "{both:?}"
         );
-        let old_hooks = ref_update_problems(&[update(ANKI, &sha)], false);
+        let no_hook = ref_update_problems(&[update(ANKI, &sha)], false);
         assert!(
-            old_hooks.iter().any(|p| p.contains("--repair-hooks")),
-            "{old_hooks:?}"
+            no_hook.iter().any(|p| p.contains("--repair-hooks")),
+            "{no_hook:?}"
         );
         let deleted = ref_update_problems(&[update(ANKI, &zero)], true);
         assert!(

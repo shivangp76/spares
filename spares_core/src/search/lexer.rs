@@ -379,8 +379,7 @@ impl Lexer<'_> {
         Ok(true)
     }
 
-    /// The error for a `:` at `start`, which used to start a path into custom data, as in
-    /// `custom_data:"$.x"`, and is now never valid outside quotes.
+    /// The error for a `:` at `start`, which is never valid outside quotes.
     fn colon_error(&self, start: usize) -> Error {
         miette::miette! {
             labels = vec![LabeledSpan::at(start..start + 1, "this `:`")],

@@ -25,9 +25,9 @@ interface Props {
 
 const XLINK = "http://www.w3.org/1999/xlink";
 // The template draws the card's ID (`cloze_tag_str` in spares_core) as invisible text at its first
-// answer cloze, for PDF viewers to search for. The SVG keeps it as text in its selection layer.
-// It is `card-<order>`, or `card-<note id>-<order>` in sources from before.
-const CARD_ID = /^card-([a-z]+-)?\d+$/;
+// answer cloze, for PDF viewers to search for. The SVG keeps it as text in its selection layer:
+// `card-<order>`.
+const CARD_ID = /^card-\d+$/;
 
 type State =
   | { source: string; width: number; svg: string; error?: undefined }

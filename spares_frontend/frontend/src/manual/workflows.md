@@ -183,7 +183,7 @@ jj describe -m "…" && jj spares-push   # like it: imports it into spares
 
 `jj spares-push [REV]` fetches, then refuses if spares has newer notes (run `jj spares-pull` first) or if the revision or its unpushed ancestors have conflicts. Otherwise it moves your local `main` to the revision (default `@`, or `@-` if `@` is empty and not a merge) and pushes it. Then it fetches the commits spares made on top of your push, and moves `@` onto them: if `@` was pushed, it starts a new empty change on spares' latest `main`, and if `@` was on top of the pushed revision, it rebases that work as `jj spares-pull` would. So there is no need to pull after a push. `jj spares-pull [REV]` rebases the branch of `@` (or of `REV`) onto spares' latest `main`. jj itself refuses to push a stale `main`, conflicted commits, and commits without a description.
 
-`jj rd` shows changes as rendered notes. It takes `jj diff`'s arguments (`jj rd` for `@`, `jj rd -r 'main@origin..@'` for everything not pushed yet, `jj rd --from X --to Y typst/abc.typ`) and opens a page in the browser with a row per changed note: its source diff, its pages before the change and its pages after. Notes that no longer compile come first, with Typst's errors, and notes whose generated `Linked Notes:` list alone changed are folded away at the end. On the page, `j` and `k` move between notes and `e` goes to the next compile error. The server renders the notes, in its sandbox, so it must be running. Markdown notes get the source diff only. A clone set up before `jj rd` existed gets it with `spares vcs init --repair-hooks`.
+`jj rd` shows changes as rendered notes. It takes `jj diff`'s arguments (`jj rd` for `@`, `jj rd -r 'main@origin..@'` for everything not pushed yet, `jj rd --from X --to Y typst/abc.typ`) and opens a page in the browser with a row per changed note: its source diff, its pages before the change and its pages after. Notes that no longer compile come first, with Typst's errors, and notes whose generated `Linked Notes:` list alone changed are folded away at the end. On the page, `j` and `k` move between notes and `e` goes to the next compile error. The server renders the notes, in its sandbox, so it must be running. Markdown notes get the source diff only.
 
 New files are not tracked automatically in the clone (`snapshot.auto-track = "none()"`), so an editor's backup file never ends up in a push; use `jj file track` for a new note's file or a `README.md`.
 
@@ -233,7 +233,7 @@ The reason a push was rejected is printed on lines starting with `spares:` (pref
 | this repository … does not belong to the spares server at … | Run `spares vcs init --repair-hooks` with the settings of the instance the repository belongs to |
 | only `main` (imported into spares) and `anki` (written to Anki) can be pushed | Move `main` to your commit and push it (`jj spares-push`, or `git push origin HEAD:main`) |
 | `main` and `anki` cannot be pushed together | Push them one at a time |
-| this repository's hooks are older than pushing to `anki` | Run `spares vcs init --repair-hooks` |
+| this repository has no hook that writes to Anki | Run `spares vcs init --repair-hooks` |
 | Anki must be open, with AnkiConnect, to push to `anki` | Open Anki and push again |
 | Anki has newer notes than your push is based on | Spares committed them to `anki`: fetch (`jj spares-anki-pull`), merge `anki@origin` into your change, push again |
 | … has the Anki id of … | The file is a copy of a note that is in Anki; remove `anki-note-id` from its custom data |
@@ -311,8 +311,6 @@ After a push, spares records the Anki ids of the notes it added in their custom 
 ### Taking only some notes
 
 Instead of merging, restore the notes you want from the other branch: `jj new main@origin && jj restore --from anki@origin markdown/gir.md`, or `git checkout origin/anki -- markdown/gir.md`. Notes you leave out are offered again by the next merge.
-
-Repositories set up before `anki` existed need `spares vcs init --repair-hooks` once, for the hook that writes to Anki and the jj aliases.
 
 Syncing with Anki needs a notes repository (`spares vcs init`).
 

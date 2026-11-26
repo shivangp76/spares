@@ -308,7 +308,7 @@ async fn test_init_and_server_writes_commit(pool: SqlitePool) {
     let ids = init(&pool).await;
     assert_eq!(commit_count(&repo()), 1);
     assert_eq!(last_message(&repo()), "spares: initial import");
-    assert_gitignore_matches();
+    assert_no_gitignore();
     for id in &ids {
         let contents = read(&note_path(&repo(), *id));
         assert!(contents.contains(&format!("note-id: {id}")));
@@ -805,7 +805,7 @@ async fn test_reconcile_dirty_saves_overwritten(pool: SqlitePool) {
         .unwrap();
     assert_eq!(read(&note), committed);
     assert!(!repo().join("stray.txt").exists());
-    assert_gitignore_matches();
+    assert_no_gitignore();
     assert_eq!(report.saved.len(), 3, "{report:?}");
     assert_eq!(status(&repo()), "");
     let saved: Vec<PathBuf> = walk(&notes_vcs::overwritten_dir());
@@ -995,31 +995,9 @@ fn reset_clone_keep(clone: &Path) {
     git(clone, &["pull", "-q", "--rebase"]);
 }
 
-fn assert_gitignore_matches() {
-    let path = repo().join(".gitignore");
-    if notes_vcs::GITIGNORE.is_empty() {
-        assert!(!path.exists());
-    } else {
-        assert_eq!(read(&path), notes_vcs::GITIGNORE);
-    }
-}
-
-#[sqlx::test]
-async fn test_startup_updates_gitignore(pool: SqlitePool) {
-    let _guard = setup(&pool).await;
-    init(&pool).await;
-    // A repository created with another `.gitignore`
-    std::fs::write(repo().join(".gitignore"), "old pattern\n").unwrap();
-    git(&repo(), &["add", "-f", ".gitignore"]);
-    git(&repo(), &["commit", "-qm", "old gitignore"]);
-
-    notes_vcs::startup(&pool).await;
-
-    assert_gitignore_matches();
-    assert_eq!(last_message(&repo()), "spares: update .gitignore");
-    assert_eq!(status(&repo()), "");
-    // Nothing more to do the next time
-    assert!(!notes_vcs::sync_gitignore().unwrap());
+/// Spares writes no `.gitignore` into the repository.
+fn assert_no_gitignore() {
+    assert!(!repo().join(".gitignore").exists());
 }
 
 /// A live note's data and custom data come from its source file, so a push may only change its

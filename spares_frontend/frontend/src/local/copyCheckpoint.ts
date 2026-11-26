@@ -60,11 +60,10 @@ async function readSnapshot(db: IDBDatabase) {
     tx.objectStore("revision").get(0),
   );
   if (cached && cached.revision === revision) return cached;
-  const [base, rows]: [string | undefined, (Entry | string)[]] =
-    await Promise.all([
-      requestResult(tx.objectStore("revision").get(1)),
-      requestResult(tx.objectStore(storeName).getAll()),
-    ]);
+  const [base, rows]: [string | undefined, string[]] = await Promise.all([
+    requestResult(tx.objectStore("revision").get(1)),
+    requestResult(tx.objectStore(storeName).getAll()),
+  ]);
   const saved: Snapshot | undefined = base ? JSON.parse(base) : undefined;
   const snapshot: Snapshot = {
     files: Object.assign(Object.create(null), saved?.files),
@@ -72,15 +71,11 @@ async function readSnapshot(db: IDBDatabase) {
     assets: Object.assign(Object.create(null), saved?.assets),
   };
   let deltaBytes = 0;
-  // Individual entries from older checkpoints precede the ordered batches.
-  for (const row of rows)
-    if (typeof row !== "string") applyEntry(snapshot, "", row);
-  for (const row of rows)
-    if (typeof row === "string") {
-      deltaBytes += row.length;
-      for (const [key, entry] of JSON.parse(row) as Change[])
-        applyEntry(snapshot, key, entry);
-    }
+  for (const row of rows) {
+    deltaBytes += row.length;
+    for (const [key, entry] of JSON.parse(row) as Change[])
+      applyEntry(snapshot, key, entry);
+  }
   return { revision, snapshot, baseBytes: base?.length ?? 0, deltaBytes };
 }
 

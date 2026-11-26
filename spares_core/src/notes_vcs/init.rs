@@ -6,7 +6,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-use super::commit::commit_index;
 use super::commit::git_index_lock;
 use super::git::git;
 use super::note_file::NoteFileContext;
@@ -35,10 +34,6 @@ use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
 use crate::schema::note::NotesSelector;
 use crate::schema::note::RenderNotesRequest;
-
-/// The repository's `.gitignore`. Spares owns the file, so pushes cannot change it; the server
-/// writes this at startup (or removes the file if this is empty) and commits the change.
-pub const GITIGNORE: &str = "";
 
 /// Where the repository is assembled before it is activated by a rename.
 pub fn init_staging_dir() -> PathBuf {
@@ -105,10 +100,6 @@ pub async fn init_server_repo(db: &SqlitePool) -> Result<InitResponse, Error> {
         std::fs::write(&path, &contents).map_err(|e| io_error(&path, e))?;
     }
 
-    if !GITIGNORE.is_empty() {
-        std::fs::write(staging_repo.join(".gitignore"), GITIGNORE)
-            .map_err(|e| io_error(&staging_repo, e))?;
-    }
     git(&staging_repo, &["init", "-q", "-b", "main"], None)?;
     git(&staging_repo, &["add", "-A"], None)?;
     git(
@@ -153,11 +144,6 @@ pub async fn startup(db: &SqlitePool) {
         log::error!("Failed to reconcile the notes repository: {e}");
     }
     warn_of_saved_copies();
-    match sync_gitignore() {
-        Ok(true) => log::info!("Updated the notes repository's .gitignore"),
-        Ok(false) => {}
-        Err(e) => log::error!("Failed to update the notes repository's .gitignore: {e}"),
-    }
     check_hooks();
 }
 
@@ -175,25 +161,6 @@ fn warn_of_saved_copies() {
         copies.len(),
         overwritten_dir().display()
     );
-}
-
-/// Makes the repository's `.gitignore` match [`GITIGNORE`], removing it if that is empty, and
-/// commits the change. Returns whether anything changed. Runs at startup, before requests.
-pub fn sync_gitignore() -> Result<bool, Error> {
-    let repo = server_repo_dir();
-    let path = repo.join(".gitignore");
-    let current = std::fs::read_to_string(&path).ok();
-    let wanted = (!GITIGNORE.is_empty()).then_some(GITIGNORE);
-    if current.as_deref() == wanted {
-        return Ok(false);
-    }
-    match wanted {
-        Some(contents) => std::fs::write(&path, contents).map_err(|e| io_error(&path, e))?,
-        None => std::fs::remove_file(&path).map_err(|e| io_error(&path, e))?,
-    }
-    let _index = git_index_lock();
-    git(&repo, &["add", "-A", "-f", "--", ".gitignore"], None)?;
-    commit_index(&repo, "spares: update .gitignore")
 }
 
 /// Warns if git would not run the push hooks, in which case a push would not be imported.

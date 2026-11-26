@@ -303,9 +303,6 @@ echo "==> Configuring"
 # directories on the way to it belong to the user too
 as_user "mkdir -p '$(dirname "$ROOT")'" 2>/dev/null || mkdir -p "$(dirname "$ROOT")"
 chown "$SPARES_USER": "$(dirname "$ROOT")"
-# Earlier versions created directories as root, which stops `spares sync cloud` from copying files
-# into them
-find "$USER_HOME" -xdev -user root -exec chown -h "$SPARES_USER": {} +
 spares_host() { as_user "SPARES_ROOT='$ROOT' /usr/local/bin/spares_server host $1"; }
 # Whether the host has the account: a host whose first account was never made (an earlier run
 # that stopped halfway) gets it now.
