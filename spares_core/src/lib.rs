@@ -113,6 +113,13 @@ pub enum LibraryError {
     },
     #[error("{0}")]
     InvalidTimeZone(String),
+    /// A study action that can't be carried out as sent, such as with a malformed `action_id`
+    #[error("{0}")]
+    InvalidStudyAction(String),
+    /// A study action's `action_id` was given to a different action before: the client reused an
+    /// id rather than retrying the action it named.
+    #[error("{0}")]
+    StudyActionConflict(String),
 }
 
 #[derive(Clone, Debug, Diagnostic, Error)]

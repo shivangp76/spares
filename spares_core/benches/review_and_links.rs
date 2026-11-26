@@ -280,6 +280,7 @@ fn main() {
                             rate_duration: chrono::Duration::seconds(1),
                             tag_id: None,
                         }),
+                        action_id: None,
                     },
                     fixture::now(),
                 )

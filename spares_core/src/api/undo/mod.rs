@@ -64,7 +64,9 @@ mod event_actions;
 mod invert_payload;
 mod received;
 pub use event_actions::create_event_group;
+pub(crate) use event_actions::create_event_group_on;
 pub use event_actions::insert_events;
+pub(crate) use event_actions::insert_events_on;
 pub(crate) use event_actions::join_event_group;
 pub(crate) mod payloads;
 

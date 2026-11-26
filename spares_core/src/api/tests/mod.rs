@@ -392,6 +392,7 @@ async fn simulate_reviews(
                     count: statistics.advance_safe_count,
                     query: None,
                 },
+                action_id: None,
             };
             let advance_res = submit_study_action(pool, request, requested_date).await;
             assert!(advance_res.is_ok());
@@ -417,6 +418,7 @@ async fn simulate_reviews(
                     count: statistics.postpone_safe_count,
                     query: None,
                 },
+                action_id: None,
             };
             let postpone_res = submit_study_action(pool, request, requested_date).await;
             assert!(postpone_res.is_ok());
@@ -470,6 +472,7 @@ async fn simulate_reviews(
                         rate_duration: Duration::zero(),
                         tag_id: None,
                     }),
+                    action_id: None,
                 };
                 let submit_review_res = submit_study_action(pool, request, requested_date).await;
                 assert!(submit_review_res.is_ok());
@@ -650,6 +653,7 @@ async fn simulate_filtered_tag_reviews(
                         rate_duration: Duration::zero(),
                         tag_id: Some(filtered_tag_id),
                     }),
+                    action_id: None,
                 };
                 let submit_review_res = submit_study_action(pool, request, requested_date).await;
                 assert!(submit_review_res.is_ok());

@@ -1095,6 +1095,7 @@ mod forget_tests {
                     rate_duration: Duration::seconds(2),
                     tag_id: None,
                 }),
+                action_id: None,
             },
             at,
         )

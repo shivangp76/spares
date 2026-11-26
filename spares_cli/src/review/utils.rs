@@ -13,6 +13,7 @@ use inquire::DateSelect;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
+use spares_core::api::review::new_action_id;
 use spares_core::model::CardId;
 use spares_core::model::NoteId;
 use spares_core::schema::card::CardResponse;
@@ -209,6 +210,34 @@ pub(crate) async fn note_id_to_cards(
     Ok(cards)
 }
 
+/// Sends a study action with an `action_id`, sending it again with the same id if no response
+/// came back (the server couldn't be reached, or the connection dropped): the server carries it
+/// out once however many attempts arrive.
+async fn post_study_action(
+    request: &SubmitStudyActionRequest,
+    base_url: &str,
+    client: &Client,
+) -> Result<reqwest::Response, String> {
+    const RETRY_DELAYS: [std::time::Duration; 2] = [
+        std::time::Duration::from_millis(500),
+        std::time::Duration::from_secs(2),
+    ];
+    let url = format!("{}/api/review/submit", base_url);
+    let mut delays = RETRY_DELAYS.iter();
+    loop {
+        match client.post(&url).json(request).send().await {
+            Ok(response) => return Ok(response),
+            Err(e) if !e.is_builder() && !e.is_redirect() && !e.is_status() => {
+                let Some(delay) = delays.next() else {
+                    return Err(format!("{e}"));
+                };
+                tokio::time::sleep(*delay).await;
+            }
+            Err(e) => return Err(format!("{e}")),
+        }
+    }
+}
+
 pub(crate) async fn bury_card(
     scheduler_name: &str,
     card_id: CardId,
@@ -218,14 +247,9 @@ pub(crate) async fn bury_card(
     let submit_review_request = SubmitStudyActionRequest {
         scheduler_name: scheduler_name.to_string(),
         action: StudyAction::Bury { card_id },
+        action_id: Some(new_action_id()),
     };
-    let url = format!("{}/api/review/submit", base_url);
-    let response = client
-        .post(url)
-        .json(&submit_review_request)
-        .send()
-        .await
-        .map_err(|e| format!("{}", e))?;
+    let response = post_study_action(&submit_review_request, base_url, client).await?;
     let status = response.status();
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;
@@ -330,14 +354,9 @@ pub(crate) async fn submit_rating(
     let update_review_request = SubmitStudyActionRequest {
         scheduler_name: scheduler_name.to_string(),
         action: StudyAction::Rate(rating_submission),
+        action_id: Some(new_action_id()),
     };
-    let url = format!("{}/api/review/submit", base_url);
-    let response = client
-        .post(url)
-        .json(&update_review_request)
-        .send()
-        .await
-        .map_err(|e| format!("{}", e))?;
+    let response = post_study_action(&update_review_request, base_url, client).await?;
     let status = response.status();
     if status != StatusCode::OK {
         let response_json: Value = response.json().await.map_err(|e| format!("{}", e))?;

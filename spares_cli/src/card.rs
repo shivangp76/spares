@@ -224,6 +224,7 @@ pub(crate) async fn handle(
             let request = SubmitStudyActionRequest {
                 scheduler_name,
                 action: StudyAction::Advance { count, query },
+                action_id: None,
             };
             let url = format!("{}/api/review/submit", base_url);
             let response = client
@@ -243,6 +244,7 @@ pub(crate) async fn handle(
             let request = SubmitStudyActionRequest {
                 scheduler_name,
                 action: StudyAction::Postpone { count, query },
+                action_id: None,
             };
             let url = format!("{}/api/review/submit", base_url);
             let response = client

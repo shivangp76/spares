@@ -86,6 +86,7 @@ async fn study(pool: &SqlitePool, action: StudyAction, at: DateTime<Utc>) {
         SubmitStudyActionRequest {
             scheduler_name: "fsrs".to_string(),
             action,
+            action_id: None,
         },
         at,
     )

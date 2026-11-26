@@ -34,8 +34,8 @@ use crate::api::placeholders;
 use crate::api::tag::DEFAULT_TAG_AUTO_DELETE;
 use crate::api::tag::create_tag_row;
 use crate::api::tag::restore_tags;
-use crate::api::undo::create_event_group;
-use crate::api::undo::insert_events;
+use crate::api::undo::create_event_group_on;
+use crate::api::undo::insert_events_on;
 use crate::api::undo::join_event_group;
 use crate::api::undo::payloads::CardTagsTransition;
 use crate::api::undo::payloads::CreateTagPayload;
@@ -416,6 +416,20 @@ pub(crate) async fn log_card_tag_changes(
     if changes.is_empty() {
         return Ok(None);
     }
+    let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+    log_card_tag_changes_on(&mut conn, changes, at, group).await
+}
+
+/// [`log_card_tag_changes`] on the caller's connection, such as inside its transaction
+pub(crate) async fn log_card_tag_changes_on(
+    conn: &mut SqliteConnection,
+    changes: CardTagChanges,
+    at: DateTime<Utc>,
+    group: Option<i64>,
+) -> Result<Option<i64>, Error> {
+    if changes.is_empty() {
+        return Ok(None);
+    }
     let to_value = |value: Result<Value, serde_json::Error>| {
         value.map_err(|e| {
             Error::Library(LibraryError::InvalidConfig(format!(
@@ -440,18 +454,18 @@ pub(crate) async fn log_card_tag_changes(
     ));
     if let Some(leader) = group {
         for event in events {
-            let ids = insert_events(db, &[event], at, None).await?;
+            let ids = insert_events_on(conn, &[event], at, None).await?;
             for id in ids {
-                join_event_group(db, leader, id).await?;
+                join_event_group(&mut *conn, leader, id).await?;
             }
         }
         return Ok(Some(leader));
     }
     if events.len() == 1 {
-        let ids = insert_events(db, &events, at, None).await?;
+        let ids = insert_events_on(conn, &events, at, None).await?;
         return Ok(ids.first().copied());
     }
-    Ok(Some(create_event_group(db, events, at).await?))
+    Ok(Some(create_event_group_on(conn, events, at).await?))
 }
 
 /// Applies an `UpdateCardTags` payload, giving each card its `after` tags: an undo's or redo's,

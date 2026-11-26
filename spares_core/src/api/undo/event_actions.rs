@@ -2,11 +2,11 @@ use chrono::DateTime;
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::AssertSqlSafe;
+use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 
 use crate::Error;
 use crate::LibraryError;
-use crate::api::fetch_batched_query;
 use crate::api::max_rows_for;
 use crate::api::placeholders_2d;
 use crate::model::EventType;
@@ -17,35 +17,48 @@ pub async fn insert_events(
     at: DateTime<Utc>,
     group_id: Option<i64>,
 ) -> Result<Vec<i64>, Error> {
-    let event_ids: Vec<i64> =
-        fetch_batched_query(db, events, max_rows_for(4), async |db, chunk| {
-            let query_str = format!(
-                "INSERT INTO event (kind, created_at, group_id, payload) VALUES {} RETURNING id",
-                placeholders_2d(chunk.len(), 4)
-            );
-            let mut query = sqlx::query_scalar(AssertSqlSafe(query_str));
-            for (kind, payload) in chunk {
-                query = query.bind(kind);
-                query = query.bind(at.timestamp());
-                query = query.bind(group_id);
-                query = query.bind(payload);
-            }
-            query
-                .fetch_all(db)
-                .await
-                .map_err(|e| Error::Sqlx { source: e })
-        })
-        .await?;
+    if events.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+    insert_events_on(&mut conn, events, at, group_id).await
+}
+
+/// [`insert_events`] on the caller's connection, such as inside its transaction
+pub(crate) async fn insert_events_on(
+    conn: &mut SqliteConnection,
+    events: &[(EventType, Value)],
+    at: DateTime<Utc>,
+    group_id: Option<i64>,
+) -> Result<Vec<i64>, Error> {
+    let mut event_ids = Vec::with_capacity(events.len());
+    for chunk in events.chunks(max_rows_for(4)) {
+        let query_str = format!(
+            "INSERT INTO event (kind, created_at, group_id, payload) VALUES {} RETURNING id",
+            placeholders_2d(chunk.len(), 4)
+        );
+        let mut query = sqlx::query_scalar(AssertSqlSafe(query_str));
+        for (kind, payload) in chunk {
+            query = query.bind(kind);
+            query = query.bind(at.timestamp());
+            query = query.bind(group_id);
+            query = query.bind(payload);
+        }
+        let ids: Vec<i64> = query
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        event_ids.extend(ids);
+    }
     Ok(event_ids)
 }
 
 /// Puts `other`, an event or the group it leads, in the group `leader` leads (making `leader` a
 /// group if it was not one), so undoing either undoes both.
-pub(crate) async fn join_event_group(
-    db: &SqlitePool,
-    leader: i64,
-    other: i64,
-) -> Result<(), Error> {
+pub(crate) async fn join_event_group<'e, E>(db: E, leader: i64, other: i64) -> Result<(), Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     sqlx::query(r"UPDATE event SET group_id = ? WHERE id IN (?, ?) OR group_id = ?")
         .bind(leader)
         .bind(leader)
@@ -63,6 +76,16 @@ pub async fn create_event_group(
     events: Vec<(EventType, Value)>,
     at: DateTime<Utc>,
 ) -> Result<i64, Error> {
+    let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+    create_event_group_on(&mut conn, events, at).await
+}
+
+/// [`create_event_group`] on the caller's connection, such as inside its transaction
+pub(crate) async fn create_event_group_on(
+    conn: &mut SqliteConnection,
+    events: Vec<(EventType, Value)>,
+    at: DateTime<Utc>,
+) -> Result<i64, Error> {
     if events.is_empty() {
         return Err(Error::Library(LibraryError::InvalidConfig(
             "Cannot create an empty event group".to_string(),
@@ -71,20 +94,21 @@ pub async fn create_event_group(
 
     // Insert first event to get group_id
     let (first_kind, first_payload) = events.first().unwrap();
-    let group_id_vec = insert_events(db, &[(*first_kind, first_payload.clone())], at, None).await?;
+    let group_id_vec =
+        insert_events_on(conn, &[(*first_kind, first_payload.clone())], at, None).await?;
     let group_id = *group_id_vec.first().unwrap();
 
     // Set the first event's group_id to its own id so it is included in group queries
     sqlx::query(r"UPDATE event SET group_id = ? WHERE id = ?")
         .bind(group_id)
         .bind(group_id)
-        .execute(db)
+        .execute(&mut *conn)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
     // Insert remaining events with the same group_id
     for (kind, payload) in events.iter().skip(1) {
-        insert_events(db, &[(*kind, payload.clone())], at, Some(group_id)).await?;
+        insert_events_on(conn, &[(*kind, payload.clone())], at, Some(group_id)).await?;
     }
     Ok(group_id)
 }

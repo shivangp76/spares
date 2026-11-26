@@ -16,9 +16,11 @@ use serde_json::Value;
 use serde_json::to_value;
 use sqlx::AssertSqlSafe;
 use sqlx::FromRow;
+use sqlx::Sqlite;
+use sqlx::SqliteConnection;
 use sqlx::sqlite::SqlitePool;
 
-use super::note::delete_empty_tags;
+use super::note::delete_empty_tags_on;
 use crate::ALLOWED_F64_ERROR;
 use crate::Error;
 use crate::LibraryError;
@@ -28,10 +30,9 @@ use crate::api::browser_render::add_device_sources;
 use crate::api::browser_render::load_review_card;
 use crate::api::buried_tag::count_bury;
 use crate::api::buried_tag::reset_bury_count;
-use crate::api::buried_tag::tag_buried_cards;
+use crate::api::buried_tag::tag_buried_cards_on;
 use crate::api::card::build_update_card_payload;
 use crate::api::card::create_card_tags;
-use crate::api::card::delete_card_tags;
 use crate::api::card::unbury_cards_logged_as;
 use crate::api::fetch_review_logs_for_replay;
 use crate::api::goal::keep_due_for_goals;
@@ -57,6 +58,7 @@ use crate::api::study_pace::pace_answer_seconds;
 use crate::api::tag::create_tag;
 use crate::api::tag::restore_review_tags;
 use crate::api::undo::insert_events;
+use crate::api::undo::insert_events_on;
 use crate::api::undo::join_event_group;
 use crate::api::undo::payloads::DeletedTag;
 use crate::api::undo::payloads::FilteredTagExit;
@@ -77,7 +79,7 @@ use crate::config::write_internal_config;
 use crate::helpers::get_start_end_local_date;
 use crate::helpers::study_date;
 use crate::ids::IdTable;
-use crate::ids::next_id_in;
+use crate::ids::next_id;
 use crate::model::Card;
 use crate::model::CardId;
 use crate::model::EventType;
@@ -89,6 +91,7 @@ use crate::model::SpecialState;
 use crate::model::StateId;
 use crate::model::Tag;
 use crate::model::TagId;
+use crate::notes_vcs;
 use crate::parsers::BackType;
 use crate::parsers::CardData;
 use crate::parsers::ClozeHiddenReplacement;
@@ -1558,9 +1561,93 @@ pub async fn rate_card(
 }
 
 /// [`rate_card`] with `config` rather than the one in `config.toml`.
-#[expect(clippy::too_many_lines)]
 pub(crate) async fn rate_card_with_config(
     db: &SqlitePool,
+    scheduler: &dyn SrsScheduler,
+    config: &SparesExternalConfig,
+    submission: RatingSubmission,
+    reviewed_at: DateTime<Utc>,
+    log: bool,
+) -> Result<Option<i64>, Error> {
+    let mut tx = begin_study_action(db).await?;
+    let (event_id, after) = Box::pin(rate_card_on(
+        &mut tx,
+        scheduler,
+        config,
+        submission,
+        reviewed_at,
+        log,
+    ))
+    .await?;
+    tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    after.run(db).await;
+    Ok(event_id)
+}
+
+/// Starts the transaction of a study action. It takes the write lock up front (`IMMEDIATE`), so
+/// that two actions on the same card, or two attempts at the same
+/// [`action_id`](SubmitStudyActionRequest::action_id), run one after the other: the later one
+/// reads what the earlier one committed, rather than both reading the card as it was and the
+/// later one failing, or overwriting the earlier one, when it writes.
+async fn begin_study_action(db: &SqlitePool) -> Result<sqlx::Transaction<'_, Sqlite>, Error> {
+    db.begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+}
+
+/// What a study action leaves to do once its transaction has committed: changes that reach past
+/// the collection's tables, so can't be rolled back with it.
+///
+/// They don't make the action fail: by the time they run, the action has committed, and a client
+/// told it failed would try it again. A failure is logged instead.
+#[derive(Default)]
+#[must_use]
+pub(crate) struct AfterCommit {
+    /// A note to give the leech tag, as [`tag_leech`] does: tagging a note writes its files.
+    leech: Option<LeechTagging>,
+    /// Notes whose files the notes repository has to catch up with, after buried cards were
+    /// tagged
+    reconcile: Vec<NoteId>,
+}
+
+struct LeechTagging {
+    leech: LeechConfig,
+    note_id: NoteId,
+    at: DateTime<Utc>,
+    log: bool,
+    /// The rating's event, whose group the tag joins
+    group_with: Option<i64>,
+}
+
+impl AfterCommit {
+    pub(crate) async fn run(self, db: &SqlitePool) {
+        if let Some(tagging) = self.leech {
+            // Boxed, since updating a note makes a large future for every caller to carry
+            let tagged = Box::pin(tag_leech(
+                db,
+                &tagging.leech,
+                tagging.note_id,
+                tagging.at,
+                tagging.log,
+                tagging.group_with,
+            ))
+            .await;
+            if let Err(e) = tagged {
+                log::error!(
+                    "Failed to tag note {} as a leech after rating its card: {e}",
+                    tagging.note_id
+                );
+            }
+        }
+        notes_vcs::reconcile_after(db, self.reconcile, "tag buried cards").await;
+    }
+}
+
+/// [`rate_card_with_config`] in the caller's transaction, which has to commit before the returned
+/// [`AfterCommit`] runs.
+#[expect(clippy::too_many_lines)]
+async fn rate_card_on(
+    db: &mut SqliteConnection,
     scheduler: &dyn SrsScheduler,
     config: &SparesExternalConfig,
     RatingSubmission {
@@ -1572,13 +1659,13 @@ pub(crate) async fn rate_card_with_config(
     }: RatingSubmission,
     reviewed_at: DateTime<Utc>,
     log: bool,
-) -> Result<Option<i64>, Error> {
+) -> Result<(Option<i64>, AfterCommit), Error> {
     let (recall_duration, rate_duration) = config.cap_answer_time(recall_duration, rate_duration);
     // Validate input
     let filtered_tag_opt = if let Some(tag_id) = tag_id {
         let tag: Tag = sqlx::query_as(r"SELECT * FROM tag WHERE id = ?")
             .bind(tag_id)
-            .fetch_one(db)
+            .fetch_one(&mut *db)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         if tag.query.is_none() {
@@ -1593,13 +1680,13 @@ pub(crate) async fn rate_card_with_config(
 
     let before_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
-        .fetch_one(db)
+        .fetch_one(&mut *db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     if let Some(filtered_tag) = &filtered_tag_opt
         && !filtered_tag.reschedule
     {
-        return rate_card_without_rescheduling(
+        let event_id = rate_card_without_rescheduling(
             db,
             scheduler,
             filtered_tag,
@@ -1610,16 +1697,17 @@ pub(crate) async fn rate_card_with_config(
             reviewed_at,
             log,
         )
-        .await;
+        .await?;
+        return Ok((event_id, AfterCommit::default()));
     }
     let card = before_card.clone();
     // With the steps and sibling burying of the card's preset
     // Boxed, since every caller of rating carries its future
-    let configs = Box::pin(CardConfigs::load(db, config, Some(&[card_id]))).await?;
+    let configs = Box::pin(CardConfigs::load(&mut *db, config, Some(&[card_id]))).await?;
     let config = configs.get(card_id);
 
     // Get review logs for this card
-    let mut review_logs = fetch_review_logs_for_replay(db, card_id).await?;
+    let mut review_logs = fetch_review_logs_for_replay(&mut *db, card_id).await?;
 
     // Schedule card.
     // After a forget the newest row is the marker, and reviews before it were explicitly
@@ -1641,7 +1729,7 @@ pub(crate) async fn rate_card_with_config(
     // Place the card among the due dates the scheduler allows.
     review_logs.push(new_review_log.clone());
     updated_card.due = place_due(
-        db,
+        &mut *db,
         scheduler,
         config,
         &updated_card,
@@ -1651,7 +1739,7 @@ pub(crate) async fn rate_card_with_config(
     .await?;
     // A goal's card is not left to be due after the goal's day with too little recall on it.
     updated_card.due =
-        keep_due_for_goals(db, config, scheduler, &updated_card, reviewed_at).await?;
+        keep_due_for_goals(&mut *db, config, scheduler, &updated_card, reviewed_at).await?;
     // Record the interval the card was actually given, not the one the scheduler proposed before
     // placement moved it. Postponing reads this back to measure how overdue a card is.
     new_review_log.scheduled_time = Some((updated_card.due - reviewed_at).num_seconds());
@@ -1674,9 +1762,9 @@ pub(crate) async fn rate_card_with_config(
     reset_bury_count(&mut updated_card.custom_data);
 
     // Add entry to review_log
-    let lapses_before = scheduler.lapses(db, card_id).await?;
-    let review_log_id = insert_review(db, &new_review_log, tag_id).await?;
-    let lapses = scheduler.lapses(db, card_id).await?;
+    let lapses_before = scheduler.lapses(&mut *db, card_id).await?;
+    let review_log_id = insert_review_on(&mut *db, &new_review_log, tag_id).await?;
+    let lapses = scheduler.lapses(&mut *db, card_id).await?;
     let leech = lapses > lapses_before && config.leech.acts_on(lapses);
 
     // Update card with all new properties from updated_card
@@ -1696,7 +1784,7 @@ pub(crate) async fn rate_card_with_config(
     .bind(updated_card.updated_at.timestamp())
     .bind(updated_card.custom_data.clone())
     .bind(card.id)
-    .execute(db)
+    .execute(&mut *db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
@@ -1705,7 +1793,7 @@ pub(crate) async fn rate_card_with_config(
     let reviewed_today =
         study_date(reviewed_at, config.zone()) >= study_date(Utc::now(), config.zone());
     let buried_siblings = if filtered_tag_opt.is_none() && reviewed_today {
-        bury_siblings(db, config, &before_card, reviewed_at).await?
+        bury_siblings(&mut *db, config, &before_card, reviewed_at).await?
     } else {
         Vec::new()
     };
@@ -1713,10 +1801,11 @@ pub(crate) async fn rate_card_with_config(
     // Remove the card from the filtered tag it finished. This waits until the review is written,
     // since deleting an emptied tag first would leave the review referencing a missing tag.
     let left_tag = match finished_tag {
-        Some(filtered_tag) => Some(finish_filtered_tag(db, card_id, filtered_tag).await?),
+        Some(filtered_tag) => Some(finish_filtered_tag(&mut *db, card_id, filtered_tag).await?),
         None => None,
     };
 
+    let mut event_id = None;
     if log {
         let payload = RateCardPayload {
             review_log_id: Some(review_log_id),
@@ -1759,41 +1848,26 @@ pub(crate) async fn rate_card_with_config(
             left_tag,
             buried_siblings,
         };
-        let event_ids = insert_events(
+        let event_ids = insert_events_on(
             db,
             &[(EventType::RateCard, to_value(&payload).unwrap())],
             reviewed_at,
             None,
         )
         .await?;
-        let event_id = *event_ids.first().unwrap();
-        if leech {
-            // Boxed, since updating a note makes a large future for every caller to carry
-            Box::pin(tag_leech(
-                db,
-                &config.leech,
-                before_card.note_id,
-                reviewed_at,
-                true,
-                Some(event_id),
-            ))
-            .await?;
-        }
-        return Ok(Some(event_id));
+        event_id = Some(*event_ids.first().unwrap());
     }
-    if leech {
-        Box::pin(tag_leech(
-            db,
-            &config.leech,
-            before_card.note_id,
-            reviewed_at,
-            false,
-            None,
-        ))
-        .await?;
-    }
-
-    Ok(None)
+    let after = AfterCommit {
+        leech: leech.then(|| LeechTagging {
+            leech: config.leech.clone(),
+            note_id: before_card.note_id,
+            at: reviewed_at,
+            log,
+            group_with: event_id,
+        }),
+        reconcile: Vec::new(),
+    };
+    Ok((event_id, after))
 }
 
 /// Rates `before_card` while studying `filtered_tag`, a tag that does not reschedule
@@ -1810,7 +1884,7 @@ pub(crate) async fn rate_card_with_config(
 /// and no `scheduled_time`, and moves the card one Good closer to leaving the tag.
 #[expect(clippy::too_many_arguments)]
 async fn rate_card_without_rescheduling(
-    db: &SqlitePool,
+    db: &mut SqliteConnection,
     scheduler: &dyn SrsScheduler,
     filtered_tag: &Tag,
     before_card: Card,
@@ -1838,7 +1912,7 @@ async fn rate_card_without_rescheduling(
     .bind(reviewed_at.timestamp())
     .bind(updated_card.custom_data.clone())
     .bind(before_card.id)
-    .execute(db)
+    .execute(&mut *db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
     let cram = ReviewLog {
@@ -1853,11 +1927,11 @@ async fn rate_card_without_rescheduling(
         previous_state: before_card.state,
         ..ReviewLog::new()
     };
-    let review_log_id = insert_review(db, &cram, Some(filtered_tag.id)).await?;
+    let review_log_id = insert_review_on(&mut *db, &cram, Some(filtered_tag.id)).await?;
     // Written after the cram, since deleting an emptied tag first would leave the cram
     // referencing a missing tag.
     let left_tag = if finished {
-        Some(finish_filtered_tag(db, before_card.id, filtered_tag).await?)
+        Some(finish_filtered_tag(&mut *db, before_card.id, filtered_tag).await?)
     } else {
         None
     };
@@ -1890,7 +1964,7 @@ async fn rate_card_without_rescheduling(
         left_tag,
         buried_siblings: Vec::new(),
     };
-    let event_ids = insert_events(
+    let event_ids = insert_events_on(
         db,
         &[(EventType::RateCard, to_value(&payload).unwrap())],
         reviewed_at,
@@ -1940,7 +2014,7 @@ pub(crate) async fn tag_leech(
 /// holds them back while it has new cards, for
 /// [`BuryNewSiblings::UnlessBlocking`]. Always `false` with that setting off.
 async fn holds_back_new_cards(
-    db: &SqlitePool,
+    db: &mut SqliteConnection,
     config: &SparesExternalConfig,
     note_id: NoteId,
 ) -> Result<bool, Error> {
@@ -1972,7 +2046,7 @@ async fn holds_back_new_cards(
 /// [`QueueConfig::bury_review_siblings`](crate::config::QueueConfig::bury_review_siblings) say
 /// to, now that it was rated at `reviewed_at`. Returns their changes, for the rating's undo event.
 async fn bury_siblings(
-    db: &SqlitePool,
+    db: &mut SqliteConnection,
     config: &SparesExternalConfig,
     card: &Card,
     reviewed_at: DateTime<Utc>,
@@ -1981,7 +2055,9 @@ async fn bury_siblings(
     let bury_new = match queue.bury_new_siblings {
         BuryNewSiblings::No => false,
         BuryNewSiblings::Yes => true,
-        BuryNewSiblings::UnlessBlocking => !holds_back_new_cards(db, config, card.note_id).await?,
+        BuryNewSiblings::UnlessBlocking => {
+            !holds_back_new_cards(&mut *db, config, card.note_id).await?
+        }
     };
     let roles = [
         (bury_new, StateRole::New),
@@ -2037,20 +2113,38 @@ pub(crate) async fn leave_filtered_tag(
     tag_id: TagId,
     auto_delete: bool,
 ) -> Result<Option<DeletedTag>, Error> {
-    delete_card_tags(db, &[(card_id, tag_id)]).await?;
+    let mut tx = db.begin().await.map_err(|e| Error::Sqlx { source: e })?;
+    let deleted = leave_filtered_tag_on(&mut tx, card_id, tag_id, auto_delete).await?;
+    tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    Ok(deleted)
+}
+
+/// [`leave_filtered_tag`] in the caller's transaction
+async fn leave_filtered_tag_on(
+    db: &mut SqliteConnection,
+    card_id: CardId,
+    tag_id: TagId,
+    auto_delete: bool,
+) -> Result<Option<DeletedTag>, Error> {
+    sqlx::query(r"DELETE FROM card_tag WHERE card_id = ? AND tag_id = ?")
+        .bind(card_id)
+        .bind(tag_id)
+        .execute(&mut *db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
     if !auto_delete {
         return Ok(None);
     }
-    Ok(delete_empty_tags(db, &[tag_id]).await?.pop())
+    Ok(delete_empty_tags_on(db, &[tag_id]).await?.pop())
 }
 
 /// [`leave_filtered_tag`] for a rating, recording how the card left `tag` for its undo
 async fn finish_filtered_tag(
-    db: &SqlitePool,
+    db: &mut SqliteConnection,
     card_id: CardId,
     tag: &Tag,
 ) -> Result<FilteredTagExit, Error> {
-    let deleted = leave_filtered_tag(db, card_id, tag.id, tag.auto_delete).await?;
+    let deleted = leave_filtered_tag_on(db, card_id, tag.id, tag.auto_delete).await?;
     Ok(FilteredTagExit {
         tag_id: tag.id,
         deleted_tag: deleted.as_ref().map(|d| d.tag.clone()),
@@ -2103,7 +2197,17 @@ pub(crate) async fn insert_review(
     review_log: &ReviewLog,
     tag_id: Option<TagId>,
 ) -> Result<i64, Error> {
-    let id = next_id_in(db, IdTable::ReviewLog).await?;
+    let mut conn = db.acquire().await.map_err(|e| Error::Sqlx { source: e })?;
+    insert_review_on(&mut conn, review_log, tag_id).await
+}
+
+/// [`insert_review`] on the caller's connection, such as inside its transaction
+async fn insert_review_on(
+    db: &mut SqliteConnection,
+    review_log: &ReviewLog,
+    tag_id: Option<TagId>,
+) -> Result<i64, Error> {
+    let id = next_id(&mut *db, IdTable::ReviewLog).await?;
     sqlx::query_scalar(r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, tag_id, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
         .bind(id)
         .bind(review_log.card_id)
@@ -2131,9 +2235,25 @@ pub async fn bury_card(
     at: DateTime<Utc>,
     log: bool,
 ) -> Result<Option<i64>, Error> {
+    let mut tx = begin_study_action(db).await?;
+    let (event_id, after) = bury_card_on(&mut tx, scheduler, card_id, at, log).await?;
+    tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    after.run(db).await;
+    Ok(event_id)
+}
+
+/// [`bury_card`] in the caller's transaction, which has to commit before the returned
+/// [`AfterCommit`] runs.
+async fn bury_card_on(
+    db: &mut SqliteConnection,
+    scheduler: &dyn SrsScheduler,
+    card_id: CardId,
+    at: DateTime<Utc>,
+    log: bool,
+) -> Result<(Option<i64>, AfterCommit), Error> {
     let before_card: Card = sqlx::query_as(r"SELECT * FROM card WHERE id = ?")
         .bind(card_id)
-        .fetch_one(db)
+        .fetch_one(&mut *db)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
@@ -2157,10 +2277,11 @@ pub async fn bury_card(
     .bind(&buried_card.custom_data)
     .bind(at.timestamp())
     .bind(card_id)
-    .execute(db)
+    .execute(&mut *db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
 
+    let mut event_id = None;
     if log {
         let payload = vec![UpdateCardPayload {
             card_id,
@@ -2203,34 +2324,58 @@ pub async fn bury_card(
                 },
             ),
         }];
-        let event_ids = insert_events(
-            db,
+        let event_ids = insert_events_on(
+            &mut *db,
             &[(EventType::BuryCards, to_value(&payload).unwrap())],
             at,
             None,
         )
         .await?;
-        let event_id = *event_ids.first().unwrap();
-        if tag_as_buried {
-            // Boxed, as tagging makes a large future for every caller to carry
-            return Box::pin(tag_buried_cards(
-                db,
-                &[card_id],
-                &config,
-                at,
-                true,
-                Some(event_id),
-            ))
-            .await;
-        }
-        return Ok(Some(event_id));
+        event_id = Some(*event_ids.first().unwrap());
     }
+    let mut after = AfterCommit::default();
     if tag_as_buried {
-        Box::pin(tag_buried_cards(db, &[card_id], &config, at, false, None)).await?;
+        // Boxed, as tagging makes a large future for every caller to carry
+        let (group, note_ids) = Box::pin(tag_buried_cards_on(
+            db,
+            &[card_id],
+            &config,
+            at,
+            log,
+            event_id,
+        ))
+        .await?;
+        event_id = group;
+        after.reconcile = note_ids;
     }
-    Ok(None)
+    Ok((event_id, after))
 }
 
+/// The longest [`action_id`](SubmitStudyActionRequest::action_id) a client may give
+pub const MAX_ACTION_ID_LEN: usize = 128;
+
+/// A new [`action_id`](SubmitStudyActionRequest::action_id): 32 random hex digits
+pub fn new_action_id() -> String {
+    format!("{:032x}", rand::random::<u128>())
+}
+
+/// How long the [`action_id`](SubmitStudyActionRequest::action_id)s of study actions are kept:
+/// a retry after that is carried out again.
+const ACTION_ID_DAYS: i64 = 30;
+
+/// Carries out a study action, and returns its undo event.
+///
+/// A rating or bury is written in one transaction: the card's new scheduling state, its review
+/// log row, its progress through a filtered tag (and leaving it), the siblings it buries, the tag
+/// for buried cards, the undo event, and the record of its
+/// [`action_id`](SubmitStudyActionRequest::action_id). Either all of it is written or, if any
+/// write fails, none of it. Only tagging a leech's note and updating the notes repository happen
+/// after the transaction commits (see [`AfterCommit`]).
+///
+/// With an `action_id` this collection has carried out before, nothing is written and the first
+/// attempt's response is returned, so that a client can send an action again when it doesn't know
+/// whether it went through (its response was lost, say). The same id with a different request is
+/// refused with [`LibraryError::StudyActionConflict`].
 // Note that `reviewed_at` is not present in the request body since we don't want the user to be able to edit it. However, for testing purposes, we still want to be able to mimic calling this function on different days, so it is included as an argument.
 pub async fn submit_study_action(
     db: &SqlitePool,
@@ -2240,20 +2385,27 @@ pub async fn submit_study_action(
     let SubmitStudyActionRequest {
         scheduler_name,
         action,
+        action_id,
     } = body;
 
     let scheduler = get_scheduler_from_string(scheduler_name.as_str())?;
 
     match action {
-        StudyAction::Rate(rating_submission) => {
-            return rate_card(db, scheduler.as_ref(), rating_submission, at, true)
-                .await
-                .map(|event_id| SubmitStudyActionResponse { event_id });
+        StudyAction::Rate(_) | StudyAction::Bury { .. } => {
+            return Box::pin(submit_card_action(
+                db,
+                scheduler.as_ref(),
+                &scheduler_name,
+                action,
+                action_id.as_deref(),
+                at,
+            ))
+            .await;
         }
-        StudyAction::Bury { card_id } => {
-            return bury_card(db, scheduler.as_ref(), card_id, at, true)
-                .await
-                .map(|event_id| SubmitStudyActionResponse { event_id });
+        StudyAction::Advance { .. } | StudyAction::Postpone { .. } if action_id.is_some() => {
+            return Err(Error::Library(LibraryError::InvalidStudyAction(
+                "Advancing and postponing cards don't take an action_id".to_string(),
+            )));
         }
         StudyAction::Advance { count, query } => {
             let config = read_external_config()?;
@@ -2289,6 +2441,115 @@ pub async fn submit_study_action(
         }
     }
     Ok(SubmitStudyActionResponse { event_id: None })
+}
+
+/// A rating or bury, carried out at most once per `action_id` (see [`submit_study_action`])
+async fn submit_card_action(
+    db: &SqlitePool,
+    scheduler: &dyn SrsScheduler,
+    scheduler_name: &str,
+    action: StudyAction,
+    action_id: Option<&str>,
+    at: DateTime<Utc>,
+) -> Result<SubmitStudyActionResponse, Error> {
+    if let Some(id) = action_id {
+        validate_action_id(id)?;
+    }
+    // What a retry has to repeat exactly: everything the client sent but the id
+    let request = serde_json::json!({ "scheduler_name": scheduler_name, "action": &action });
+    let request = serde_json::to_string(&request).expect("serializable");
+    let config = match &action {
+        StudyAction::Rate(_) => Some(read_external_config()?),
+        _ => None,
+    };
+    let mut tx = begin_study_action(db).await?;
+    if let Some(id) = action_id
+        && let Some(response) = recorded_study_action(&mut tx, id, &request).await?
+    {
+        return Ok(response);
+    }
+    let (event_id, after) = match (action, &config) {
+        (StudyAction::Rate(submission), Some(config)) => {
+            rate_card_on(&mut tx, scheduler, config, submission, at, true).await?
+        }
+        (StudyAction::Bury { card_id }, _) => {
+            bury_card_on(&mut tx, scheduler, card_id, at, true).await?
+        }
+        _ => unreachable!("only ratings and buries are submitted here"),
+    };
+    let response = SubmitStudyActionResponse { event_id };
+    if let Some(id) = action_id {
+        record_study_action(&mut tx, id, &request, &response, at).await?;
+    }
+    tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    after.run(db).await;
+    Ok(response)
+}
+
+/// Refuses an [`action_id`](SubmitStudyActionRequest::action_id) that is empty, longer than
+/// [`MAX_ACTION_ID_LEN`], or has characters other than printable ASCII.
+fn validate_action_id(id: &str) -> Result<(), Error> {
+    if id.is_empty() || id.len() > MAX_ACTION_ID_LEN || !id.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(Error::Library(LibraryError::InvalidStudyAction(format!(
+            "An action_id has 1 to {MAX_ACTION_ID_LEN} printable ASCII characters, without spaces"
+        ))));
+    }
+    Ok(())
+}
+
+/// The response of the study action `id`, if it was carried out: `request` has to be what it was
+/// then.
+async fn recorded_study_action(
+    db: &mut SqliteConnection,
+    id: &str,
+    request: &str,
+) -> Result<Option<SubmitStudyActionResponse>, Error> {
+    let row: Option<(String, String)> =
+        sqlx::query_as(r"SELECT request, response FROM study_action WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut *db)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+    let Some((recorded, response)) = row else {
+        return Ok(None);
+    };
+    if recorded != request {
+        return Err(Error::Library(LibraryError::StudyActionConflict(format!(
+            "The action_id {id} was used for a different study action"
+        ))));
+    }
+    serde_json::from_str(&response).map(Some).map_err(|e| {
+        Error::Library(LibraryError::InvalidStudyAction(format!(
+            "The recorded response of study action {id} can't be read: {e}"
+        )))
+    })
+}
+
+/// Records that the study action `id` was carried out with `response`, and forgets the ones older
+/// than [`ACTION_ID_DAYS`].
+async fn record_study_action(
+    db: &mut SqliteConnection,
+    id: &str,
+    request: &str,
+    response: &SubmitStudyActionResponse,
+    at: DateTime<Utc>,
+) -> Result<(), Error> {
+    sqlx::query(r"DELETE FROM study_action WHERE created_at < ?")
+        .bind((at - Duration::days(ACTION_ID_DAYS)).timestamp())
+        .execute(&mut *db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    sqlx::query(
+        r"INSERT INTO study_action (id, request, response, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(request)
+    .bind(serde_json::to_string(response).expect("serializable"))
+    .bind(at.timestamp())
+    .execute(&mut *db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(())
 }
 
 /// The cards moved without a review since their last replayed row: their latest
@@ -2921,6 +3182,7 @@ mod tests {
                 rate_duration: Duration::seconds(5),
                 tag_id: None,
             }),
+            action_id: None,
         };
         let submit_review_res = submit_study_action(&pool, request, now).await;
         assert!(submit_review_res.is_ok());

@@ -677,6 +677,7 @@ async fn e2e_undo_delete_notes_restores_auto_deleted_tag_and_card_links(
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: Some(filtered.id),
             }),
+            action_id: None,
         },
         Utc::now(),
     )
@@ -819,6 +820,7 @@ async fn e2e_undo_update_notes_keeps_the_reviews_of_cards_it_restores(pool: Sqli
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: None,
             }),
+            action_id: None,
         },
         Utc::now(),
     )

@@ -426,6 +426,7 @@ async fn rate(pool: &SqlitePool, card_id: CardId, rating: u32, at: chrono::DateT
                 rate_duration: Duration::seconds(2),
                 tag_id: None,
             }),
+            action_id: None,
         },
         at,
     )

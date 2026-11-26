@@ -2625,7 +2625,13 @@ mod reschedule_tests {
         assert_eq!(history.review_count_by_date.values().sum::<u32>(), 2);
 
         // Neither the cram rated Again nor a reschedule changes the card
-        assert_eq!(scheduler.lapses(&pool, card_id).await.unwrap(), 0);
+        assert_eq!(
+            scheduler
+                .lapses(&mut pool.acquire().await.unwrap(), card_id)
+                .await
+                .unwrap(),
+            0
+        );
         reschedule_all_cards(
             &pool,
             scheduler.as_ref(),

@@ -18,6 +18,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use sqlx::sqlite::SqliteConnection;
 use sqlx::sqlite::SqlitePool;
 
 use crate::Error;
@@ -99,23 +100,41 @@ pub(crate) async fn tag_buried_cards(
     if card_ids.is_empty() {
         return Ok(group);
     }
+    let mut tx = db.begin().await.map_err(|e| Error::Sqlx { source: e })?;
+    let (event_id, note_ids) =
+        tag_buried_cards_on(&mut tx, card_ids, config, at, log, group).await?;
+    tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    notes_vcs::reconcile_after(db, note_ids, "tag buried cards").await;
+    Ok(event_id)
+}
+
+/// [`tag_buried_cards`] in the caller's transaction. Returns the event that leads the group, and
+/// the notes whose files the notes repository has to catch up with once it commits.
+pub(crate) async fn tag_buried_cards_on(
+    conn: &mut SqliteConnection,
+    card_ids: &[CardId],
+    config: &SparesExternalConfig,
+    at: DateTime<Utc>,
+    log: bool,
+    group: Option<i64>,
+) -> Result<(Option<i64>, Vec<NoteId>), Error> {
+    if card_ids.is_empty() {
+        return Ok((group, Vec::new()));
+    }
     let update = UpdateTags::ModifyTags {
         tags_to_remove: None,
         tags_to_add: Some(vec![config.queue.tag_buried.tag.clone()]),
     };
-    let mut tx = db.begin().await.map_err(|e| Error::Sqlx { source: e })?;
-    let changes = card_tags::update_card_tags_on(&mut tx, card_ids, &update).await?;
-    tx.commit().await.map_err(|e| Error::Sqlx { source: e })?;
+    let changes = card_tags::update_card_tags_on(&mut *conn, card_ids, &update).await?;
     let note_ids: Vec<NoteId> = changes.note_ids.iter().copied().collect();
     let event_id = if log {
-        card_tags::log_card_tag_changes(db, changes, at, group)
+        card_tags::log_card_tag_changes_on(conn, changes, at, group)
             .await?
             .or(group)
     } else {
         group
     };
-    notes_vcs::reconcile_after(db, note_ids, "tag buried cards").await;
-    Ok(event_id)
+    Ok((event_id, note_ids))
 }
 
 #[cfg(test)]

@@ -102,13 +102,16 @@ impl PlacementContext {
 
     /// Loads what is needed to place `card` on one of `candidates`: the cards due on those days
     /// and the card's siblings.
-    pub async fn load_for(
-        db: &SqlitePool,
+    pub async fn load_for<'e, E>(
+        db: E,
         at: DateTime<Utc>,
         card: &Card,
         candidates: &[DateTime<Utc>],
         zone: Zone,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, Error>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
         let (Some(first), Some(last)) = (candidates.iter().min(), candidates.iter().max()) else {
             return Ok(Self::new(zone, at));
         };
@@ -122,13 +125,16 @@ impl PlacementContext {
         Self::load(db, zone, at, Some((from, to)), Some(card.note_id)).await
     }
 
-    async fn load(
-        db: &SqlitePool,
+    async fn load<'e, E>(
+        db: E,
         zone: Zone,
         at: DateTime<Utc>,
         due_between: Option<(DateTime<Utc>, DateTime<Utc>)>,
         note_id: Option<NoteId>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, Error>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
         let (from, to) =
             due_between.unwrap_or((DateTime::<Utc>::MIN_UTC, DateTime::<Utc>::MAX_UTC));
         // Only cards in review compete for days: new and learning cards have no review-sized due
@@ -302,7 +308,7 @@ fn sibling_weight(day: NaiveDate, sibling_days: &[NaiveDate]) -> f64 {
 ///
 /// Returns `card.due` unchanged when the scheduler does not allow it to move.
 pub async fn place_due(
-    db: &SqlitePool,
+    db: &mut sqlx::SqliteConnection,
     scheduler: &dyn SrsScheduler,
     config: &SparesExternalConfig,
     card: &Card,

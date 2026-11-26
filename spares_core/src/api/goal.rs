@@ -613,7 +613,11 @@ async fn weeks(
 }
 
 /// Whether card `card_id` is one of the cards `cards_sql` selects.
-async fn is_among(db: &SqlitePool, card_id: CardId, cards_sql: &str) -> Result<bool, Error> {
+async fn is_among(
+    db: &mut sqlx::SqliteConnection,
+    card_id: CardId,
+    cards_sql: &str,
+) -> Result<bool, Error> {
     sqlx::query_scalar(AssertSqlSafe(format!("SELECT ? IN ({cards_sql})")))
         .bind(card_id)
         .fetch_one(db)
@@ -629,7 +633,7 @@ async fn is_among(db: &SqlitePool, card_id: CardId, cards_sql: &str) -> Result<b
 /// falls to the retention, though at least a day after `at`. Several goals give the earliest of
 /// their due dates.
 pub(crate) async fn keep_due_for_goals(
-    db: &SqlitePool,
+    db: &mut sqlx::SqliteConnection,
     config: &SparesExternalConfig,
     scheduler: &dyn SrsScheduler,
     card: &Card,
@@ -654,7 +658,7 @@ pub(crate) async fn keep_due_for_goals(
         #[expect(clippy::cast_precision_loss, reason = "seconds until a date")]
         let days_to_day = (day - at).num_seconds() as f64 / 86400.0;
         if recall(CardMemory::from(card), days_to_day) >= retention
-            || !is_among(db, card.id, &goal.query_sql).await?
+            || !is_among(&mut *db, card.id, &goal.query_sql).await?
         {
             continue;
         }
@@ -1032,9 +1036,15 @@ mod tests {
             set_card(&pool, *id, REVIEW, now + Duration::days(60), 20.0, 5.0).await;
         }
         let exam_card = card(&pool, ids[0]).await;
-        let due = keep_due_for_goals(&pool, &config, &scheduler, &exam_card, now)
-            .await
-            .unwrap();
+        let due = keep_due_for_goals(
+            &mut pool.acquire().await.unwrap(),
+            &config,
+            &scheduler,
+            &exam_card,
+            now,
+        )
+        .await
+        .unwrap();
         assert!(due < day, "{due} should be before {day}");
         #[expect(clippy::cast_precision_loss, reason = "a test's seconds")]
         let days = (due - now).num_seconds() as f64 / 86400.0;
@@ -1043,16 +1053,28 @@ mod tests {
         // A card of no goal, or of a goal without retention, keeps its due date.
         let other = card(&pool, ids[1]).await;
         assert_eq!(
-            keep_due_for_goals(&pool, &config, &scheduler, &other, now)
-                .await
-                .unwrap(),
+            keep_due_for_goals(
+                &mut pool.acquire().await.unwrap(),
+                &config,
+                &scheduler,
+                &other,
+                now
+            )
+            .await
+            .unwrap(),
             other.due
         );
         let without = super::tests::config(date, "");
         assert_eq!(
-            keep_due_for_goals(&pool, &without, &scheduler, &exam_card, now)
-                .await
-                .unwrap(),
+            keep_due_for_goals(
+                &mut pool.acquire().await.unwrap(),
+                &without,
+                &scheduler,
+                &exam_card,
+                now
+            )
+            .await
+            .unwrap(),
             exam_card.due
         );
         // Strong enough to keep 0.95 for 30 days: left alone.
@@ -1067,16 +1089,28 @@ mod tests {
         .await;
         let strong = card(&pool, ids[0]).await;
         assert_eq!(
-            keep_due_for_goals(&pool, &config, &scheduler, &strong, now)
-                .await
-                .unwrap(),
+            keep_due_for_goals(
+                &mut pool.acquire().await.unwrap(),
+                &config,
+                &scheduler,
+                &strong,
+                now
+            )
+            .await
+            .unwrap(),
             strong.due
         );
         // Once the day has come, nothing changes.
         assert_eq!(
-            keep_due_for_goals(&pool, &config, &scheduler, &exam_card, day)
-                .await
-                .unwrap(),
+            keep_due_for_goals(
+                &mut pool.acquire().await.unwrap(),
+                &config,
+                &scheduler,
+                &exam_card,
+                day
+            )
+            .await
+            .unwrap(),
             exam_card.due
         );
     }

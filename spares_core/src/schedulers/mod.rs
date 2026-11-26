@@ -171,7 +171,11 @@ async fn cards_with_lapses(
 }
 
 /// How many review log rows of `card_id` `lapse` is true for, with the rows as `rl`.
-async fn count_lapses(db: &SqlitePool, card_id: CardId, lapse: &str) -> Result<u32, Error> {
+async fn count_lapses(
+    db: &mut sqlx::SqliteConnection,
+    card_id: CardId,
+    lapse: &str,
+) -> Result<u32, Error> {
     sqlx::query_scalar(AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM review_log rl WHERE rl.card_id = ? AND {lapse}"
     )))
@@ -280,7 +284,7 @@ pub trait SrsScheduler: Send + Sync {
 
     /// How many times `card_id` lapsed: was forgotten after it had graduated from its learning
     /// steps, as [`lapse_sql`] decides. [`crate::config::LeechConfig`] acts on this.
-    async fn lapses(&self, db: &SqlitePool, card_id: CardId) -> Result<u32, Error> {
+    async fn lapses(&self, db: &mut sqlx::SqliteConnection, card_id: CardId) -> Result<u32, Error> {
         count_lapses(db, card_id, &lapse_sql("rl")).await
     }
 
@@ -1036,7 +1040,12 @@ mod tests {
         }
 
         let lapse = lapse_sql_for("rl", &[Box::new(PassFail::default()), scheduler()]);
-        assert_eq!(count_lapses(&pool, 1, &lapse).await.unwrap(), threshold);
+        assert_eq!(
+            count_lapses(&mut pool.acquire().await.unwrap(), 1, &lapse)
+                .await
+                .unwrap(),
+            threshold
+        );
         let leeches = cards_with_lapses(&pool, &lapse, threshold).await.unwrap();
         assert_eq!(
             leeches.iter().map(|card| card.id).collect::<Vec<_>>(),
@@ -1049,7 +1058,12 @@ mod tests {
                 .is_empty()
         );
         // Without `pass_fail`, only the FSRS lapse counts.
-        assert_eq!(count_lapses(&pool, 1, &lapse_sql("rl")).await.unwrap(), 1);
+        assert_eq!(
+            count_lapses(&mut pool.acquire().await.unwrap(), 1, &lapse_sql("rl"))
+                .await
+                .unwrap(),
+            1
+        );
     }
 
     #[test]

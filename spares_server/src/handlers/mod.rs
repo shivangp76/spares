@@ -26,6 +26,8 @@ pub(crate) mod parser;
 pub(crate) mod relay;
 pub(crate) mod render_asset;
 pub(crate) mod review;
+#[cfg(test)]
+mod review_tests;
 pub(crate) mod saved_search;
 pub(crate) mod scheduler;
 #[cfg(not(target_family = "wasm"))]
@@ -53,7 +55,10 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
     }
     let status = match &e {
         // The sync server changed during the sync: the client starts over.
-        Error::SyncRetry => Some(StatusCode::CONFLICT),
+        // Or the same action id for a different study action, which retrying won't help
+        Error::SyncRetry | Error::Library(LibraryError::StudyActionConflict(_)) => {
+            Some(StatusCode::CONFLICT)
+        }
         Error::FullSyncRequired(reason) => {
             return (
                 StatusCode::PRECONDITION_FAILED,
@@ -82,7 +87,9 @@ fn error_to_response(e: Error) -> (StatusCode, Json<Value>) {
         // E.g. undoing what has been synced already
         Error::Sync(_)
         | Error::Library(
-            LibraryError::Tag(TagErrorKind::InvalidInput(_)) | LibraryError::InvalidConfig(_),
+            LibraryError::Tag(TagErrorKind::InvalidInput(_))
+            | LibraryError::InvalidConfig(_)
+            | LibraryError::InvalidStudyAction(_),
         ) => Some(StatusCode::BAD_REQUEST),
         // A host syncing with its upstream
         Error::SyncUnreachable(_) => Some(StatusCode::BAD_GATEWAY),

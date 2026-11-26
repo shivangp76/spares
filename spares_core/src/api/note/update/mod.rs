@@ -1608,6 +1608,7 @@ mod tests {
                     rate_duration: Duration::seconds(5),
                     tag_id: None,
                 }),
+                action_id: None,
             },
             Utc::now(),
         )
@@ -1698,6 +1699,7 @@ mod tests {
                 rate_duration: Duration::seconds(5),
                 tag_id: None,
             }),
+            action_id: None,
         };
         let submit_review_res = submit_study_action(pool, request, Utc::now()).await;
         assert!(submit_review_res.is_ok());
@@ -1905,6 +1907,7 @@ mod tests {
                     rate_duration: chrono::Duration::seconds(2),
                     tag_id: None,
                 }),
+                action_id: None,
             },
             Utc::now(),
         )

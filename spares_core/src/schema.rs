@@ -1242,6 +1242,19 @@ pub mod review {
     pub struct SubmitStudyActionRequest {
         pub scheduler_name: String,
         pub action: StudyAction,
+        /// An id the client gives this action, such as a UUID, and sends again with every retry
+        /// of it, so that the action is carried out once however often it arrives: a retry of an
+        /// action already carried out gets the first attempt's response back, and the same id
+        /// with a different action or scheduler is refused. Ids are kept for 30 days, in the
+        /// collection the action was submitted to. At most
+        /// [`MAX_ACTION_ID_LEN`](crate::api::review::MAX_ACTION_ID_LEN) printable ASCII
+        /// characters.
+        ///
+        /// Only [`StudyAction::Rate`] and [`StudyAction::Bury`] take one. Clients from before
+        /// there were ids send none, and their actions are carried out each time they arrive, as
+        /// before.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub action_id: Option<String>,
     }
 
     #[derive(Debug, Deserialize, Serialize)]

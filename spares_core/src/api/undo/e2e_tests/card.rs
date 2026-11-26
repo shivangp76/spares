@@ -146,6 +146,7 @@ async fn e2e_undo_forget_card_restores_state(pool: SqlitePool) {
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: None,
             }),
+            action_id: None,
         },
         Utc::now(),
     )
@@ -223,6 +224,7 @@ async fn e2e_undo_rate_card_restores_scheduling_state(pool: SqlitePool) {
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: None,
             }),
+            action_id: None,
         },
         Utc::now(),
     )
@@ -293,6 +295,7 @@ async fn e2e_undo_rate_card_deletes_review_log(pool: SqlitePool) {
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: None,
             }),
+            action_id: None,
         },
         Utc::now(),
     )
@@ -338,6 +341,7 @@ async fn e2e_undo_bury_card_restores_special_state(pool: SqlitePool) {
         SubmitStudyActionRequest {
             scheduler_name: "fsrs".to_string(),
             action: StudyAction::Bury { card_id },
+            action_id: None,
         },
         Utc::now(),
     )
@@ -432,6 +436,7 @@ async fn e2e_undo_advance_cards_restores_due(pool: SqlitePool) {
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: None,
             }),
+            action_id: None,
         },
         now,
     )
@@ -453,6 +458,7 @@ async fn e2e_undo_advance_cards_restores_due(pool: SqlitePool) {
                 count: 1,
                 query: None,
             },
+            action_id: None,
         },
         now,
     )
@@ -520,6 +526,7 @@ async fn e2e_undo_postpone_cards_restores_due(pool: SqlitePool) {
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: None,
             }),
+            action_id: None,
         },
         now,
     )
@@ -540,6 +547,7 @@ async fn e2e_undo_postpone_cards_restores_due(pool: SqlitePool) {
                 count: 1,
                 query: None,
             },
+            action_id: None,
         },
         now,
     )
@@ -605,6 +613,7 @@ async fn e2e_undo_postpone_cards_takes_its_review_log_rows(pool: SqlitePool) {
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: None,
             }),
+            action_id: None,
         },
         now - chrono::Duration::days(180),
     )
@@ -636,6 +645,7 @@ async fn e2e_undo_postpone_cards_takes_its_review_log_rows(pool: SqlitePool) {
                 count: 1,
                 query: None,
             },
+            action_id: None,
         },
         now,
     )
@@ -758,6 +768,7 @@ async fn e2e_undo_forget_card_deletes_review_log(pool: SqlitePool) {
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: None,
             }),
+            action_id: None,
         },
         Utc::now(),
     )
@@ -839,6 +850,7 @@ async fn graduate_from_filtered_tag(
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: Some(tag.id),
             }),
+            action_id: None,
         },
         Utc::now(),
     )
@@ -983,6 +995,7 @@ async fn e2e_daily_unbury_is_skipped_by_plain_undo_and_redo(pool: SqlitePool) {
                     rate_duration: chrono::Duration::seconds(2),
                     tag_id: None,
                 }),
+                action_id: None,
             },
             Utc::now(),
         )
@@ -1104,6 +1117,7 @@ async fn e2e_undo_rate_card_gives_reviews_back_the_filtered_tag_it_deleted(
                     rate_duration: chrono::Duration::seconds(2),
                     tag_id: Some(tag.id),
                 }),
+                action_id: None,
             },
             Utc::now(),
         )
@@ -1168,6 +1182,7 @@ async fn e2e_undo_delete_tag_gives_reviews_back_their_tag(
                 rate_duration: chrono::Duration::seconds(2),
                 tag_id: Some(tag.id),
             }),
+            action_id: None,
         },
         Utc::now(),
     )
