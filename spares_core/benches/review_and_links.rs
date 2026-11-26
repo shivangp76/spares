@@ -230,7 +230,7 @@ fn main() {
         let path = temp.path().join("review.sqlite");
         std::fs::copy(source, &path).unwrap();
         let db = fixture::server_pool(&path).await;
-        spares_core::collection::migrate(&db).await.unwrap();
+        spares_core::collection::migrator().run(&db).await.unwrap();
         // Ensure both filters have enough due cards even after repeated ratings.
         sqlx::query("UPDATE card SET due = ?, state = 2 WHERE id < 201")
             .bind(fixture::now().timestamp())

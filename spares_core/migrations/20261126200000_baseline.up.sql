@@ -1,23 +1,22 @@
--- The schema as of 2026-11-24, which replaces the 20 migrations from `20240326145400_main_data` to
--- `20261104130000_render_output` (see the git history for them and the reasons for each).
+-- The schema as of 2026-11-26, which replaces the migrations from `20240326145400_main_data` to
+-- `20261126120000_study_action`, including the baseline of 2026-11-24 that had replaced the first
+-- 20 of them (see the git history for them and the reasons for each).
 --
 -- A database those migrations made already has the schema, so here every statement is
 -- `IF NOT EXISTS`, and the hosts and the web app run the migrations with `ignore_missing`, which
 -- accepts the old ones in `_sqlx_migrations`. A database that stopped partway through them can't
--- be brought up from here: opening it with a spares from before 2026-11-24 first finishes them.
---
--- Every database runs this once, so after the schema it also brings the data of one those
--- migrations made up to date (see the end), which changes nothing in a new one.
+-- be brought up from here: opening it first with a spares from before this baseline, but from
+-- 2026-11-26 or later, finishes them.
 
 -- Refuses a database that ran some of the old migrations but not the last one. The failed
 -- constraint names what to do.
 CREATE TEMP TABLE baseline_guard (
-    open_this_collection_with_a_spares_from_before_2026_11_24_first INTEGER NOT NULL
+    open_this_collection_with_a_spares_from_just_before_the_2026_11_26_baseline_first INTEGER NOT NULL
 );
 INSERT INTO baseline_guard
 SELECT NULL
-WHERE EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version < 20261124110000)
-    AND NOT EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version = 20261104130000 AND success);
+WHERE EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version < 20261126200000)
+    AND NOT EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version = 20261126120000 AND success);
 DROP TABLE baseline_guard;
 
 CREATE TABLE IF NOT EXISTS parser (
@@ -67,6 +66,9 @@ CREATE TABLE IF NOT EXISTS card (
     special_state INTEGER, -- Enum
     state INTEGER NOT NULL, -- Foreign key to 'state' table
     custom_data TEXT NOT NULL, usn INTEGER NOT NULL DEFAULT -1, -- JSON string
+    -- FSRS-7 remembers two stabilities: the slow one in `stability` and a fast one that same-day
+    -- reviews move. Under FSRS-6 the fast one equals `stability`.
+    stability_fast REAL NOT NULL DEFAULT 0,
     FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE -- When note is deleted, delete all corresponding cards
 );
 
@@ -78,6 +80,9 @@ CREATE TABLE IF NOT EXISTS note_link (
     searched_keyword VARCHAR NOT NULL,
     matched_keyword VARCHAR,
     score REAL,
+    -- Which way the link points (`LinkRelation`): 0 when the note with the link builds on the
+    -- note it links to, 1 when the linked note builds on it, 2 when neither does.
+    relation INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (parent_note_id) REFERENCES note(id) ON DELETE CASCADE, -- When note is deleted, delete all corresponding linked notes
     FOREIGN KEY (linked_note_id) REFERENCES note(id) ON DELETE SET NULL
     -- PRIMARY KEY (parent_note_id, linked_note_id)
@@ -279,6 +284,7 @@ SELECT c.id AS id, json_object(
     'updated_at', c.updated_at,
     'due', c.due,
     'stability', c.stability,
+    'stability_fast', c.stability_fast,
     'difficulty', c.difficulty,
     'desired_retention', c.desired_retention,
     'special_state', c.special_state,
@@ -340,8 +346,11 @@ CREATE INDEX IF NOT EXISTS idx_review_log_tag_id ON review_log(tag_id);
 
 CREATE INDEX IF NOT EXISTS idx_review_log_usn ON review_log(usn);
 
-CREATE INDEX IF NOT EXISTS idx_review_log_card_id_kind_reviewed_at
-    ON review_log(card_id, kind, reviewed_at);
+-- The queue reads the previous state and both durations for eligible cards, so this index covers
+-- them. id is the chronological tie-breaker of latest-review lookups when timestamps are equal.
+CREATE INDEX IF NOT EXISTS idx_review_log_card_id_kind_reviewed_at ON review_log(
+    card_id, kind, reviewed_at, id, previous_state, recall_duration, rate_duration
+);
 
 CREATE INDEX IF NOT EXISTS idx_saved_search_usn ON saved_search(usn);
 
@@ -380,7 +389,8 @@ CREATE TRIGGER IF NOT EXISTS sync_card_update AFTER UPDATE ON card
 WHEN NEW.usn = OLD.usn AND OLD.usn != -1 AND NOT EXISTS (SELECT 1 FROM sync_applying)
     AND (OLD.note_id IS NOT NEW.note_id OR OLD."order" IS NOT NEW."order"
         OR OLD.back_type IS NOT NEW.back_type OR OLD.due IS NOT NEW.due
-        OR OLD.stability IS NOT NEW.stability OR OLD.difficulty IS NOT NEW.difficulty
+        OR OLD.stability IS NOT NEW.stability OR OLD.stability_fast IS NOT NEW.stability_fast
+        OR OLD.difficulty IS NOT NEW.difficulty
         OR OLD.desired_retention IS NOT NEW.desired_retention
         OR OLD.special_state IS NOT NEW.special_state OR OLD.state IS NOT NEW.state
         OR OLD.custom_data IS NOT NEW.custom_data OR OLD.created_at IS NOT NEW.created_at)
@@ -395,6 +405,7 @@ BEGIN
         'updated_at', OLD.updated_at,
         'due', OLD.due,
         'stability', OLD.stability,
+        'stability_fast', OLD.stability_fast,
         'difficulty', OLD.difficulty,
         'desired_retention', OLD.desired_retention,
         'special_state', OLD.special_state,
@@ -807,7 +818,8 @@ CREATE TRIGGER IF NOT EXISTS sync_received_card_update AFTER UPDATE ON card
 WHEN EXISTS (SELECT 1 FROM sync_applying)
     AND (OLD.note_id IS NOT NEW.note_id OR OLD."order" IS NOT NEW."order"
         OR OLD.back_type IS NOT NEW.back_type OR OLD.due IS NOT NEW.due
-        OR OLD.stability IS NOT NEW.stability OR OLD.difficulty IS NOT NEW.difficulty
+        OR OLD.stability IS NOT NEW.stability OR OLD.stability_fast IS NOT NEW.stability_fast
+        OR OLD.difficulty IS NOT NEW.difficulty
         OR OLD.desired_retention IS NOT NEW.desired_retention
         OR OLD.special_state IS NOT NEW.special_state OR OLD.state IS NOT NEW.state
         OR OLD.custom_data IS NOT NEW.custom_data OR OLD.created_at IS NOT NEW.created_at)
@@ -890,118 +902,108 @@ BEGIN
     ON CONFLICT (kind, oid) DO UPDATE SET event_id = excluded.event_id;
 END;
 
--- Data older versions of spares wrote
-
--- Writes into old rows and undo events the fields that the code used to default when they were
--- missing, so it can read every row as it is written now:
---
--- - `origin` in a reschedule's `RescheduleData` (`review_log.custom_data` of a `Reschedule` row,
---   kind 17, and the same in the review logs an undo event keeps). Moves written before origins
---   were recorded were all postponements or advances, which the direction of the move tells apart.
--- - `reschedule` in a tag an undo event keeps. Tags written before it existed all rescheduled.
-
-UPDATE review_log
-SET custom_data = json_set(
-    custom_data,
-    '$.origin',
-    CASE
-        WHEN json_extract(custom_data, '$.due') >= json_extract(custom_data, '$.previous_due')
-            THEN 'postpone'
-        ELSE 'advance'
-    END
-)
-WHERE kind = 17
-    AND json_type(custom_data, '$.previous_due') = 'integer'
-    AND json_type(custom_data, '$.origin') IS NULL;
-
--- An event can keep any number of either, anywhere in its payload, so each payload is fixed one
--- object at a time until none is left. `json_tree`'s `path` is the object holding the key.
-CREATE TEMP TABLE backfilled_event (id INTEGER PRIMARY KEY NOT NULL, payload TEXT NOT NULL);
-
-INSERT INTO backfilled_event (id, payload)
-WITH RECURSIVE fixed (id, payload, step) AS (
-    SELECT id, payload, 0
-    FROM event
-    WHERE payload LIKE '%"previous_due"%'
-    UNION ALL
-    SELECT
-        fixed.id,
-        json_set(
-            fixed.payload,
-            t.path || '.origin',
-            CASE
-                WHEN json_extract(fixed.payload, t.path || '.due')
-                    >= json_extract(fixed.payload, t.path || '.previous_due')
-                    THEN 'postpone'
-                ELSE 'advance'
-            END
-        ),
-        fixed.step + 1
-    FROM fixed
-    JOIN json_tree(fixed.payload) AS t
-        ON t.id = (
-            SELECT u.id FROM json_tree(fixed.payload) AS u
-            WHERE u.key = 'previous_due'
-                AND u.type = 'integer'
-                AND json_type(fixed.payload, u.path || '.due') = 'integer'
-                AND json_type(fixed.payload, u.path || '.origin') IS NULL
-            ORDER BY u.id
-            LIMIT 1
-        )
-)
-SELECT id, payload FROM (
-    SELECT id, payload, step, max(step) OVER (PARTITION BY id) AS last FROM fixed
-)
-WHERE step = last AND last > 0;
-
-UPDATE event
-SET payload = (SELECT payload FROM backfilled_event AS b WHERE b.id = event.id)
-WHERE id IN (SELECT id FROM backfilled_event);
-
-DELETE FROM backfilled_event;
-
--- A tag is an object with a boolean `auto_delete` and a text `name`. An `UpdateTag` event's
--- changes are objects of `{"b": before, "a": after}` instead, so they aren't touched.
-INSERT INTO backfilled_event (id, payload)
-WITH RECURSIVE fixed (id, payload, step) AS (
-    SELECT id, payload, 0
-    FROM event
-    WHERE payload LIKE '%"auto_delete"%'
-    UNION ALL
-    SELECT fixed.id, json_set(fixed.payload, t.path || '.reschedule', json('true')), fixed.step + 1
-    FROM fixed
-    JOIN json_tree(fixed.payload) AS t
-        ON t.id = (
-            SELECT u.id FROM json_tree(fixed.payload) AS u
-            WHERE u.key = 'auto_delete'
-                AND u.type IN ('true', 'false')
-                AND json_type(fixed.payload, u.path || '.name') = 'text'
-                AND json_type(fixed.payload, u.path || '.reschedule') IS NULL
-            ORDER BY u.id
-            LIMIT 1
-        )
-)
-SELECT id, payload FROM (
-    SELECT id, payload, step, max(step) OVER (PARTITION BY id) AS last FROM fixed
-)
-WHERE step = last AND last > 0;
-
-UPDATE event
-SET payload = (SELECT payload FROM backfilled_event AS b WHERE b.id = event.id)
-WHERE id IN (SELECT id FROM backfilled_event);
-
-DROP TABLE backfilled_event;
-
--- A note or card has a tag once: the code adds tags with `INSERT OR IGNORE`. Collections created
--- before `note_tag` and `card_tag` had their `UNIQUE` constraints lack them, so this drops any
--- repeated link, keeping the first, and adds the unique indexes. Deleting a
--- repeat only marks its note or card as changed for sync, whose tags stay the same.
-DELETE FROM note_tag
-WHERE id NOT IN (SELECT MIN(id) FROM note_tag GROUP BY note_id, tag_id);
-
-DELETE FROM card_tag
-WHERE id NOT IN (SELECT MIN(id) FROM card_tag GROUP BY card_id, tag_id);
-
+-- A note or card has a tag once: the code adds tags with `INSERT OR IGNORE`.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_note_tag_note_id_tag_id ON note_tag(note_id, tag_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_card_tag_card_id_tag_id ON card_tag(card_id, tag_id);
+
+-- Broad keyword searches test membership once per candidate note.
+CREATE INDEX IF NOT EXISTS idx_note_keyword_note_keyword ON note_keyword(note_id, keyword);
+
+-- Replaced whenever a keyword changes, so that the search's keyword matcher (`KeywordCache`) knows
+-- when to read them again, including after changes by other processes or a full sync.
+CREATE TABLE IF NOT EXISTS keyword_version (token BLOB NOT NULL);
+INSERT INTO keyword_version SELECT randomblob(16) WHERE NOT EXISTS (SELECT 1 FROM keyword_version);
+
+CREATE TRIGGER IF NOT EXISTS keyword_version_insert AFTER INSERT ON note_keyword
+BEGIN
+    UPDATE keyword_version SET token = randomblob(16);
+END;
+
+CREATE TRIGGER IF NOT EXISTS keyword_version_delete AFTER DELETE ON note_keyword
+BEGIN
+    UPDATE keyword_version SET token = randomblob(16);
+END;
+
+CREATE TRIGGER IF NOT EXISTS keyword_version_update AFTER UPDATE OF note_id, keyword ON note_keyword
+BEGIN
+    UPDATE keyword_version SET token = randomblob(16);
+END;
+
+-- Study days, derived locally for the configured day boundary and answer-time cap. Card presets
+-- are joined at read time so moving a note between presets is immediately visible.
+CREATE TABLE IF NOT EXISTS study_day_cache (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    since INTEGER NOT NULL,
+    rules TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS study_day (
+    card_id INTEGER NOT NULL,
+    day INTEGER NOT NULL,
+    state INTEGER NOT NULL,
+    reviews INTEGER NOT NULL,
+    seconds INTEGER NOT NULL,
+    PRIMARY KEY (card_id, day)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS study_day_recent ON study_day(state, day DESC, card_id);
+
+-- Keep timestamps here: the SQLite trigger does not know the collection's local day.
+CREATE TABLE IF NOT EXISTS study_day_dirty (
+    card_id INTEGER NOT NULL,
+    reviewed_at INTEGER NOT NULL,
+    PRIMARY KEY (card_id, reviewed_at)
+) WITHOUT ROWID;
+
+CREATE TRIGGER IF NOT EXISTS study_day_insert AFTER INSERT ON review_log
+WHEN NEW.card_id IS NOT NULL AND NEW.kind = 0 AND NEW.reviewed_at >= (SELECT since FROM study_day_cache)
+BEGIN
+    INSERT INTO study_day_dirty VALUES (NEW.card_id, NEW.reviewed_at) ON CONFLICT DO NOTHING;
+END;
+
+CREATE TRIGGER IF NOT EXISTS study_day_delete AFTER DELETE ON review_log
+WHEN OLD.card_id IS NOT NULL AND OLD.kind = 0 AND OLD.reviewed_at >= (SELECT since FROM study_day_cache)
+BEGIN
+    INSERT INTO study_day_dirty VALUES (OLD.card_id, OLD.reviewed_at) ON CONFLICT DO NOTHING;
+END;
+
+CREATE TRIGGER IF NOT EXISTS study_day_update
+AFTER UPDATE OF card_id, reviewed_at, kind, previous_state, recall_duration, rate_duration, id ON review_log
+BEGIN
+    INSERT INTO study_day_dirty SELECT OLD.card_id, OLD.reviewed_at WHERE OLD.card_id IS NOT NULL AND OLD.kind = 0
+        AND OLD.reviewed_at >= (SELECT since FROM study_day_cache) ON CONFLICT DO NOTHING;
+    INSERT INTO study_day_dirty SELECT NEW.card_id, NEW.reviewed_at WHERE NEW.card_id IS NOT NULL AND NEW.kind = 0
+        AND NEW.reviewed_at >= (SELECT since FROM study_day_cache) ON CONFLICT DO NOTHING;
+END;
+
+-- Every link as a (note, prerequisite) pair: a prerequisite link (relation 0) points from the note
+-- with it to the note it links to, a dependent link (1) the other way, and a related link (2)
+-- makes no pair. Only links that matched a note are pairs. The queue's holds, the walks of
+-- `prerequisite_of` and `dependent_of`, the note graph's arrows and goal projections all read
+-- this, so a link's relation is turned into a direction in one place.
+CREATE VIEW IF NOT EXISTS note_prerequisite AS
+SELECT parent_note_id AS note_id, linked_note_id AS prerequisite_id, score, id AS link_id
+FROM note_link
+WHERE relation = 0 AND linked_note_id IS NOT NULL
+UNION ALL
+SELECT linked_note_id AS note_id, parent_note_id AS prerequisite_id, score, id AS link_id
+FROM note_link
+WHERE relation = 1 AND linked_note_id IS NOT NULL;
+
+-- A dependent link is followed from the note it links to, so its rows are found by that note.
+CREATE INDEX IF NOT EXISTS idx_note_link_linked_note_id ON note_link(linked_note_id);
+
+-- Study actions a client named with an id (`SubmitStudyActionRequest::action_id`), so that sending
+-- one again, such as after its response was lost, returns what the first attempt did rather than
+-- rating or burying the card twice. Each collection has its own table, so ids are scoped to it.
+-- `request` is the action as JSON, to tell a retry from a different action reusing the id, and
+-- `response` what it returned. Rows older than 30 days are deleted as actions are submitted.
+CREATE TABLE IF NOT EXISTS study_action (
+    id TEXT PRIMARY KEY NOT NULL,
+    request TEXT NOT NULL,
+    response TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS study_action_created_at ON study_action (created_at);

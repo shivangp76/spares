@@ -531,16 +531,10 @@ mod tests {
     use sqlx::SqlitePool;
 
     /// The last migration the baseline replaced
-    const LAST_OLD_MIGRATION: i64 = 20_261_104_130_000;
+    const LAST_OLD_MIGRATION: i64 = 20_261_126_120_000;
 
     /// Rows of `_sqlx_migrations` as the migrations before the baseline left them, by version.
     async fn pretend_old_migrations_ran(pool: &SqlitePool, versions: &[i64]) {
-        // The fixtures start on the current schema. Roll back post-baseline migrations
-        // before simulating the ledger of an older collection.
-        crate::collection::migrator()
-            .undo(pool, 20_261_124_110_000)
-            .await
-            .unwrap();
         sqlx::query("DELETE FROM _sqlx_migrations")
             .execute(pool)
             .await
@@ -558,93 +552,15 @@ mod tests {
         }
     }
 
-    #[sqlx::test(migrations = false)]
-    async fn migration_upgrades_legacy_study_days_and_keyword_version(pool: SqlitePool) {
-        use sqlx::SqlSafeStr;
-        use sqlx::migrate::Migration;
-        use sqlx::migrate::MigrationType;
-        use sqlx::migrate::Migrator;
-
-        crate::collection::migrator()
-            .run_to(20_261_125_010_000, &pool)
+    async fn schema(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name")
+            .fetch_all(pool)
             .await
-            .unwrap();
-        let old = [
-            (
-                20_261_125_020_000,
-                "keyword version",
-                include_str!("../migrations/20261125040000_keyword_version.up.sql"),
-            ),
-            (
-                20_261_125_030_000,
-                "study days",
-                include_str!("../tests/fixtures/legacy_study_days.sql"),
-            ),
-        ];
-        Migrator::with_migrations(
-            old.into_iter()
-                .map(|(version, name, sql)| {
-                    Migration::new(
-                        version,
-                        name.into(),
-                        MigrationType::ReversibleUp,
-                        sql.into_sql_str(),
-                        false,
-                    )
-                })
-                .collect(),
-        )
-        .set_ignore_missing(true)
-        .run(&pool)
-        .await
-        .unwrap();
-        sqlx::raw_sql(
-            "UPDATE keyword_version SET token = x'0102';
-             INSERT INTO study_day_cache VALUES (1, 0, 'old rules');
-             INSERT INTO study_day_dirty VALUES (1);
-             INSERT INTO review_log (id, reviewed_at, rating, scheduler_name, previous_state, custom_data)
-             VALUES (7, 123, 3, 'fsrs', 2, '{}');",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        crate::collection::migrate(&pool).await.unwrap();
-        sqlx::query("INSERT INTO study_day_dirty (card_id, reviewed_at) VALUES (1, 456)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        crate::collection::migrate(&pool).await.unwrap();
-
-        let result: (String, i64, i64, i64) = sqlx::query_as(
-            "SELECT (SELECT hex(token) FROM keyword_version),
-                    (SELECT count(*) FROM study_day_cache),
-                    (SELECT reviewed_at FROM study_day_dirty WHERE card_id = 1),
-                    (SELECT reviewed_at FROM review_log WHERE id = 7)",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(result, ("0102".to_owned(), 0, 456, 123));
-    }
-
-    #[sqlx::test(migrations = false)]
-    async fn migration_rejects_unknown_study_days_checksum(pool: SqlitePool) {
-        crate::collection::migrate(&pool).await.unwrap();
-        sqlx::query("UPDATE _sqlx_migrations SET checksum = x'00' WHERE version = 20261125030000")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(matches!(
-            crate::collection::migrate(&pool).await,
-            Err(sqlx::migrate::MigrateError::VersionMismatch(
-                20_261_125_030_000
-            ))
-        ));
+            .unwrap()
     }
 
     /// A database the migrations before the baseline made has its schema already: the baseline
-    /// changes nothing there, and the migrations after it run.
+    /// changes nothing there, neither its schema nor its data.
     #[sqlx::test(migrations = false)]
     async fn migration_baseline_accepts_a_database_the_old_migrations_made(pool: SqlitePool) {
         let migrator = crate::collection::migrator();
@@ -653,21 +569,33 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        pretend_old_migrations_ran(&pool, &[20_240_326_145_400, 20_261_104_130_000]).await;
+        let token: Vec<u8> = sqlx::query_scalar("SELECT token FROM keyword_version")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let before = schema(&pool).await;
+        let old = [20_240_326_145_400, 20_261_124_110_000, LAST_OLD_MIGRATION];
+        pretend_old_migrations_ran(&pool, &old).await;
 
         migrator.run(&pool).await.unwrap();
 
+        assert_eq!(schema(&pool).await, before);
         let parsers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parser")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(parsers, 1);
+        let tokens: Vec<Vec<u8>> = sqlx::query_scalar("SELECT token FROM keyword_version")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tokens, [token]);
         let applied: Vec<i64> =
             sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        let mut expected = vec![20_240_326_145_400, 20_261_104_130_000];
+        let mut expected = old.to_vec();
         expected.extend(
             migrator
                 .iter()
@@ -675,48 +603,6 @@ mod tests {
                 .map(|m| m.version),
         );
         assert_eq!(applied, expected);
-    }
-
-    /// The baseline gives the tag links of a collection made before they were unique their unique
-    /// indexes, dropping repeated links first.
-    #[sqlx::test(migrations = false)]
-    async fn migration_tag_link_unique_drops_repeated_links(pool: SqlitePool) {
-        let migrator = crate::collection::migrator();
-        migrator.run(&pool).await.unwrap();
-        // One connection, which foreign keys are off for
-        let mut conn = pool.acquire().await.unwrap();
-        for statement in [
-            "DROP INDEX idx_note_tag_note_id_tag_id",
-            "DROP INDEX idx_card_tag_card_id_tag_id",
-            "PRAGMA foreign_keys = OFF",
-            "INSERT INTO note_tag (id, note_id, tag_id) VALUES (1, 1, 1), (2, 1, 1), (3, 1, 2)",
-            "INSERT INTO card_tag (id, card_id, tag_id) VALUES (1, 1, 1), (2, 1, 1)",
-        ] {
-            sqlx::query(statement).execute(&mut *conn).await.unwrap();
-        }
-        drop(conn);
-        pretend_old_migrations_ran(&pool, &[LAST_OLD_MIGRATION]).await;
-
-        migrator.run(&pool).await.unwrap();
-
-        let note_tags: Vec<i64> = sqlx::query_scalar("SELECT id FROM note_tag ORDER BY id")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-        assert_eq!(note_tags, [1, 3]);
-        let card_tags: Vec<i64> = sqlx::query_scalar("SELECT id FROM card_tag ORDER BY id")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-        assert_eq!(card_tags, [1]);
-        let indexes: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE name IN ('idx_note_tag_note_id_tag_id', 'idx_card_tag_card_id_tag_id')",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(indexes, 2);
     }
 
     /// The baseline refuses a database that stopped partway through the migrations it replaced,
@@ -727,12 +613,13 @@ mod tests {
     ) {
         let migrator = crate::collection::migrator();
         migrator.run(&pool).await.unwrap();
-        pretend_old_migrations_ran(&pool, &[20_240_326_145_400, 20_261_015_130_000]).await;
+        pretend_old_migrations_ran(&pool, &[20_261_124_110_000, 20_261_125_060_000]).await;
 
         let err = migrator.run(&pool).await.unwrap_err();
         assert!(
-            err.to_string()
-                .contains("open_this_collection_with_a_spares_from_before_2026_11_24_first"),
+            err.to_string().contains(
+                "open_this_collection_with_a_spares_from_just_before_the_2026_11_26_baseline_first"
+            ),
             "{err}"
         );
     }
@@ -743,105 +630,5 @@ mod tests {
         assert!(super::ReviewLogKind::Forget.is_replayed());
         assert!(!super::ReviewLogKind::Cram.is_replayed());
         assert!(!super::ReviewLogKind::Reschedule.is_replayed());
-    }
-
-    /// The baseline writes the fields older rows and undo events left
-    /// out, so that they read without defaults: a reschedule's origin, told by the direction of
-    /// the move, and a tag's `reschedule`, wherever an event keeps them.
-    #[sqlx::test(migrations = false)]
-    async fn migration_backfill_old_payloads_writes_what_they_left_out(pool: SqlitePool) {
-        use serde_json::Value;
-        use serde_json::json;
-
-        use super::RescheduleData;
-        use super::RescheduleOrigin;
-        use super::Tag;
-
-        let migrator = crate::collection::migrator();
-        migrator.run(&pool).await.unwrap();
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query(
-            r#"INSERT INTO review_log (id, card_id, reviewed_at, kind, scheduler_name,
-               previous_state, custom_data)
-               VALUES (1, NULL, 1000, 17, 'fsrs', 2, '{"previous_due": 100, "due": 200}'),
-                      (2, NULL, 1000, 17, 'fsrs', 2, '{"previous_due": 200, "due": 100}'),
-                      (3, NULL, 1000, 17, 'fsrs', 2,
-                       '{"previous_due": 200, "due": 100, "origin": "manual"}')"#,
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        let tag = |id: i64| {
-            json!({"id": id, "name": format!("t{id}"), "description": "", "query": null,
-                   "auto_delete": true, "created_at": 1, "updated_at": 1})
-        };
-        let mut create_tag = tag(1);
-        create_tag["note_ids"] = json!([]);
-        let events = [
-            create_tag,
-            json!({"notes": [], "deleted_tags": [{"tag": tag(2)}, {"tag": tag(3)}]}),
-            // A tag's changes, which aren't a tag
-            json!({"id": 4, "auto_delete": {"b": true, "a": false}}),
-            json!({"cards": [], "review_logs": [
-                {"kind": "Reschedule", "custom_data": {"previous_due": 100, "due": 200}},
-                {"kind": "Reschedule", "custom_data": {"previous_due": 200, "due": 100}},
-            ]}),
-        ];
-        for (i, payload) in events.iter().enumerate() {
-            sqlx::query("INSERT INTO event (id, kind, payload) VALUES (?, 0, ?)")
-                .bind(i64::try_from(i).unwrap() + 1)
-                .bind(payload.to_string())
-                .execute(&mut *conn)
-                .await
-                .unwrap();
-        }
-        drop(conn);
-        pretend_old_migrations_ran(&pool, &[LAST_OLD_MIGRATION]).await;
-
-        migrator.run(&pool).await.unwrap();
-
-        let origins: Vec<RescheduleOrigin> =
-            sqlx::query_scalar::<_, String>("SELECT custom_data FROM review_log ORDER BY id")
-                .fetch_all(&pool)
-                .await
-                .unwrap()
-                .iter()
-                .map(|data| serde_json::from_str::<RescheduleData>(data).unwrap().origin)
-                .collect();
-        assert_eq!(
-            origins,
-            [
-                RescheduleOrigin::Postpone,
-                RescheduleOrigin::Advance,
-                RescheduleOrigin::Manual
-            ]
-        );
-
-        let payloads: Vec<Value> =
-            sqlx::query_scalar::<_, String>("SELECT payload FROM event ORDER BY id")
-                .fetch_all(&pool)
-                .await
-                .unwrap()
-                .iter()
-                .map(|payload| serde_json::from_str(payload).unwrap())
-                .collect();
-        let read_tag = |value: &Value| serde_json::from_value::<Tag>(value.clone()).unwrap();
-        assert!(read_tag(&payloads[0]).reschedule);
-        assert!(read_tag(&payloads[1]["deleted_tags"][0]["tag"]).reschedule);
-        assert!(read_tag(&payloads[1]["deleted_tags"][1]["tag"]).reschedule);
-        assert_eq!(payloads[2], events[2]);
-        let read_origin = |value: &Value| {
-            serde_json::from_value::<RescheduleData>(value["custom_data"].clone())
-                .unwrap()
-                .origin
-        };
-        assert_eq!(
-            read_origin(&payloads[3]["review_logs"][0]),
-            RescheduleOrigin::Postpone
-        );
-        assert_eq!(
-            read_origin(&payloads[3]["review_logs"][1]),
-            RescheduleOrigin::Advance
-        );
     }
 }
