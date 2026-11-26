@@ -25,6 +25,7 @@ use crate::schedulers::RetrievabilityFn;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::all_schedulers;
 use crate::schedulers::state_role;
+use crate::schema::goal::GoalMilestoneStatus;
 use crate::schema::goal::GoalPartStatus;
 use crate::schema::goal::GoalStatus;
 use crate::schema::goal::GoalWeek;
@@ -63,6 +64,24 @@ struct GoalCard {
     first_review: Option<i64>,
     /// When it was last reviewed
     last_review: Option<i64>,
+    /// When its note was added. A card's own `created_at` is when its row was inserted, which a
+    /// sync or an import makes later.
+    created_at: i64,
+}
+
+/// When a card that isn't suspended was added and first studied, to tell whether it was new on a
+/// past day.
+#[derive(Clone, Copy)]
+struct CardHistory {
+    created_at: i64,
+    first_review: Option<i64>,
+}
+
+impl CardHistory {
+    /// Whether the card was new when the day starting at `day_start` started.
+    fn new_at(self, day_start: i64) -> bool {
+        self.created_at < day_start && self.first_review.is_none_or(|first| first >= day_start)
+    }
 }
 
 /// How every goal of `config` is going, as of `now`, in the order of `config.toml`.
@@ -82,10 +101,15 @@ pub async fn goal_status(
     for (name, goal) in &config.goals {
         let names = std::iter::once(name).chain(goal.parts.keys());
         let mut parts = Vec::new();
+        let mut histories = Vec::new();
         for (index, part_name) in names.enumerate() {
             let sql = cards_sql(goal, index.checked_sub(1));
-            parts.push(part_status(db, goal, part_name, &sql, zone, now, recall.as_ref()).await?);
+            let (part, history) =
+                part_status(db, goal, part_name, &sql, zone, now, recall.as_ref()).await?;
+            parts.push(part);
+            histories.push(history);
         }
+        add_milestones(goal, &mut parts, &histories, zone, today);
         statuses.push(GoalStatus {
             name: name.clone(),
             date: goal.date,
@@ -99,7 +123,8 @@ pub async fn goal_status(
     Ok(statuses)
 }
 
-/// [`GoalPartStatus`] of the cards `cards_sql` selects, named `name`, of `goal`.
+/// [`GoalPartStatus`] of the cards `cards_sql` selects, named `name`, of `goal`, without its
+/// milestones, and the history of those of its cards that aren't suspended.
 async fn part_status(
     db: &SqlitePool,
     goal: &Goal,
@@ -108,10 +133,11 @@ async fn part_status(
     zone: Zone,
     now: DateTime<Utc>,
     recall: Option<&RetrievabilityFn>,
-) -> Result<GoalPartStatus, Error> {
+) -> Result<(GoalPartStatus, Vec<CardHistory>), Error> {
     let review = ReviewLogKind::Review as u8;
     let cards: Vec<GoalCard> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT c.state, c.special_state, c.stability, c.stability_fast, c.difficulty, \
+         (SELECT n.created_at FROM note n WHERE n.id = c.note_id) AS created_at, \
          (SELECT MIN(rl.reviewed_at) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {review}) AS first_review, \
          (SELECT MAX(rl.reviewed_at) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {review}) AS last_review \
          FROM card c WHERE c.id IN ({cards_sql})"
@@ -135,7 +161,9 @@ async fn part_status(
         mean_recall_on_date: None,
         below_retention_on_date: 0,
         weeks: Vec::new(),
+        milestones: Vec::new(),
     };
+    let mut history = Vec::new();
     let pace_start = (now - Duration::days(PACE_DAYS)).timestamp();
     let on_date = zone.start_of(goal.date).timestamp();
     let retention = goal.retention.unwrap_or(DEFAULT_RETENTION);
@@ -150,6 +178,10 @@ async fn part_status(
             status.suspended += 1;
             continue;
         }
+        history.push(CardHistory {
+            created_at: card.created_at,
+            first_review: card.first_review,
+        });
         match state_role(card.state) {
             Some(StateRole::New) | None => status.new += 1,
             Some(StateRole::Learning | StateRole::Relearning) => status.learning += 1,
@@ -196,7 +228,76 @@ async fn part_status(
         status.projected_learned_by = Some(today + Duration::days(days));
     }
     status.weeks = weeks(db, cards_sql, &cards, zone, today).await?;
-    Ok(status)
+    Ok((status, history))
+}
+
+/// Fills in [`GoalPartStatus::milestones`] of `parts`, the whole goal first, whose cards that
+/// aren't suspended are `histories`, in the same order.
+fn add_milestones(
+    goal: &Goal,
+    parts: &mut [GoalPartStatus],
+    histories: &[Vec<CardHistory>],
+    zone: Zone,
+    today: NaiveDate,
+) {
+    let goal_new_now = parts.first().map_or(0, |goal| goal.new);
+    for milestone in &goal.milestones {
+        let day_start = zone.start_of(milestone.date).timestamp();
+        let new_on_day = |history: &[CardHistory]| {
+            let new = history.iter().filter(|card| card.new_at(day_start)).count();
+            u32::try_from(new).unwrap_or(u32::MAX)
+        };
+        let passed = milestone.date <= today;
+        let goal_new_on_day = histories.first().map_or(0, |history| new_on_day(history));
+        for (part, history) in parts.iter_mut().zip(histories) {
+            let status = if passed {
+                let new = new_on_day(history);
+                let target = share(milestone.new_left, new, goal_new_on_day);
+                GoalMilestoneStatus {
+                    date: milestone.date,
+                    new_left: target,
+                    days_left: 0,
+                    new_per_day_needed: None,
+                    on_track: None,
+                    new_on_day: Some(new),
+                    met: Some(new <= target),
+                }
+            } else {
+                let target = share(milestone.new_left, part.new, goal_new_now);
+                let days_left = (milestone.date - today).num_days();
+                let to_learn = f64::from(part.new.saturating_sub(target));
+                #[expect(clippy::cast_precision_loss, reason = "a number of days")]
+                let (days, pace_days) = (days_left as f64, PACE_DAYS as f64);
+                let pace = f64::from(part.learned_recently) / pace_days;
+                GoalMilestoneStatus {
+                    date: milestone.date,
+                    new_left: target,
+                    days_left,
+                    new_per_day_needed: Some(to_learn / days),
+                    on_track: Some(pace * days >= to_learn),
+                    new_on_day: None,
+                    met: None,
+                }
+            };
+            part.milestones.push(status);
+        }
+    }
+}
+
+/// A part's share of a target of `new_left` new cards for the whole goal, in proportion to its
+/// `part_new` of the goal's `goal_new` new cards. The whole goal's is `new_left`.
+fn share(new_left: u32, part_new: u32, goal_new: u32) -> u32 {
+    if goal_new == 0 || part_new >= goal_new {
+        return new_left;
+    }
+    let share = f64::from(new_left) * f64::from(part_new) / f64::from(goal_new);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "at most new_left"
+    )]
+    let share = share.round() as u32;
+    share
 }
 
 /// The last [`WEEKS`] weeks of `cards`, which `cards_sql` selects, ending today, oldest first.
@@ -412,6 +513,105 @@ mod tests {
         assert_eq!(reviews, 3);
     }
 
+    /// Milestones: the pace each needs and whether the recent pace reaches it, each part's share of
+    /// the target, and whether the past ones were met.
+    #[sqlx::test]
+    async fn reports_milestones(pool: SqlitePool) {
+        let now = Utc::now();
+        let tags: [&[&str]; 10] = [
+            &["exam:prob"],
+            &["exam:prob"],
+            &["exam:prob"],
+            &["exam:prob"],
+            &["exam:spdes"],
+            &["exam:spdes"],
+            &["exam:spdes"],
+            &["exam:spdes"],
+            &["exam:spdes"],
+            &["exam:spdes"],
+        ];
+        let ids = tagged_cards(&pool, &tags, now - Duration::days(60)).await;
+        // A prob card learned 20 days ago, two SPDE cards 3 days ago: 3 prob and 4 SPDE cards
+        // are new, and the pace is 2 cards in 14 days.
+        for (card, days_ago) in [(ids[0], 20), (ids[4], 3), (ids[5], 3)] {
+            add_review(&pool, card, now - Duration::days(days_ago), NEW).await;
+            set_card(&pool, card, REVIEW, now + Duration::days(5), 10.0, 5.0).await;
+        }
+        let today = SparesExternalConfig::default().zone().date(now);
+        let day = |days: i64| today + Duration::days(days);
+        let milestones = format!(
+            "milestones = [{{ date = {}, new_left = 9 }}, {{ date = {}, new_left = 6 }}, \
+             {{ date = {}, new_left = 2 }}]",
+            day(-10),
+            day(-1),
+            day(10)
+        );
+        let statuses = goal_status(&pool, &config(day(60), &milestones), now)
+            .await
+            .unwrap();
+        let summary = |part: &GoalPartStatus| {
+            part.milestones
+                .iter()
+                .map(|m| (m.new_left, m.days_left, m.new_on_day, m.met, m.on_track))
+                .collect::<Vec<_>>()
+        };
+        let [exam, prob, spdes] = statuses[0].parts.as_slice() else {
+            panic!("the goal and 2 parts: {statuses:?}")
+        };
+        // 10 days ago, 9 were new (the prob card was learned before): met. Yesterday 7 were new,
+        // more than 6: missed. 7 new now to 2 in 10 days needs 0.5 a day, and 2 a fortnight
+        // learns only 1.4 in 10 days.
+        assert_eq!(
+            summary(exam),
+            [
+                (9, 0, Some(9), Some(true), None),
+                (6, 0, Some(7), Some(false), None),
+                (2, 10, None, None, Some(false)),
+            ]
+        );
+        assert_eq!(exam.milestones[2].new_per_day_needed, Some(0.5));
+        assert_eq!(exam.milestones[0].new_per_day_needed, None);
+        // Each part gets a share of the target in proportion to its new cards: on the day for past
+        // milestones (3 of 9, then 3 of 7, rounded), now for the next one (3 and 4 of 7).
+        assert_eq!(
+            summary(prob),
+            [
+                (3, 0, Some(3), Some(true), None),
+                (3, 0, Some(3), Some(true), None),
+                (1, 10, None, None, Some(false)),
+            ]
+        );
+        assert_eq!(
+            summary(spdes),
+            [
+                (6, 0, Some(6), Some(true), None),
+                (3, 0, Some(4), Some(false), None),
+                (1, 10, None, None, Some(false)),
+            ]
+        );
+        assert_eq!(prob.milestones[2].new_per_day_needed, Some(0.2));
+        assert_eq!(spdes.milestones[2].new_per_day_needed, Some(0.3));
+
+        // 1 card in 30 days is within the pace, and a target already reached needs nothing.
+        let statuses = goal_status(
+            &pool,
+            &config(
+                day(60),
+                &format!("milestones = [{{ date = {}, new_left = 6 }}]", day(30)),
+            ),
+            now,
+        )
+        .await
+        .unwrap();
+        let [exam, prob, _] = statuses[0].parts.as_slice() else {
+            panic!("the goal and 2 parts: {statuses:?}")
+        };
+        assert_eq!(exam.milestones[0].on_track, Some(true));
+        assert_eq!(prob.milestones[0].new_left, 3);
+        assert_eq!(prob.milestones[0].new_per_day_needed, Some(0.0));
+        assert_eq!(prob.milestones[0].on_track, Some(true));
+    }
+
     /// A card whose next review is after the goal's day, with too little recall left on the day,
     /// is due when its recall falls to the retention instead.
     #[sqlx::test]
@@ -506,6 +706,35 @@ mod tests {
                 .contains("learned_by")
         );
         assert!(invalid(&format!("{goal}query = 'a'\nretention = 1.5")).contains("retention"));
+        let milestones = |milestones: &str| {
+            invalid(&format!(
+                "{goal}query = 'a'\nlearned_by = 2027-04-01\nmilestones = [{milestones}]"
+            ))
+        };
+        let error = milestones("{ date = 2027-04-01, new_left = 5 }");
+        assert!(
+            error.contains("goals.g.milestones[0]") && error.contains("before"),
+            "{error}"
+        );
+        let error =
+            milestones("{ date = 2027-02-01, new_left = 5 }, { date = 2027-01-01, new_left = 3 }");
+        assert!(
+            error.contains("goals.g.milestones[1]") && error.contains("after"),
+            "{error}"
+        );
+        let error =
+            milestones("{ date = 2027-01-01, new_left = 5 }, { date = 2027-02-01, new_left = 8 }");
+        assert!(
+            error.contains("goals.g.milestones[1]") && error.contains("easier"),
+            "{error}"
+        );
+        let mut config: SparesExternalConfig = toml_edit::de::from_str(&format!(
+            "{goal}query = 'a'\nmilestones = [{{ date = 2027-01-01, new_left = 5 }}, \
+             {{ date = \"2027-02-01\", new_left = 5 }}]"
+        ))
+        .unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.goals["g"].milestones[1].new_left, 5);
         assert!(
             invalid(&format!(
                 "{goal}query = 'a'\n[goals.g.parts]\nx = 'nofield=1'"

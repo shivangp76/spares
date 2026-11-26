@@ -929,6 +929,27 @@ export interface GoalWeek {
   reviews: number;
 }
 
+/**
+ * How one of a goal's milestones (`milestones` of `[goals.<name>]`) is going, for the whole goal or
+ * one of its parts.
+ */
+export interface GoalMilestoneStatus {
+  /** The day it is due by the start of, `YYYY-MM-DD` */
+  date: string;
+  /** The most cards that should still be new then (a part's share of the goal's target) */
+  new_left: number;
+  /** Days from today to `date`, 0 once it has come */
+  days_left: number;
+  /** New cards a day that reach the target in time; `null` once the day has come */
+  new_per_day_needed: number | null;
+  /** Whether the last 14 days' pace reaches the target in time; `null` once the day has come */
+  on_track: boolean | null;
+  /** Once the day has come, the cards that were new when it started */
+  new_on_day: number | null;
+  /** Once the day has come, whether `new_on_day` was at most `new_left` */
+  met: boolean | null;
+}
+
 /** How the cards of a goal, or of one of its parts, are going. */
 export interface GoalPartStatus {
   name: string;
@@ -949,6 +970,8 @@ export interface GoalPartStatus {
   below_retention_on_date: number;
   /** The last weeks, oldest first */
   weeks: GoalWeek[];
+  /** The goal's milestones, in order, with this part's share of each target */
+  milestones: GoalMilestoneStatus[];
 }
 
 /** A `[goals.<name>]` table of config.toml and how it is going (`spares goal status`). */

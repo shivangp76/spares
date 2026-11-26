@@ -1176,6 +1176,7 @@ pub struct SparesExternalConfig {
 /// learned_by = "2027-04-01"
 /// retention = 0.95
 /// query = 'tag="probability:grad" or tag=spdes or prerequisite_of=(tag=spdes via=(tag=functional-analysis))'
+/// milestones = [{ date = 2027-01-07, new_left = 452 }]
 ///
 /// [goals.may-exam.parts]
 /// probability = 'tag="probability:grad"'
@@ -1187,8 +1188,9 @@ pub struct SparesExternalConfig {
 /// - `spares goal status` (and the web app's statistics) report on it: for the goal and each of
 ///   its [`Self::parts`], how many cards are new, learning and learned, how many new cards a day
 ///   learn the rest by [`Self::learned_by`], when the pace of the last two weeks would, the cards
-///   learned and reviewed week by week, and how many cards would be below the
-///   [`Self::retention`] on the day if not reviewed again.
+///   learned and reviewed week by week, how many cards would be below the
+///   [`Self::retention`] on the day if not reviewed again, and how each of its
+///   [`Self::milestones`] is going.
 /// - With a [`Self::retention`], rating one of its cards before [`Self::date`] keeps the card
 ///   from being due after it with less than that recall on the day. See [`Self::retention`].
 ///
@@ -1226,12 +1228,40 @@ pub struct Goal {
     /// Empty by default.
     #[serde(default)]
     pub parts: IndexMap<String, String>,
+    /// Targets on the way to [`Self::learned_by`]: by the start of each milestone's day, at most
+    /// so many of the goal's cards should still be new, as in
+    /// `milestones = [{ date = 2027-01-07, new_left = 452 }]` (above any `[goals.<name>.parts]`
+    /// table). Empty by default.
+    ///
+    /// `spares goal status` works out the pace each milestone needs, from today and the cards new
+    /// now, and whether the pace of the last two weeks reaches it, for the goal and for each part.
+    /// A part's target is its share of the goal's target, in proportion to the new cards it has.
+    /// Once a milestone's day has come, the report keeps it, with the new cards there were on the
+    /// day and whether it was met.
+    ///
+    /// The dates must be in order and before [`Self::learned_by`], and the targets must not get
+    /// easier from one to the next.
+    #[serde(default)]
+    pub milestones: Vec<GoalMilestone>,
     /// [`Self::query`] compiled to the SQL of its card ids, by [`SparesExternalConfig::validate`].
     #[serde(skip)]
     pub(crate) query_sql: String,
     /// [`Self::parts`] compiled likewise, in order.
     #[serde(skip)]
     pub(crate) part_sqls: Vec<String>,
+}
+
+/// One of [`Goal::milestones`].
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GoalMilestone {
+    /// The day, as `2027-01-07` (quoted or not). The milestone is due when that day starts (at
+    /// [`SparesExternalConfig::day_starts_at`]), like [`Goal::date`].
+    #[serde(deserialize_with = "toml_date::deserialize")]
+    pub date: NaiveDate,
+    /// The most cards of the goal that should still be new then, suspended ones not counted. For
+    /// 70% of 1507 new cards learned, `452`.
+    pub new_left: u32,
 }
 
 /// A date in `config.toml` written either as a TOML date, `2027-05-01`, or as a string,
@@ -1359,6 +1389,31 @@ impl SparesExternalConfig {
                     "`{}` must be between 0 and 1, as in 0.95, not {retention}.",
                     key("retention")
                 ));
+            }
+            for (index, milestone) in goal.milestones.iter().enumerate() {
+                let key = key(&format!("milestones[{index}]"));
+                if milestone.date >= goal.learned_by() {
+                    return Err(format!(
+                        "`{key}` is on {}, which must be before `goals.{name}.learned_by` ({}).",
+                        milestone.date,
+                        goal.learned_by()
+                    ));
+                }
+                if let Some(previous) = index.checked_sub(1).map(|i| &goal.milestones[i]) {
+                    if milestone.date <= previous.date {
+                        return Err(format!(
+                            "`{key}` is on {}, which must be after the milestone before it ({}).",
+                            milestone.date, previous.date
+                        ));
+                    }
+                    if milestone.new_left > previous.new_left {
+                        return Err(format!(
+                            "`{key}` leaves {} cards new, more than the milestone before it ({}): \
+                             a later milestone must not be easier.",
+                            milestone.new_left, previous.new_left
+                        ));
+                    }
+                }
             }
         }
         Ok(())

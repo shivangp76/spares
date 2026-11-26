@@ -36,6 +36,7 @@ import { useRecentSearches } from "../hooks/useRecentSearches";
 import { runOnServer, useLocalStatus } from "../local/copy";
 import {
   type AnswerGroup,
+  type GoalMilestoneStatus,
   type GoalPartStatus,
   type GoalStatus,
   type OptimizeResponse,
@@ -373,11 +374,24 @@ function formatDay(day: string): string {
   });
 }
 
-/** How much of a part is learned, as a thin bar under its count. */
+/** The goal's next milestone, the first whose day is still to come, as `part` has it. */
+function nextMilestone(part: GoalPartStatus): GoalMilestoneStatus | undefined {
+  return part.milestones.find((milestone) => milestone.new_on_day === null);
+}
+
+/**
+ * How much of a part is learned, as a thin bar under its count, with a tick where the next
+ * milestone wants it to be.
+ */
 function LearnedBar({ part }: { part: GoalPartStatus }) {
   const studied = part.cards - part.suspended;
   const learned = studied - part.new;
   const fraction = studied === 0 ? 0 : learned / studied;
+  const milestone = nextMilestone(part);
+  const target =
+    milestone && studied > 0
+      ? Math.max(0, Math.min(1, (studied - milestone.new_left) / studied))
+      : null;
   return (
     <div>
       <span style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -391,6 +405,7 @@ function LearnedBar({ part }: { part: GoalPartStatus }) {
           borderRadius: 2,
           background: "var(--border-subtle)",
           minWidth: 80,
+          position: "relative",
         }}
       >
         <div
@@ -401,6 +416,20 @@ function LearnedBar({ part }: { part: GoalPartStatus }) {
             background: "var(--chart-mature)",
           }}
         />
+        {milestone && target !== null && (
+          <div
+            title={`${formatDay(milestone.date)}: ${studied - milestone.new_left} learned`}
+            style={{
+              position: "absolute",
+              left: `calc(${(target * 100).toFixed(1)}% - 1px)`,
+              top: -3,
+              width: 2,
+              height: 10,
+              borderRadius: 1,
+              background: "var(--text)",
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -434,6 +463,8 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
         },
       ]
     : [];
+  const next = whole ? nextMilestone(whole) : undefined;
+  const passed = whole?.milestones.filter((m) => m.new_on_day !== null) ?? [];
   const pace = (part: GoalPartStatus) => {
     if (part.new === 0) return "Done";
     if (part.projected_learned_by === null) return "No pace yet";
@@ -449,11 +480,36 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
       <h3 className="stat-subheading">{goal.name}</h3>
       <p style={{ ...note, marginTop: 0 }}>
         {formatDay(goal.date)} · {goal.days_to_date} days left · new cards
-        learned by {formatDay(goal.learned_by)} ({goal.days_to_learned_by}{" "}
-        days)
+        learned by {formatDay(goal.learned_by)} ({goal.days_to_learned_by} days)
         {goal.retention !== null &&
           ` · recall target ${Math.round(goal.retention * 100)}%`}
       </p>
+      {whole && (next || passed.length > 0) && (
+        <p style={{ ...note, marginTop: 0 }}>
+          {passed.map((milestone) => (
+            <span key={milestone.date}>
+              {formatDay(milestone.date)}:{" "}
+              <span
+                style={milestone.met ? undefined : { color: "var(--error)" }}
+              >
+                {milestone.met ? "met" : "missed"}
+              </span>{" "}
+              ({milestone.new_on_day} new, at most {milestone.new_left}) ·{" "}
+            </span>
+          ))}
+          {next && (
+            <>
+              Next milestone {formatDay(next.date)} ({next.days_left} days): at
+              most {next.new_left} new, now {whole.new} ·{" "}
+              {(next.new_per_day_needed ?? 0).toFixed(1)}/day needed, last 14
+              days {(whole.learned_recently / 14).toFixed(1)}/day
+              {next.on_track === false && (
+                <span style={{ color: "var(--error)" }}> · behind</span>
+              )}
+            </>
+          )}
+        </p>
+      )}
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", fontSize: 14 }}>
           <thead>
@@ -468,6 +524,18 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
               >
                 Needed / day
               </th>
+              {next && (
+                <th
+                  style={{ ...th, textAlign: "right" }}
+                  title={`New cards a day that reach this part's share of the ${formatDay(next.date)} milestone`}
+                >
+                  By{" "}
+                  {new Date(`${next.date}T00:00:00Z`).toLocaleDateString(
+                    undefined,
+                    { month: "short", day: "numeric", timeZone: "UTC" },
+                  )}
+                </th>
+              )}
               <th
                 style={{ ...th, textAlign: "right" }}
                 title="Cards first studied in the last 14 days"
@@ -511,6 +579,7 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
                     ? "–"
                     : part.new_per_day_needed.toFixed(1)}
                 </td>
+                {next && <MilestoneNeed part={part} />}
                 <td style={numeric}>{part.learned_recently}</td>
                 <td style={{ ...td, whiteSpace: "nowrap" }}>{pace(part)}</td>
                 <td style={numeric}>
@@ -542,6 +611,27 @@ function GoalTable({ goal }: { goal: GoalStatus }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** The pace `part` needs for the next milestone, in red when the last 14 days' falls short. */
+function MilestoneNeed({ part }: { part: GoalPartStatus }) {
+  const milestone = nextMilestone(part);
+  const need = milestone?.new_per_day_needed;
+  return (
+    <td
+      style={{
+        ...numeric,
+        ...(milestone?.on_track === false ? { color: "var(--error)" } : {}),
+      }}
+      title={
+        milestone
+          ? `At most ${milestone.new_left} new by ${formatDay(milestone.date)}`
+          : undefined
+      }
+    >
+      {need === undefined || need === null ? "–" : need.toFixed(1)}
+    </td>
   );
 }
 

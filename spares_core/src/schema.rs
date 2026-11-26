@@ -1913,6 +1913,34 @@ pub mod goal {
         pub below_retention_on_date: u32,
         /// The last weeks, oldest first
         pub weeks: Vec<GoalWeek>,
+        /// The goal's [milestones](crate::config::Goal::milestones), in order, with this part's
+        /// share of each target
+        #[serde(default)]
+        pub milestones: Vec<GoalMilestoneStatus>,
+    }
+
+    /// How one of a goal's [milestones](crate::config::Goal::milestones) is going, for the whole
+    /// goal or one of its parts. See [`GoalPartStatus::milestones`].
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub struct GoalMilestoneStatus {
+        /// The day it is due by the start of
+        pub date: NaiveDate,
+        /// The most cards that should still be new then. A part's share of the goal's target is
+        /// in proportion to the new cards it has: now while the day is to come, on the day after.
+        pub new_left: u32,
+        /// Days from today to `date`, 0 once it has come
+        pub days_left: i64,
+        /// New cards a day that reach the target by the day, 0 if it is reached already, or
+        /// `None` once the day has come
+        pub new_per_day_needed: Option<f64>,
+        /// Whether the pace of the last [`PACE_DAYS`](crate::api::goal::PACE_DAYS) days reaches
+        /// the target by the day, or `None` once the day has come
+        pub on_track: Option<bool>,
+        /// Once the day has come, the cards that were new when it started: added (their note)
+        /// and not studied before it, and not suspended now
+        pub new_on_day: Option<u32>,
+        /// Once the day has come, whether `new_on_day` was at most `new_left`
+        pub met: Option<bool>,
     }
 
     /// One week of a [`GoalPartStatus`].

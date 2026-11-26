@@ -5,6 +5,8 @@ use std::fmt::Write as _;
 use miette::Error;
 use miette::miette;
 use reqwest::Client;
+use spares_core::api::goal::PACE_DAYS;
+use spares_core::schema::goal::GoalMilestoneStatus;
 use spares_core::schema::goal::GoalPartStatus;
 use spares_core::schema::goal::GoalStatus;
 
@@ -68,6 +70,17 @@ fn render(status: &GoalStatus) -> String {
             .retention
             .map_or_else(String::new, |retention| format!(", retention {retention}")),
     );
+    if let Some(goal) = status.parts.first() {
+        for milestone in &goal.milestones {
+            let _ = writeln!(out, "{}", milestone_line(goal, milestone));
+        }
+    }
+    // The pace each part needs for the next milestone, while one is to come
+    let next = status.parts.first().and_then(|goal| {
+        goal.milestones
+            .iter()
+            .position(|milestone| milestone.new_on_day.is_none())
+    });
     let width = status
         .parts
         .iter()
@@ -75,9 +88,17 @@ fn render(status: &GoalStatus) -> String {
         .max()
         .unwrap_or(0)
         .max(4);
+    let next_header = next
+        .and_then(|index| status.parts[0].milestones.get(index))
+        .map_or_else(String::new, |milestone| {
+            format!(
+                "  {:<13}",
+                format!("need by {}", milestone.date.format("%b %d"))
+            )
+        });
     let _ = writeln!(
         out,
-        "{:<width$}  {:>6} {:>6} {:>6} {:>6} {:>5}  {:>9} {:>8}  {:<12}  {:>6} {:>7}",
+        "{:<width$}  {:>6} {:>6} {:>6} {:>6} {:>5}  {:>9} {:>8}{next_header}  {:<12}  {:>6} {:>7}",
         "part",
         "cards",
         "new",
@@ -91,7 +112,7 @@ fn render(status: &GoalStatus) -> String {
         format!("<{retention}"),
     );
     for part in &status.parts {
-        let _ = writeln!(out, "{}", row(part, width));
+        let _ = writeln!(out, "{}", row(part, width, next));
     }
     let _ = writeln!(
         out,
@@ -114,7 +135,50 @@ fn render(status: &GoalStatus) -> String {
     out
 }
 
-fn row(part: &GoalPartStatus, width: usize) -> String {
+/// A line on one of the goal's milestones, as `goal` (the whole goal's status) has it.
+fn milestone_line(goal: &GoalPartStatus, milestone: &GoalMilestoneStatus) -> String {
+    if let (Some(new_on_day), Some(met)) = (milestone.new_on_day, milestone.met) {
+        return format!(
+            "milestone {}: {}, {new_on_day} new on the day, at most {} wanted",
+            milestone.date,
+            if met { "met" } else { "missed" },
+            milestone.new_left,
+        );
+    }
+    #[expect(clippy::cast_precision_loss, reason = "a number of days")]
+    let pace = f64::from(goal.learned_recently) / PACE_DAYS as f64;
+    format!(
+        "milestone {} ({} days): at most {} new left (now {}), need {:.1}/day, pace {pace:.1}/day{}",
+        milestone.date,
+        milestone.days_left,
+        milestone.new_left,
+        goal.new,
+        milestone.new_per_day_needed.unwrap_or(0.0),
+        if milestone.on_track == Some(false) {
+            ": behind"
+        } else {
+            ""
+        },
+    )
+}
+
+/// The pace `part` needs for the milestone at `next`, and `behind` if its recent pace falls short.
+fn milestone_need(part: &GoalPartStatus, next: usize) -> String {
+    part.milestones
+        .get(next)
+        .and_then(|milestone| {
+            let need = milestone.new_per_day_needed?;
+            let behind = if milestone.on_track == Some(false) {
+                " behind"
+            } else {
+                ""
+            };
+            Some(format!("{need:.1}{behind}"))
+        })
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn row(part: &GoalPartStatus, width: usize, next: Option<usize>) -> String {
     let need = part
         .new_per_day_needed
         .map_or_else(|| "-".to_string(), |need| format!("{need:.1}"));
@@ -127,8 +191,11 @@ fn row(part: &GoalPartStatus, width: usize) -> String {
         || "-".to_string(),
         |recall| format!("{:.0}%", recall * 100.0),
     );
+    let next = next.map_or_else(String::new, |next| {
+        format!("  {:<13}", milestone_need(part, next))
+    });
     format!(
-        "{:<width$}  {:>6} {:>6} {:>6} {:>6} {:>5}  {:>9} {:>8}  {:<12}  {:>6} {:>7}",
+        "{:<width$}  {:>6} {:>6} {:>6} {:>6} {:>5}  {:>9} {:>8}{next}  {:<12}  {:>6} {:>7}",
         part.name,
         part.cards,
         part.new,
