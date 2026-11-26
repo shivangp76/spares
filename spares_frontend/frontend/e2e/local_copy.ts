@@ -1375,15 +1375,70 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       await page.evaluate(() => caches.has("spares-copy-pandoc")),
     );
     await logIn(page, `first-${engine}`);
+    // The other account's copy can't be opened: its collection is no longer a database, as a copy
+    // the migrations refuse can't be opened either. Chromium writes into the browser's storage from
+    // a page; the others keep the copy as it is.
+    const broken =
+      engine === "chromium" &&
+      (await page.goto(`${ORIGIN}/api/healthcheck`)) !== null &&
+      (await page.evaluate(async () => {
+        let corrupted = false;
+        const root = await navigator.storage.getDirectory();
+        for await (const [name, dir] of root.entries()) {
+          if (!name.startsWith("spares-account-") || dir.kind !== "directory")
+            continue;
+          const opaque = await (dir as FileSystemDirectoryHandle)
+            .getDirectoryHandle(".opaque")
+            .catch(() => null);
+          if (!opaque) continue;
+          for await (const [, file] of opaque.entries()) {
+            if (file.kind !== "file") continue;
+            const handle = file as FileSystemFileHandle;
+            // The pool's header names the file it holds
+            const header = await (await handle.getFile()).slice(0, 4096).text();
+            if (
+              !header.includes("spares.sqlite") ||
+              header.includes("-journal")
+            )
+              continue;
+            const writable = await handle.createWritable({
+              keepExistingData: true,
+            });
+            await writable.write({
+              type: "write",
+              position: 4096,
+              data: new Uint8Array(100),
+            });
+            await writable.close();
+            corrupted = true;
+          }
+        }
+        return corrupted;
+      }));
     await page.goto(`${ORIGIN}/settings`);
     await page.getByRole("button", { name: "Stop Keeping a Copy" }).click();
     await page
       .getByRole("dialog", { name: "Stop keeping a copy on this device?" })
       .getByRole("button", { name: "Stop keeping a copy" })
       .click();
+    if (broken)
+      await page
+        .getByRole("dialog", { name: "Delete the copy anyway?" })
+        .getByRole("button", { name: "Delete the copy" })
+        .click();
     await page
       .getByRole("button", { name: "Keep a Copy on This Device" })
       .waitFor();
+    if (broken)
+      check(
+        "a copy that can't be opened is deleted, and the server forgets its device",
+        (await page.evaluate(async () => {
+          const response = await fetch("/api/sync/devices");
+          return response.ok
+            ? ((await response.json()) as unknown[]).length
+            : -1;
+        })) === 0,
+      );
     check(
       "removing the last copy releases the compiler",
       !(await page.evaluate(() => caches.has("spares-copy-pandoc"))),

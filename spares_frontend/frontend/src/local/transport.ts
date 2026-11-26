@@ -517,6 +517,15 @@ export async function call<T>(
   return post<T>(op, args);
 }
 
+/** Deletes the copy without opening it, for one that can't be opened, such as one whose collection
+ *  the migrations refuse (see `discard` in spares_wasm). */
+export async function discardCopy(): Promise<void> {
+  requireCopyAccount();
+  opened = null;
+  await takeLock();
+  await post("discard", [copyDirectory]);
+}
+
 /** Stops the worker, e.g. after the copy was deleted, so the next call opens it afresh. */
 export function stopCopy(): void {
   worker?.terminate();

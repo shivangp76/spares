@@ -93,6 +93,7 @@ const calls = {
   sync: spares.sync,
   unenroll: spares.unenroll,
   forget: spares.forget,
+  discard: spares.discard,
   pending_notes: spares.pending_notes,
   render_assets: spares.render_assets,
   web_renders: spares.web_renders,

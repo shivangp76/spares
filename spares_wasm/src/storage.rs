@@ -128,10 +128,12 @@ pub(crate) async fn open(directory: &str) -> Result<Opened, JsValue> {
             .map_err(sqlx_error)?;
     }
     let db = connect(DB_FILE).await?;
-    spares_core::collection::migrator()
-        .run(&db)
-        .await
-        .map_err(|e| js_error(&format!("failed to migrate the copy: {e}")))?;
+    if let Err(e) = spares_core::collection::migrator().run(&db).await {
+        // Closed, so that `discard` can delete them
+        db.close().await;
+        device.close().await;
+        return Err(js_error(&format!("failed to migrate the copy: {e}")));
+    }
     // The device's one collection, current everywhere in the worker
     let collection = Arc::new(Collection::new(
         "device",
@@ -330,12 +332,27 @@ pub(crate) async fn forget(opened: &Opened) -> Result<(), JsValue> {
     spares_core::platform::clear();
     spares_core::platform::set_media_dirs(None);
     spares_core::platform::load_web_renders(BTreeSet::new());
+    remove_files(&opened.vfs)
+}
+
+/// Deletes the copy in `directory` without opening its collection, for a copy that can't be
+/// opened, such as one whose collection the migrations refuse. What [`forget`] does once it is
+/// open.
+pub(crate) async fn discard(directory: &str) -> Result<(), JsValue> {
+    if let Ok(opened) = opened() {
+        return forget(&opened).await;
+    }
+    remove_files(&vfs(directory).await?)
+}
+
+/// Removes the copy's databases, their journals and the snapshots a sync leaves.
+fn remove_files(vfs: &OpfsSAHPoolUtil) -> Result<(), JsValue> {
     for file in [DB_FILE, DEVICE_FILE]
         .into_iter()
         .chain(TEMP_FILES)
         .flat_map(|file| [file.to_string(), format!("{file}-journal")])
     {
-        remove_file(&opened.vfs, &file)?;
+        remove_file(vfs, &file)?;
     }
     Ok(())
 }

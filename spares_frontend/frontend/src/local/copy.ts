@@ -35,6 +35,7 @@ import {
   hostUrl,
   listRenderPackages,
   onCredentialsChange,
+  removeSyncDevice,
   renderAssetUrl,
   type SyncReport,
 } from "../api/client";
@@ -46,6 +47,7 @@ import {
   COPY_RENDER_ASSETS_CACHE,
   getLocalCopy,
   handleInCopyTab,
+  discardCopy,
   inCopyTab,
   isCopyElsewhere,
   LocalError,
@@ -571,6 +573,14 @@ async function dropCopy(): Promise<void> {
 export async function disableLocalCopy(
   discardChanges: boolean,
 ): Promise<string | null> {
+  // A copy that can't be opened can't run the command below, which opens it first
+  if (discardChanges) {
+    try {
+      await openCopy();
+    } catch {
+      return discardUnopened();
+    }
+  }
   return inCopyTab<string | null>("disable", discardChanges);
 }
 
@@ -599,6 +609,25 @@ async function disableHere(discardChanges: boolean): Promise<string | null> {
   await call("forget");
   await dropCopy();
   return warning;
+}
+
+/**
+ * Deletes a copy that can't be opened, such as one whose collection the migrations refuse. It can't
+ * sync or unenroll through itself, so its changes not synced yet are lost, and the server forgets
+ * the device through the page's session instead.
+ */
+async function discardUnopened(): Promise<string | null> {
+  const replica = getLocalCopy()?.replica ?? status.replica;
+  await discardCopy();
+  await dropCopy();
+  if (replica === null || replica === undefined || status.notEnrolled)
+    return null;
+  try {
+    await removeSyncDevice(replica);
+    return null;
+  } catch {
+    return `The server still lists this device as replica ${replica}. Remove it under Settings → This Device once online, or with \`spares sync devices remove ${replica}\`.`;
+  }
 }
 
 // Files

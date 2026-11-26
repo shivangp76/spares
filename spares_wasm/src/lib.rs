@@ -281,6 +281,15 @@ pub async fn forget() -> Result<(), JsValue> {
     storage::forget(&opened()?).await
 }
 
+/// Deletes the copy in `directory` without opening it, for a copy that can't be opened (one whose
+/// collection the migrations refuse, say). Its changes not synced yet are lost, and the server is
+/// not told: the page frees the device's number there itself.
+#[wasm_bindgen]
+pub async fn discard(directory: String) -> Result<(), JsValue> {
+    console_error_panic_hook::set_once();
+    storage::discard(&directory).await
+}
+
 /// The ids of the notes changed here since the last sync, which the server hasn't rendered yet.
 #[wasm_bindgen]
 pub async fn pending_notes() -> Result<Vec<i64>, JsValue> {
