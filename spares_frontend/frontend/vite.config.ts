@@ -23,6 +23,9 @@ import { pandocWasm } from "./pandoc-wasm.ts";
 const SVGEDIT_EDITOR_DIR = fileURLToPath(
   new URL("./svgedit/src/editor", import.meta.url),
 );
+// TODO: the svgedit-copy, service-worker and precompress plugins write here even
+// with `--outDir`, so a build into another directory still rewrites `./dist`'s
+// svgedit files, `sw.js` and `.br`/`.gz` files.
 const DIST_DIR = fileURLToPath(new URL("./dist", import.meta.url));
 
 const IMAGE_OCCLUSION_TEMPLATE = fileURLToPath(

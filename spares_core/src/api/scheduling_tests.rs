@@ -712,6 +712,8 @@ async fn reschedule_places_other_cards_around_a_kept_card(pool: SqlitePool) {
     );
 }
 
+// TODO(flaky): fails in about 1 of 5–25 runs, alone too, with one `reschedule_rows` row left
+// after the undo. Already so at 09b5bbb7 (2026-11-26).
 #[sqlx::test]
 async fn undoing_a_due_date_set_by_hand_deletes_its_row(pool: SqlitePool) {
     let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];

@@ -213,6 +213,8 @@ mod tests {
     /// Rendering records each output's key, and renders again only what changed: outputs whose
     /// rendered file is gone, all of them when forced, and the note and its cards when it changed,
     /// forgetting the cards it no longer has.
+    // TODO(flaky): fails in about 2 of 13 runs of the whole suite, never alone (seen 2026-11-06).
+    // Not from another test's id: only this one and the one seeding `movz` seed `id_counter`.
     #[sqlx::test]
     async fn rendering_keeps_what_it_rendered_in_the_database(pool: SqlitePool) {
         let parser_row = create_parser_helper(&pool, "markdown").await;

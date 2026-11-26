@@ -34,6 +34,9 @@ impl Drop for TestHost {
 }
 
 /// A host on a port of its own, with the account `me`.
+// TODO(flaky): when the tests run together, creating `me` sometimes fails with "UNIQUE
+// constraint failed: user.name" (seen 2026-11-17). Likely cause: macOS's clock has microsecond
+// resolution, so two tests creating a host of the same name in the same microsecond share a root.
 async fn host(name: &str) -> TestHost {
     let root = std::env::temp_dir().join(format!(
         "spares-two-hosts-{name}-{}-{}",
