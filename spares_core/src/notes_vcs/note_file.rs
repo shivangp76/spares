@@ -234,6 +234,10 @@ pub fn parse_new_note_file(
 /// (`<parser>/<id>.<ext>`) holds that note and any number of notes without a note id, and a new
 /// note's file (`new-*`) holds one or more notes without one. Spares gives each note its own file
 /// when it imports the push, so files spares writes always hold one note.
+///
+/// This makes it easy to expand a note into several in one file, at the cost of the single-file
+/// view after the next pull. A file never holds several *existing* notes: its base is checked for
+/// the file as a whole, not note by note. The Anki push keeps one note per file.
 #[derive(Debug)]
 pub struct ParsedPushedFile {
     /// The note the file belongs to, for a note's file

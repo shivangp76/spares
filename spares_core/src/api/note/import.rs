@@ -108,6 +108,13 @@
 //! boundaries and content between them — what matters is each note's ordinal position within its
 //! sync group.
 //!
+//! Matching is positional, not by a stable identity such as a cloze's uid, so that note ids stay
+//! in file order. A note in a file of lecture notes implicitly builds on every note before it (a
+//! definition inserted above a theorem, say, without a `#lin[]`), and `new_order = "created"`
+//! introduces notes in id order. If notes kept their ids, a note inserted above others would get a
+//! later id than the notes after it. The cost is that an insertion shifts the ids of the notes
+//! below it, so the import keeps that cheap instead of avoiding it.
+//!
 //! Here is the file from step 2 after some heavy editing — the Pacific note was deleted, a new
 //! Indian Ocean note was inserted at the top, and non-note content was added. Crucially, the
 //! Atlantic note is **unchanged**:
