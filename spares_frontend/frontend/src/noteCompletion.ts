@@ -27,12 +27,13 @@ import {
   searchNotesPage,
 } from "./api/client";
 import { keywordRanges, type KeywordRanges, visibleKeywordMarks, keywordOwners } from "./keywordDecorations";
-import { inheritAt, linkAt } from "./typstRefs";
+import { inheritAt, linkArgsAt, linkAt } from "./typstRefs";
 import { formatNoteId, parseNoteId } from "./utils";
 
 /**
  * Completion for Typst notes, whose links and settings name other notes:
  * - in `#lin[…]`, the keywords notes have, each with its note, so a link matches one exactly;
+ * - after `#lin(`, the `rel:` of a link that isn't to a prerequisite, then its keywords;
  * - after `inh:` or `mv:` in a cloze's settings, the notes whose id or text matches what is typed,
  *   then that note's card orders, so inheriting or moving a card needs no lookup;
  * - and a `#key[…]` keyword another note already has is underlined, as links to it would find both.
@@ -82,6 +83,40 @@ async function linkCompletions(
       type: "keyword",
     })),
     validFor: /^[^[\]]*$/,
+  };
+}
+
+/** Which way a link can point besides to a prerequisite, the default (see `LinkRelation`). */
+const LINK_RELATIONS = [
+  { rel: "dependent", detail: "the linked note builds on this one" },
+  { rel: "related", detail: "neither builds on the other" },
+];
+
+function linkRelationCompletions(context: CompletionContext): CompletionResult | null {
+  const line = context.state.doc.lineAt(context.pos);
+  const at = linkArgsAt(line.text.slice(0, context.pos - line.from));
+  if (!at) return null;
+  return {
+    from: line.from + at.from,
+    options: LINK_RELATIONS.map(({ rel, detail }) => {
+      const insert = `rel: "${rel}")[]`;
+      return {
+        label: `rel: "${rel}"`,
+        detail,
+        type: "property",
+        // Closes the arguments, taking the `)` the editor may have closed them with, and goes on
+        // to the keyword inside the brackets
+        apply: (view: EditorView, _completion: Completion, from: number, to: number) => {
+          const end = view.state.sliceDoc(to, to + 1) === ")" ? to + 1 : to;
+          view.dispatch({
+            changes: { from, to: end, insert },
+            selection: { anchor: from + insert.length - 1 },
+          });
+          startCompletion(view);
+        },
+      };
+    }),
+    validFor: /^[^()[\]]*$/,
   };
 }
 
@@ -213,7 +248,7 @@ function duplicateKeywords(noteId: number | null): Extension {
 function oursAt(context: CompletionContext): boolean {
   const line = context.state.doc.lineAt(context.pos);
   const before = line.text.slice(0, context.pos - line.from);
-  return linkAt(before) !== null || inheritAt(before) !== null;
+  return linkAt(before) !== null || linkArgsAt(before) !== null || inheritAt(before) !== null;
 }
 
 /** The Typst language's own completion (its functions and names), everywhere else. */
@@ -235,7 +270,7 @@ async function typstCompletions(
 export function typstNoteCompletion(noteId: number | null): Extension {
   return [
     autocompletion({
-      override: [linkCompletions, inheritCompletions, typstCompletions],
+      override: [linkCompletions, linkRelationCompletions, inheritCompletions, typstCompletions],
     }),
     vimCompletionKeys,
     duplicateKeywords(noteId),

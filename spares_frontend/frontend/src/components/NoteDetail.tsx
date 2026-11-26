@@ -49,6 +49,7 @@ import LocalGraph from "./LocalGraph";
 import NoteSyntaxButton from "./NoteSyntaxHelp";
 import Skeleton from "./Skeleton";
 import { askConfirm } from "../ask";
+import LinkRelationMark from "./LinkRelationMark";
 
 const fieldLabel: React.CSSProperties = {
   fontSize: 12,
@@ -738,6 +739,7 @@ export default function NoteDetail({
                 >
                   {ln.searched_keyword} (
                   {id === null ? "unmatched" : formatNoteId(id)})
+                  <LinkRelationMark relation={ln.relation} />
                 </button>
               );
             })}

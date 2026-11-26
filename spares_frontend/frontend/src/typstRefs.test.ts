@@ -1,11 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { inheritAt, linkAt } from "./typstRefs";
+import { inheritAt, linkArgsAt, linkAt } from "./typstRefs";
+
+describe("linkArgsAt", () => {
+  test("finds the arguments being written in #lin(…", () => {
+    expect(linkArgsAt("see #lin(")).toEqual({ from: 9, text: "" });
+    expect(linkArgsAt('see #lin(rel: "dep')).toEqual({ from: 9, text: 'rel: "dep' });
+  });
+
+  test("is null once the arguments are closed or a keyword starts", () => {
+    expect(linkArgsAt('see #lin(rel: "related")[')).toBeNull();
+    expect(linkArgsAt("see #lin([Liz")).toBeNull();
+  });
+});
 
 describe("linkAt", () => {
   test("finds the keyword being written in #lin[…]", () => {
     expect(linkAt("see #lin[Lizard")).toEqual({ from: 9, text: "Lizard" });
     expect(linkAt("see #lin([Liz")).toEqual({ from: 10, text: "Liz" });
     expect(linkAt("see #lin[")).toEqual({ from: 9, text: "" });
+    expect(linkAt('see #lin(rel: "dependent")[Liz')).toEqual({ from: 27, text: "Liz" });
   });
 
   test("is null outside an open #lin[", () => {

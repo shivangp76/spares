@@ -5,6 +5,14 @@ vim.api.nvim_create_user_command('SparesKeyword', function()
   require('spares').open()
 end, { desc = 'Open spares note for #key[...] under cursor' })
 
+vim.api.nvim_create_user_command('SparesLinkRelation', function(args)
+  require('spares').set_link_relation(args.args ~= '' and args.args or 'dependent')
+end, {
+  nargs = '?',
+  complete = function() return { 'dependent', 'related', 'prerequisite' } end,
+  desc = 'Set rel: of the #lin[...] under cursor (dependent, related or prerequisite)',
+})
+
 vim.api.nvim_create_user_command('SparesCompleteTag', function()
   require('spares').complete_tags()
 end, { desc = 'Complete spares tag name under cursor' })

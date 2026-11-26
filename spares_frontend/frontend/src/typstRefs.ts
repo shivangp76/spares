@@ -1,10 +1,21 @@
 /** Where the cursor is in the parts of a Typst note that name other notes, for `noteCompletion`. */
 
-/** The keyword being written in `#lin[…]` before the cursor, and where it starts. */
+/**
+ * The keyword being written in `#lin[…]` before the cursor, and where it starts. Also in
+ * `#lin(rel: "dependent")[…]` and `#lin([…`.
+ */
 export function linkAt(
   before: string,
 ): { from: number; text: string } | null {
-  const match = /#lin\(?\[([^[\]]*)$/.exec(before);
+  const match = /#lin(?:\([^()[\]]*\))?\(?\[([^[\]]*)$/.exec(before);
+  return match ? { from: before.length - match[1].length, text: match[1] } : null;
+}
+
+/** The arguments being written in `#lin(…` before the cursor, such as `rel: "dep`, and where they start. */
+export function linkArgsAt(
+  before: string,
+): { from: number; text: string } | null {
+  const match = /#lin\(([^()[\]]*)$/.exec(before);
   return match ? { from: before.length - match[1].length, text: match[1] } : null;
 }
 

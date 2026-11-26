@@ -36,6 +36,8 @@ local parsers = {
     blocks = {
       { prefix = '#key[', open = '[', close = ']' },
       { prefix = '#lin[', open = '[', close = ']' },
+      { prefix = '#lin(rel: "dependent")[', open = '[', close = ']' },
+      { prefix = '#lin(rel: "related")[', open = '[', close = ']' },
     },
   },
 }
@@ -81,50 +83,123 @@ local function find_notes_dir()
   return (vim.env.HOME or vim.fn.expand('~')) .. '/.local/share/spares/notes'
 end
 
-local function get_keyword_under_cursor()
+-- Each `#lin[...]` in `bufstr`, also with arguments as in `#lin(rel: "dependent")[...]`: where
+-- `#lin` starts, where its arguments are (`args_s`/`args_e`, the parentheses, or nil without
+-- any) and where its keyword is (`kw_s`/`kw_e`, inside the brackets), all 1-indexed.
+local function links_in(bufstr)
+  local links = {}
+  local search = 1
+  while true do
+    local s = bufstr:find('#lin', search, true)
+    if not s then break end
+    local i = s + 4
+    local args_s, args_e
+    if bufstr:sub(i, i) == '(' then
+      local _, e = bufstr:find('^%b()', i)
+      if e and bufstr:sub(e + 1, e + 1) == '[' then
+        args_s, args_e = i, e
+        i = e + 1
+      end
+    end
+    if bufstr:sub(i, i) == '[' then
+      local depth = 1
+      local j = i + 1
+      while j <= #bufstr and depth > 0 do
+        local ch = bufstr:sub(j, j)
+        if ch == '[' then
+          depth = depth + 1
+        elseif ch == ']' then
+          depth = depth - 1
+        end
+        j = j + 1
+      end
+      if depth > 0 then break end
+      table.insert(links, { s = s, args_s = args_s, args_e = args_e, kw_s = i + 1, kw_e = j - 2 })
+      search = j
+    else
+      search = s + 4
+    end
+  end
+  return links
+end
+
+-- The buffer as one string, and the 1-indexed offset of the cursor in it.
+local function buffer_and_cursor()
   local cursor = vim.fn.getpos('.')
   local cur_lnum, cur_1col = cursor[2], cursor[3]
   if cur_lnum < 1 then return nil end
-
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  local bufstr = table.concat(lines, '\n')
-
-  local line_off = {}
   local pos = 0
-  for i = 1, #lines do
-    line_off[i] = pos
+  for i = 1, cur_lnum - 1 do
     pos = pos + #lines[i] + 1
   end
+  return table.concat(lines, '\n'), pos + cur_1col
+end
 
-  local cur_1idx = (line_off[cur_lnum] or 0) + cur_1col
-
-  local search = 1
-  while true do
-    local s = bufstr:find('#lin%[', search)
-    if not s then break end
-
-    local depth = 1
-    local i = s + 5
-    while i <= #bufstr and depth > 0 do
-      local ch = bufstr:sub(i, i)
-      if ch == '[' then
-        depth = depth + 1
-      elseif ch == ']' then
-        depth = depth - 1
-      end
-      i = i + 1
+-- The `#lin` the cursor is in, from `#lin` to its closing bracket.
+local function link_under_cursor()
+  local bufstr, cur = buffer_and_cursor()
+  if not bufstr then return nil end
+  for _, link in ipairs(links_in(bufstr)) do
+    if cur >= link.s and cur <= link.kw_e + 1 then
+      return link, bufstr
     end
-    if depth > 0 then break end
-
-    local kw_start = s + 5
-    local kw_end = i - 2
-    if cur_1idx >= kw_start and cur_1idx <= kw_end then
-      return bufstr:sub(kw_start, kw_end)
-    end
-    search = i
   end
-
   return nil
+end
+
+local function get_keyword_under_cursor()
+  local link, bufstr = link_under_cursor()
+  if not link then return nil end
+  return bufstr:sub(link.kw_s, link.kw_e)
+end
+
+-- Byte offset (1-indexed) in the buffer -> (0-indexed row, 0-indexed col).
+local function offset_to_pos(offset)
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local pos = 0
+  for i = 1, #lines do
+    if offset <= pos + #lines[i] + 1 then
+      return i - 1, offset - pos - 1
+    end
+    pos = pos + #lines[i] + 1
+  end
+  return #lines - 1, #lines[#lines]
+end
+
+local relations = { prerequisite = true, dependent = true, related = true }
+
+-- Sets which way the `#lin` under the cursor points: `dependent` (the linked note builds on
+-- this one), `related` (neither builds on the other) or `prerequisite`, the default, which
+-- writes no argument.
+function M.set_link_relation(rel)
+  if not relations[rel] then
+    vim.notify('spares: rel must be prerequisite, dependent or related', vim.log.levels.ERROR)
+    return
+  end
+  local link, bufstr = link_under_cursor()
+  if not link then
+    vim.notify('spares: no #lin[...] enclosing cursor', vim.log.levels.WARN)
+    return
+  end
+  local args = link.args_s and bufstr:sub(link.args_s + 1, link.args_e - 1) or ''
+  -- Keep any other arguments, and replace or drop `rel:`
+  local others = {}
+  for arg in (args .. ','):gmatch('([^,]*),') do
+    local trimmed = arg:match('^%s*(.-)%s*$')
+    if trimmed ~= '' and not trimmed:match('^rel%s*:') then
+      table.insert(others, trimmed)
+    end
+  end
+  if rel ~= 'prerequisite' then
+    table.insert(others, 'rel: "' .. rel .. '"')
+  end
+  local new_args = #others > 0 and ('(' .. table.concat(others, ', ') .. ')') or ''
+  local from = link.s + 4
+  local to = (link.args_e or (link.s + 3)) + 1
+  local sr, sc = offset_to_pos(from)
+  local er, ec = offset_to_pos(to)
+  vim.api.nvim_buf_set_text(0, sr, sc, er, ec, { new_args })
 end
 
 local function run(args)

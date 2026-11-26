@@ -2,12 +2,20 @@ import { expect, test } from 'bun:test';
 import { DEFAULT_DISPLAY, backEdges, bounds, forceLayout, formatGroup, labelOpacity, nodeRadius, layOut, layeredLayout, layers, lineage, maxRowLength, parseGroup, studyState, unmatchedNodes } from './graphLayout';
 import type { GraphEdge } from './types/spares';
 
-const edge = (from: number, to: number): GraphEdge => ({ from, to, keyword: '', score: 0 });
+const edge = (from: number, to: number, relation: GraphEdge['relation'] = 'prerequisite'): GraphEdge => ({ from, to, keyword: '', score: 0, relation });
 
 test('layers put each note below those it links to', () => {
   // 4 links to 2 and 3, which link to 1; 5 links to 1 and 4
   const edges = [edge(4, 2), edge(4, 3), edge(2, 1), edge(3, 1), edge(5, 1), edge(5, 4)];
   expect(Object.fromEntries(layers([1, 2, 3, 4, 5], edges))).toEqual({ 1: 0, 2: 1, 3: 1, 4: 2, 5: 3 });
+});
+
+test('related links neither layer notes nor make them family', () => {
+  // 2 builds on 1, and 3 only mentions 2
+  const edges = [edge(2, 1), edge(3, 2, 'related')];
+  expect(Object.fromEntries(layers([1, 2, 3], edges))).toEqual({ 1: 0, 2: 1, 3: 0 });
+  expect(lineage(3, edges)).toEqual({ ancestors: new Set(), descendants: new Set() });
+  expect(lineage(1, edges).descendants).toEqual(new Set([2]));
 });
 
 test('a cycle is broken at one link', () => {

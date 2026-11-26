@@ -116,6 +116,7 @@ import { askNotesBefore } from "../notesBefore";
 import type { NotePaneHandle } from "../components/NoteDetail";
 import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
+import LinkRelationMark from "../components/LinkRelationMark";
 
 /** A wait of `ms` milliseconds, like "4m 05s". */
 function formatWait(ms: number): string {
@@ -3394,6 +3395,7 @@ export default function ReviewPage() {
                       style={toned(TONES.gray)}
                     >
                       {ln.searched_keyword} ({formatNoteId(ln.note_id)})
+                      <LinkRelationMark relation={ln.relation} />
                     </button>
                   ))}
                 </div>

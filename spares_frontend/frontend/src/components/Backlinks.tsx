@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { getNoteGraph } from "../api/client";
-import type { GraphEdge, GraphNode } from "../types/spares";
+import { searchNotesPage } from "../api/client";
+import type { LinkRelation } from "../types/spares";
 import { errorMessage, formatNoteId } from "../utils";
 
 /** Enough for any note but a hub, for which it says there are more. */
 const MAX_NODES = 200;
-const NO_GROUPS: string[] = [];
 const label: React.CSSProperties = {
   fontSize: 12,
   color: "var(--text-muted)",
@@ -16,9 +15,37 @@ const label: React.CSSProperties = {
 };
 
 /**
- * The notes that link to a note, as in Obsidian's backlinks, from the same links as its graph.
+ * The notes that link to a note, as in Obsidian's backlinks, whichever way their links point.
  * Shows nothing if no note does.
  */
+interface Backlink {
+  id: number;
+  /** Its first keyword, to name it by */
+  keyword: string | null;
+  /** The keywords of this note its links matched */
+  linkedBy: string[];
+  relations: LinkRelation[];
+}
+
+/** What the links of a note that links to this one say, for its tooltip. */
+function backlinkTitle({ linkedBy, relations }: Backlink): string {
+  const keywords = [...new Set(linkedBy)].map((k) => `"${k}"`).join(", ");
+  const by = keywords ? ` by ${keywords}` : "";
+  if (relations.includes("prerequisite")) return `Builds on this note: links to it${by}`;
+  if (relations.includes("dependent")) return `This note builds on it: links to it${by} as a note that builds on it`;
+  return `Related: links to it${by}, and neither builds on the other`;
+}
+
+/**
+ * A muted word after a note that doesn't build on this one: a prerequisite of this note, by its
+ * dependent link, or a note that is only related.
+ */
+function relationMark(relations: LinkRelation[]) {
+  if (relations.includes("prerequisite")) return null;
+  const word = relations.includes("dependent") ? "prerequisite" : "related";
+  return <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>· {word}</span>;
+}
+
 export default function Backlinks({
   noteId,
   version,
@@ -30,32 +57,30 @@ export default function Backlinks({
   onOpenNote: (noteId: number) => void;
 }) {
   const [backlinks, setBacklinks] = useState<{
-    notes: { node: GraphNode; edge: GraphEdge }[];
+    notes: Backlink[];
     truncated: boolean;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    // One node more for the note itself
-    getNoteGraph({
-      query: `id=${formatNoteId(noteId)}`,
-      max_score: null,
-      ancestor_depth: 0,
-      descendant_depth: 1,
-      groups: NO_GROUPS,
-      max_nodes: MAX_NODES + 1,
-    })
-      .then((data) => {
+    // One more for the note itself
+    searchNotesPage(`linked_to_note=${formatNoteId(noteId)}`, 1, MAX_NODES + 1)
+      .then((page) => {
         if (cancelled) return;
-        const nodes = new Map(data.nodes.map((n) => [n.id, n]));
-        const notes = data.edges
-          .filter((e) => e.to === noteId && e.from !== noteId)
-          .flatMap((edge) => {
-            const node = nodes.get(edge.from);
-            return node ? [{ node, edge }] : [];
+        const notes = page.items
+          .filter(({ note }) => note.id !== noteId)
+          .slice(0, MAX_NODES)
+          .map(({ note }): Backlink => {
+            const links = (note.linked_notes ?? []).filter((l) => l.linked_note_id === noteId);
+            return {
+              id: note.id,
+              keyword: note.keywords[0] ?? null,
+              linkedBy: links.map((l) => l.matched_keyword ?? l.searched_keyword),
+              relations: [...new Set(links.map((l) => l.relation ?? "prerequisite"))],
+            };
           });
-        setBacklinks({ notes, truncated: data.truncated });
+        setBacklinks({ notes, truncated: page.total > page.items.length });
         setError(null);
       })
       .catch((e) => {
@@ -75,16 +100,17 @@ export default function Backlinks({
         <div
           style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}
         >
-          {backlinks.notes.map(({ node, edge }) => (
+          {backlinks.notes.map((note) => (
             <button
-              key={node.id}
-              onClick={() => onOpenNote(node.id)}
-              title={`Links to this note's keyword "${edge.keyword}"`}
+              key={note.id}
+              onClick={() => onOpenNote(note.id)}
+              title={backlinkTitle(note)}
               className="button-link button-small"
             >
-              {node.keywords.length > 0
-                ? `${node.keywords[0]} (${formatNoteId(node.id)})`
-                : formatNoteId(node.id)}
+              {note.keyword !== null
+                ? `${note.keyword} (${formatNoteId(note.id)})`
+                : formatNoteId(note.id)}
+              {relationMark(note.relations)}
             </button>
           ))}
           {backlinks.truncated && (

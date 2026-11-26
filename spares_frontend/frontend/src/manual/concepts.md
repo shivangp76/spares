@@ -46,6 +46,8 @@ Keywords are used specifically for searching. For example, you may have multiple
 
 Each note can contain multiple linked notes, which are searched for using the parser specification. Notes are referenced based on their keywords. This is useful for connecting ideas together. Linked notes also support fuzzy finding, so notes can be referenced even if there are minor differences in phrasing of the keywords. A note's pane in the web app lists both the notes it links to and the notes that link to it.
 
+A link also says which way the two notes depend on each other. Normally the note with the link builds on the note it links to, as in "by #lin[Fubini's theorem]". In Typst, `#lin(rel: "dependent")[the chain rule]` says the linked note builds on this one instead (as in "used in …"), and `#lin(rel: "related")[Riemann sums]` says neither does ("compare …", "see also …"). Which way a link points decides which cards wait for which when `new_after_linked_notes` or `reviews_after_linked_notes` is on, what `prerequisite_of` and `dependent_of` searches follow, and the arrows of the note graph, where related links are dotted and have none. `link_relation=dependent` finds the notes with such a link.
+
 ## Parsers
 
 Parsers allow notes to be created in different markup languages. Spares ships with "markdown", "typst" and "latex-note" parsers, which are meant to be modified by the user (see `spares_core::parsers::impls`).

@@ -162,8 +162,12 @@ function GraphGuide() {
         <ul style={guideList}>
           <li>
             A note <em>builds on</em> another when it links to one of that
-            note's keywords. An arrow goes from a note to each note that builds
-            on it, so arrows point from what to learn first to what comes after.
+            note's keywords, or when that note's{" "}
+            <code>#lin(rel: "dependent")[…]</code> links to it. An arrow goes
+            from a note to each note that builds on it, so arrows point from
+            what to learn first to what comes after. A{" "}
+            <code>#lin(rel: "related")[…]</code> link is dotted, with no arrow:
+            neither note builds on the other.
           </li>
           <li>
             Filled notes are the ones the query found. Hollow notes are shown

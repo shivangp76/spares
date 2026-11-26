@@ -20,6 +20,11 @@ export function maxRowLength(notes: number): number {
   return Math.max(20, Math.ceil(Math.sqrt(2 * notes)));
 }
 
+/** The edges that say a note builds on another, leaving out `related` links. */
+export function buildingOn(edges: GraphEdge[]): GraphEdge[] {
+  return edges.filter(edge => edge.relation !== "related");
+}
+
 /**
  * The links that close cycles, found depth first, so that leaving them out leaves links that only
  * go up, from a note to one it builds on. Links normally do: a note links to older notes.
@@ -59,7 +64,8 @@ export function backEdges(ids: number[], edges: GraphEdge[]): Set<GraphEdge> {
  * Each note's layer: 0 for notes that link to none, and otherwise one more than the highest layer
  * of the notes they link to, so every note is below everything it builds on.
  */
-export function layers(ids: number[], edges: GraphEdge[]): Map<number, number> {
+export function layers(ids: number[], allEdges: GraphEdge[]): Map<number, number> {
+  const edges = buildingOn(allEdges);
   const back = backEdges(ids, edges);
   const prerequisites = new Map<number, number[]>(ids.map(id => [id, []]));
   for (const edge of edges) {
@@ -219,7 +225,7 @@ function reach(start: number, next: Map<number, number[]>): Set<number> {
 export function lineage(id: number, edges: GraphEdge[]): { ancestors: Set<number>; descendants: Set<number> } {
   const up = new Map<number, number[]>();
   const down = new Map<number, number[]>();
-  for (const { from, to } of edges) {
+  for (const { from, to } of buildingOn(edges)) {
     (up.get(from) ?? up.set(from, []).get(from)!).push(to);
     (down.get(to) ?? down.set(to, []).get(to)!).push(from);
   }
@@ -317,7 +323,7 @@ export function unmatchedNodes(unmatched: UnmatchedLink[]): { nodes: GraphNode[]
     }
     if (!seen.has(`${from} ${id}`)) {
       seen.add(`${from} ${id}`);
-      edges.push({ from, to: id, keyword, score: null });
+      edges.push({ from, to: id, keyword, score: null, relation: "prerequisite" });
     }
   }
   return { nodes, edges };

@@ -23,7 +23,7 @@ The Mariana Trench is the deepest point in the Pacific Ocean {{[inh:aae/1] at ab
 
 Here the new card inherits from note `aae`'s first card. The rules are on `inherit` in `spares_core::parsers::ClozeGroupingSettings`.
 
-In the web app's editor, a Typst note completes what follows `inh:` or `mv:`: type the note's id or words of its text to pick the note, and then its card orders are offered (Ctrl+N and Ctrl+P pick, Ctrl+Y or Enter accepts). Inside `#lin[…]` it completes the keywords notes have, and a `#key[…]` keyword another note already has is underlined.
+In the web app's editor, a Typst note completes what follows `inh:` or `mv:`: type the note's id or words of its text to pick the note, and then its card orders are offered (Ctrl+N and Ctrl+P pick, Ctrl+Y or Enter accepts). Inside `#lin[…]` it completes the keywords notes have, and after `#lin(` it offers `rel: "dependent"` and `rel: "related"` for a link that isn't to a prerequisite, then the keywords. A `#key[…]` keyword another note already has is underlined.
 
 ## Merging notes
 

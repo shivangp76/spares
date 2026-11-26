@@ -25,6 +25,7 @@ import ActionResult, { type ActionOutcome } from "./ActionResult";
 import CardInfo from "./CardInfo";
 import CardRenderer from "./CardRenderer";
 import NoteDetail, { type NotePaneHandle } from "./NoteDetail";
+import LinkRelationMark from "./LinkRelationMark";
 
 const actionButton: React.CSSProperties = { padding: "6px 10px", fontSize: 13 };
 const metaLabel: React.CSSProperties = {
@@ -458,6 +459,7 @@ export default function CardDetail({
                 style={actionButton}
               >
                 {ln.searched_keyword} ({formatNoteId(ln.note_id)})
+                <LinkRelationMark relation={ln.relation} />
               </button>
             ))}
           </div>

@@ -37,6 +37,18 @@ function relationText({ relation, depth }: GraphNode): string {
   }
 }
 
+/** What an edge's tooltip says: which note has the link, and which way it points. */
+function edgeTitle(edge: GraphEdge): string {
+  if (edge.to < 0) return `${formatNoteId(edge.from)} links to "${edge.keyword}", which no note has`;
+  const score = edge.score === null ? '' : ` (score ${edge.score})`;
+  const [from, to] = [formatNoteId(edge.from), formatNoteId(edge.to)];
+  switch (edge.relation) {
+    case 'dependent': return `${to} links to ${from} by "${edge.keyword}" as a note that builds on it${score}`;
+    case 'related': return `${from} links to ${to} by "${edge.keyword}" as a related note${score}`;
+    default: return `${from} links to ${to} by "${edge.keyword}"${score}`;
+  }
+}
+
 /** How many links each note has, either way. */
 function linkCounts(edges: GraphEdge[]): Map<number, number> {
   const counts = new Map<number, number>();
@@ -298,12 +310,12 @@ export default function NoteGraph({ nodes, edges, layout, colorBy, groupColors, 
                 stroke={lit ? 'var(--accent)' : 'var(--border-strong)'}
                 strokeWidth={(lit ? 1.5 : 1) * display.linkWidth}
                 opacity={family === null || lit ? 1 : 0.15}
-                strokeDasharray={edge.to < 0 ? '3 3' : undefined}
-                markerEnd={display.arrows ? `url(#${arrowId})` : undefined}
+                strokeDasharray={edge.to < 0 ? '3 3' : edge.relation === 'related' ? '1 3' : undefined}
+                strokeLinecap={edge.relation === 'related' ? 'round' : undefined}
+                // A related link says neither note builds on the other, so it has no direction
+                markerEnd={display.arrows && edge.relation !== 'related' ? `url(#${arrowId})` : undefined}
               >
-                <title>{edge.to < 0
-                  ? `${formatNoteId(edge.from)} links to "${edge.keyword}", which no note has`
-                  : `${formatNoteId(edge.from)} links to ${formatNoteId(edge.to)} by "${edge.keyword}"${edge.score === null ? '' : ` (score ${edge.score})`}`}</title>
+                <title>{edgeTitle(edge)}</title>
               </line>
             );
           })}

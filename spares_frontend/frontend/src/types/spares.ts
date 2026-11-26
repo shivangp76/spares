@@ -117,7 +117,14 @@ export interface ReviewLinkedNote {
   note_id: number;
   matched_keyword: string | null;
   note_raw_path: string;
+  relation: LinkRelation;
 }
+
+/**
+ * Which way a link points, from its `rel:`: the note with it builds on the linked note
+ * (`prerequisite`, the default), the linked note builds on it (`dependent`), or neither does.
+ */
+export type LinkRelation = "prerequisite" | "dependent" | "related";
 
 export interface Rating {
   id: number;
@@ -710,18 +717,23 @@ export interface GraphNodeCards {
   suspended: number;
 }
 
-/** `from` links to `to`, the note it builds on. */
+/**
+ * `from` builds on `to`: it links to `to`, or `to` has a dependent link to it. For a `related`
+ * link, where neither builds on the other, `from` is the note with the link.
+ */
 export interface GraphEdge {
   from: number;
   to: number;
   keyword: string;
   score: number | null;
+  relation: LinkRelation;
 }
 
 export interface LinkedNote {
   searched_keyword: string;
   linked_note_id: number | null;
   matched_keyword: string | null;
+  relation: LinkRelation;
 }
 
 // Externally-tagged serde enum

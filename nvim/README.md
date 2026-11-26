@@ -16,6 +16,14 @@ Example setup with Lazy.nvim:
 },
 ```
 
+## Link relations
+
+`:SparesLinkRelation dependent` sets the `rel:` of the Typst `#lin[...]` under the
+cursor, so `#lin[X]` becomes `#lin(rel: "dependent")[X]`: a link to a note that
+builds on this one. `related` marks a link where neither builds on the other,
+and `prerequisite` removes `rel:`, back to the default. Map it like the others,
+e.g. `{ "<localleader>sd", "<cmd>SparesLinkRelation dependent<cr>" }`.
+
 ## Keyword completion
 
 Keyword completion is opt-in per file: it only runs if the file contained
@@ -26,7 +34,7 @@ and reopen the file to enable it.
 | ------------ | -------------------- | -------------------------- | --------------------- |
 | `markdown`   | markdown, pandoc     | `<!--- spares: start --->` | `[...][li]`           |
 | `latex-note` | tex, latex, plaintex | `% spares: start`          | `\key{...}`, `\li{...}` |
-| `typst`      | typst                | `// spares: start`         | `#key[...]`, `#lin[...]` |
+| `typst`      | typst                | `// spares: start`         | `#key[...]`, `#lin[...]`, `#lin(rel: "dependent")[...]`, `#lin(rel: "related")[...]` |
 
 As you type inside one of those blocks, matching keywords are shown in a
 popup menu. The matching uses fuzzy subsequence matching, so typing `Le`
