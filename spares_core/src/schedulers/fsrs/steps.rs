@@ -16,6 +16,8 @@
 
 use chrono::Duration;
 use fsrs_rs::FSRS;
+#[cfg(test)]
+use fsrs_rs::FSRS6_DEFAULT_PARAMETERS;
 use fsrs_rs::FSRSError;
 use fsrs_rs::MemoryState;
 use fsrs_rs::NextStates;
@@ -172,7 +174,7 @@ mod tests {
     ) -> Step {
         let elapsed_days = if state == State::Review { 10 } else { 0 };
         next_step(
-            &FSRS::default(),
+            &FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap(),
             steps,
             state,
             memory,
@@ -188,6 +190,7 @@ mod tests {
         MemoryState {
             stability: 10.0,
             difficulty: 5.0,
+            stability_fast: 10.0,
         }
     }
 
@@ -326,7 +329,7 @@ mod tests {
         for elapsed_days in [0, 1, 5, 10, 30, 365] {
             let intervals = [Rating::Hard, Rating::Good, Rating::Easy].map(|rating| {
                 next_step(
-                    &FSRS::default(),
+                    &FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap(),
                     STEPS,
                     State::Review,
                     Some(reviewed()),
@@ -349,7 +352,7 @@ mod tests {
     fn intervals_follow_desired_retention() {
         let interval = |desired_retention| {
             next_step(
-                &FSRS::default(),
+                &FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap(),
                 STEPS,
                 State::Review,
                 Some(reviewed()),

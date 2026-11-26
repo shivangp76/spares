@@ -1,7 +1,7 @@
 use std::cmp;
 
 use chrono::Duration;
-use fsrs_rs::DEFAULT_PARAMETERS;
+use fsrs_rs::FSRS6_DEFAULT_PARAMETERS;
 use fsrs_rs::FSRS;
 use fsrs_rs::MemoryState;
 
@@ -75,9 +75,18 @@ pub fn state_to_number(state: State) -> StateId {
     }
 }
 
+/// The configured FSRS parameters, or the defaults if none are configured.
+pub fn parameters(config: &SparesExternalConfig) -> &[f32] {
+    if config.fsrs_parameters.is_empty() {
+        &FSRS6_DEFAULT_PARAMETERS
+    } else {
+        &config.fsrs_parameters
+    }
+}
+
 /// The FSRS model with the configured parameters, or the defaults if none are configured.
 pub fn model(config: &SparesExternalConfig) -> Result<FSRS, Error> {
-    FSRS::new(&config.fsrs_parameters).map_err(|e| {
+    FSRS::new(parameters(config)).map_err(|e| {
         Error::Library(LibraryError::Scheduler(SchedulerErrorKind::InvalidInput(
             format!("invalid `fsrs_parameters`: {e:?}"),
         )))
@@ -87,8 +96,8 @@ pub fn model(config: &SparesExternalConfig) -> Result<FSRS, Error> {
 /// The forgetting curve's decay under the configured parameters, clipped like the model clips
 /// it.
 pub fn decay(config: &SparesExternalConfig) -> f32 {
-    fsrs_rs::check_and_fill_parameters(&config.fsrs_parameters)
-        .map_or(DEFAULT_PARAMETERS[20], |parameters| parameters[20])
+    fsrs_rs::check_and_fill_parameters(parameters(config))
+        .map_or(FSRS6_DEFAULT_PARAMETERS[20], |parameters| parameters[20])
         .clamp(0.1, 0.8)
 }
 
@@ -99,6 +108,7 @@ pub fn retrievability(elapsed_days: f64, stability: f64, decay: f32) -> f64 {
         stability: stability as f32,
         // Not used by the forgetting curve.
         difficulty: 1.0,
+        stability_fast: stability as f32,
     };
     f64::from(fsrs_rs::current_retrievability(
         memory_state,
@@ -181,7 +191,7 @@ mod tests {
             let days = days_until_retrievability(stability, retention, decay);
             assert!((retrievability(days, stability, decay) - retention).abs() < 1e-4);
             // The same as the model's interval, before it is rounded
-            let model = f64::from(FSRS::default().next_interval(
+            let model = f64::from(FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap().next_interval(
                 Some(stability as f32),
                 retention as f32,
                 1,

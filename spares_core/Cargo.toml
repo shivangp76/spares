@@ -17,7 +17,7 @@ blake3 = "1.8.7"
 chrono = { version = "0.4.45", features = ["serde"] }
 fancy-regex = "0.20.0"
 # Renamed so it does not clash with the `schedulers::fsrs` module.
-fsrs-rs = { package = "fsrs", version = "6.6.2" }
+fsrs-rs = { package = "fsrs", version = "7.0.0" }
 futures = "0.3.34"
 indexmap = { version = "2.14.2", features = ["serde"] }
 indoc = "2.0.8"

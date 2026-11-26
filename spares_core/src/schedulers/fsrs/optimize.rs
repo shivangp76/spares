@@ -5,7 +5,9 @@
 //! reviews counted in days.
 use chrono::NaiveDate;
 use fsrs_rs::ComputeParametersInput;
+use fsrs_rs::ComputeParametersVersion;
 use fsrs_rs::FSRS;
+use fsrs_rs::FSRS6_DEFAULT_PARAMETERS;
 use fsrs_rs::FSRSError;
 use fsrs_rs::FSRSItem;
 use fsrs_rs::FSRSReview;
@@ -121,7 +123,10 @@ fn card_items(
             u32::try_from((day - previous_day).num_days()).unwrap_or(0)
         });
         previous_day = Some(day);
-        history.push(FSRSReview { rating, delta_t });
+        history.push(FSRSReview {
+            rating,
+            delta_t: delta_t as f32,
+        });
         // Only a review on a later day than the previous one says anything about long-term
         // memory. A same-day review, such as a relearning step after a lapse, stays in the history
         // of the items after it, but `FSRS::evaluate` cannot score it as an item of its own.
@@ -175,14 +180,18 @@ pub fn optimize(
             ),
         )));
     }
-    let current_parameters =
-        check_and_fill_parameters(current_parameters).map_err(|e| fsrs_error(&e))?;
+    let current_parameters = if current_parameters.is_empty() {
+        FSRS6_DEFAULT_PARAMETERS.to_vec()
+    } else {
+        check_and_fill_parameters(current_parameters).map_err(|e| fsrs_error(&e))?
+    };
     let optimized_parameters = compute_parameters(ComputeParametersInput {
         train_set: items.clone(),
         card_ids: Some(card_ids),
         // Same-day reviews from learning steps are in the log, so fit the short-term parameters too.
         enable_short_term: true,
         num_relearning_steps: Some(num_relearning_steps),
+        model_version: ComputeParametersVersion::Fsrs6,
         ..ComputeParametersInput::default()
     })
     .map_err(|e| fsrs_error(&e))?;
@@ -260,7 +269,7 @@ mod tests {
     fn deltas(item: &FSRSItem) -> Vec<(u32, u32)> {
         item.reviews
             .iter()
-            .map(|review| (review.rating, review.delta_t))
+            .map(|review| (review.rating, review.delta_t as u32))
             .collect()
     }
 
@@ -325,7 +334,7 @@ mod tests {
             "the relearning step is kept in the history but is not an item"
         );
         // `FSRS::evaluate` refuses the whole set if any item ends on a same-day review.
-        let parameters = check_and_fill_parameters(&[]).unwrap();
+        let parameters = FSRS6_DEFAULT_PARAMETERS.to_vec();
         assert!(evaluate(&parameters, set.items).is_ok());
     }
 

@@ -2001,7 +2001,7 @@ mod tests {
     #[test]
     fn fsrs_parameters_are_validated() {
         assert_eq!(parse("").fsrs_parameters, Vec::<f32>::new());
-        let defaults = fsrs_rs::DEFAULT_PARAMETERS
+        let defaults = fsrs_rs::FSRS6_DEFAULT_PARAMETERS
             .iter()
             .map(|parameter| parameter.to_string())
             .collect::<Vec<_>>()
@@ -2027,7 +2027,7 @@ mod tests {
             [leech]
             lapses_threshold = 4
         "};
-        let parameters = fsrs_rs::DEFAULT_PARAMETERS.to_vec();
+        let parameters = fsrs_rs::FSRS6_DEFAULT_PARAMETERS.to_vec();
         let written = set_fsrs_parameters(original, &parameters).unwrap();
         assert!(written.contains("# My settings"), "{written}");
         assert!(written.contains("# keep this"), "{written}");

@@ -667,7 +667,7 @@ mod tests {
             std::slice::from_ref(&card),
             &MoveCardAction::Advance,
             now,
-            fsrs_rs::DEFAULT_PARAMETERS[20],
+            fsrs_rs::FSRS6_DEFAULT_PARAMETERS[20],
         )
         .await
         .unwrap();

@@ -108,7 +108,7 @@ pub(crate) fn relearning_state() -> StateId {
 /// `desired_retention`. Not rounded, clamped or fuzzed.
 #[cfg(test)]
 pub(crate) fn optimal_interval_days(stability: f64, desired_retention: f64) -> f64 {
-    f64::from(fsrs_rs::FSRS::default().next_interval(
+    f64::from(fsrs_rs::FSRS::new(&fsrs_rs::FSRS6_DEFAULT_PARAMETERS).unwrap().next_interval(
         Some(stability as f32),
         desired_retention as f32,
         1,
@@ -288,6 +288,7 @@ impl SrsScheduler for Fsrs {
         let memory = (state != State::New).then_some(MemoryState {
             stability: card.stability as f32,
             difficulty: card.difficulty as f32,
+            stability_fast: card.stability as f32,
         });
         let previous_delay = previous_review_log
             .as_ref()
@@ -679,7 +680,7 @@ mod tests {
             learning_steps: Vec::new(),
             ..SparesExternalConfig::default()
         };
-        let mut parameters = fsrs_rs::DEFAULT_PARAMETERS.to_vec();
+        let mut parameters = fsrs_rs::FSRS6_DEFAULT_PARAMETERS.to_vec();
         // The initial stability after Good.
         parameters[2] *= 4.0;
         let custom = SparesExternalConfig {
