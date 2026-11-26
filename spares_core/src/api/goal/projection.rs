@@ -407,8 +407,8 @@ pub(crate) async fn load(
     // Only links between the goal's notes hold anything back, and only an older note holds a
     // newer one back. Notes are sorted by age, so that is a lower index.
     let links: Vec<(NoteId, NoteId)> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT DISTINCT parent_note_id, linked_note_id FROM note_link \
-         WHERE score <= ? AND parent_note_id IN ({ids}) AND linked_note_id IN ({ids})",
+        "SELECT DISTINCT note_id, prerequisite_id FROM note_prerequisite \
+         WHERE score <= ? AND note_id IN ({ids}) AND prerequisite_id IN ({ids})",
         ids = note_ids.iter().map(|id| id.packed()).join(",")
     )))
     .bind(queue.linked_note_max_score)

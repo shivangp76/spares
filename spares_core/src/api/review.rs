@@ -190,6 +190,7 @@ struct LinkedNoteRow {
     linked_note_id: NoteId,
     matched_keyword: Option<String>,
     parser_name: String,
+    relation: crate::model::LinkRelation,
 }
 
 async fn get_linked_notes_for_review(
@@ -198,12 +199,14 @@ async fn get_linked_notes_for_review(
     all_parsers: &[fn() -> Box<dyn Parseable>],
 ) -> Result<Vec<ReviewLinkedNote>, Error> {
     let rows: Vec<LinkedNoteRow> = sqlx::query_as(
-        r"SELECT nl.searched_keyword, nl.linked_note_id, nl.matched_keyword, p.name as parser_name
+        r#"SELECT nl.searched_keyword, nl.linked_note_id, nl.matched_keyword, p.name as parser_name,
+            nl.relation
           FROM note_link nl
           JOIN note n ON nl.linked_note_id = n.id
           JOIN parser p ON n.parser_id = p.id
           WHERE nl.parent_note_id = ?
-          AND nl.linked_note_id IS NOT NULL",
+          AND nl.linked_note_id IS NOT NULL
+          ORDER BY nl."order""#,
     )
     .bind(note_id)
     .fetch_all(db)
@@ -222,6 +225,7 @@ async fn get_linked_notes_for_review(
             note_id: row.linked_note_id,
             matched_keyword: row.matched_keyword,
             note_raw_path: relative_to_files_dir(note_raw_path),
+            relation: row.relation,
         });
     }
     Ok(linked_notes)
@@ -1944,11 +1948,11 @@ async fn holds_back_new_cards(
         return Ok(false);
     }
     sqlx::query_scalar(AssertSqlSafe(format!(
-        "SELECT EXISTS (SELECT 1 FROM note_link nl \
-         JOIN note ln ON ln.id = nl.linked_note_id \
-         JOIN note pn ON pn.id = nl.parent_note_id \
+        "SELECT EXISTS (SELECT 1 FROM note_prerequisite nl \
+         JOIN note ln ON ln.id = nl.prerequisite_id \
+         JOIN note pn ON pn.id = nl.note_id \
          JOIN card pc ON pc.note_id = pn.id \
-         WHERE nl.linked_note_id = ? AND nl.score <= ? \
+         WHERE nl.prerequisite_id = ? AND nl.score <= ? \
          AND (ln.created_at, ln.id) < (pn.created_at, pn.id) \
          AND pc.state IN ({}) \
          AND (pc.special_state IS NULL OR pc.special_state IN ({}, {})))",

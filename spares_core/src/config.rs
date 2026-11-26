@@ -414,7 +414,7 @@ pub struct QueueConfig {
     /// Tagging the cards you keep burying instead of rating them. On by default: a card buried on
     /// 2 days since it was last rated gets the tag `buried`. See [`TagBuriedConfig`].
     pub tag_buried: TagBuriedConfig,
-    /// Whether a new card waits until the older notes its note links to are learned. Defaults to
+    /// Whether a new card waits until the older notes its note builds on are learned. Defaults to
     /// `false`.
     ///
     /// A note on the chain rule that links to the note defining derivatives, by its keyword,
@@ -427,6 +427,10 @@ pub struct QueueConfig {
     /// with [`NewCardOrder::Random`], [`NewCardOrder::RandomNote`], [`NewCardOrder::NewestFirst`]
     /// or presets. With [`NewCardOrder::Created`], the derivative note already comes first, unless
     /// its cards are still in learning.
+    ///
+    /// A note builds on the notes its links point to, and on the notes whose
+    /// `#lin(rel: "dependent")[…]` links point to it. A `#lin(rel: "related")[…]` link holds
+    /// nothing back either way (see [`crate::model::LinkRelation`]).
     ///
     /// So that no card waits for good:
     ///
@@ -447,7 +451,7 @@ pub struct QueueConfig {
     /// The cards waiting are listed by `c.waiting_on_links` queries. To see what this would hold
     /// back before studying with it, turn it on and run one.
     pub new_after_linked_notes: bool,
-    /// Whether a review card waits while a card of an older note its note links to is
+    /// Whether a review card waits while a card of an older note its note builds on is
     /// relearning and due today. Defaults to `false`. See [`Self::new_after_linked_notes`],
     /// whose rules apply here too.
     ///
@@ -829,7 +833,7 @@ pub enum NewCardOrder {
     /// `"unblocking"`: first the cards of the notes that the most new cards wait on, through
     /// [`QueueConfig::new_after_linked_notes`], then as [`Self::Created`]. A note's weight is the
     /// most new cards along any chain of notes held back behind it: notes with new cards that
-    /// link to it, the notes with new cards that link to those, and so on. So the head of a long
+    /// build on it, the notes with new cards that build on those, and so on. So the head of a long
     /// chain comes before a note nothing waits on, and learning it lets the chain through
     /// sooner.
     ///
@@ -847,7 +851,7 @@ pub enum BuryNewSiblings {
     No,
     /// `true`
     Yes,
-    /// `"unless_blocking"`: except for a note that newer notes with new cards link to
+    /// `"unless_blocking"`: except for a note that newer notes with new cards build on
     UnlessBlocking,
 }
 

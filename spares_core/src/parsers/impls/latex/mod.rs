@@ -413,6 +413,7 @@ fn get_linked_notes_string(
                     searched_keyword,
                     linked_note_id,
                     matched_keyword,
+                    ..
                 } = linked_note_request;
                 assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
                 match (linked_note_id, matched_keyword) {

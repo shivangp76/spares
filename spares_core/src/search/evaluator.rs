@@ -606,6 +606,9 @@ enum NoteField {
     LinkedToNote,
     LinkedToKeyword,
     LinkedFromNote,
+    /// Which way a link in the note points, by the name its `rel:` gives it (see
+    /// [`crate::model::LinkRelation`]), as in `link_relation=dependent`
+    LinkRelation,
     /// The notes reached by following links from a note, step after step, as in
     /// `prerequisite_of=(tag=spdes)`: what those notes build on. See [`evaluate_link_walk`].
     PrerequisiteOf,
@@ -669,7 +672,7 @@ const fn doc(name: &'static str, example: &'static str, about: &'static str) -> 
 }
 
 #[rustfmt::skip]
-pub(crate) const FIELDS: [FieldDoc; 39] = [
+pub(crate) const FIELDS: [FieldDoc; 40] = [
     doc("id", "id=gir", "The note's id"),
     doc("data", "data~verb", "The note's text, which a word on its own searches"),
     doc("created_at", "created_at>=today-7d", "When the note was created"),
@@ -681,8 +684,9 @@ pub(crate) const FIELDS: [FieldDoc; 39] = [
     doc("linked_to_note", "linked_to_note=gir", "A note the note links to"),
     doc("linked_to_keyword", "linked_to_keyword=\"Irregular verbs\"", "A keyword the note links to"),
     doc("linked_from_note", "linked_from_note=gir", "A note that links to the note"),
-    doc("prerequisite_of", "prerequisite_of=(tag=spdes depth<=2)", "A note the note is reached from by following links, any number of steps"),
-    doc("dependent_of", "dependent_of=(tag=measure-theory)", "A note the note reaches by following links, any number of steps"),
+    doc("link_relation", "link_relation=dependent", "Which way a link in the note points: prerequisite, dependent or related"),
+    doc("prerequisite_of", "prerequisite_of=(tag=spdes depth<=2)", "A note the note is reached from by following links to prerequisites, any number of steps"),
+    doc("dependent_of", "dependent_of=(tag=measure-theory)", "A note the note reaches by following links to prerequisites, any number of steps"),
     doc("c.id", "c.id=12", "The card's id"),
     doc("c.created_at", "c.created_at>=today", "When the card was created"),
     doc("c.updated_at", "c.updated_at>=today", "When the card was last changed"),
@@ -929,6 +933,7 @@ impl Field {
             "linked_to_note" => Ok(Field::Note(NoteField::LinkedToNote)),
             "linked_to_keyword" => Ok(Field::Note(NoteField::LinkedToKeyword)),
             "linked_from_note" => Ok(Field::Note(NoteField::LinkedFromNote)),
+            "link_relation" => Ok(Field::Note(NoteField::LinkRelation)),
             "prerequisite_of" => Ok(Field::Note(NoteField::PrerequisiteOf)),
             "dependent_of" => Ok(Field::Note(NoteField::DependentOf)),
             "c.id" => Ok(Field::Card(CardField::Id)),
@@ -1034,6 +1039,7 @@ impl Field {
                         value_str
                     )
                 }
+                NoteField::LinkRelation => link_relation_sql(value_str),
                 NoteField::PrerequisiteOf | NoteField::DependentOf => {
                     link_walk_from_sql(self, value_str)
                 }
@@ -1124,7 +1130,8 @@ impl Field {
                 | NoteField::Keyword
                 | NoteField::ParserName
                 | NoteField::Tag
-                | NoteField::LinkedToKeyword => FieldType::String,
+                | NoteField::LinkedToKeyword
+                | NoteField::LinkRelation => FieldType::String,
                 NoteField::CreatedAt | NoteField::UpdatedAt => FieldType::DateTime,
                 NoteField::CustomData(_) => FieldType::Json,
             },
@@ -1189,6 +1196,9 @@ impl Field {
                     "(SELECT min(nl.searched_keyword) FROM note_link nl WHERE nl.parent_note_id = n.id)"
                         .to_string(),
                 ),
+                NoteField::LinkRelation => Ok(format!(
+                    "(SELECT min({LINK_RELATION_NAME_SQL}) FROM note_link nl WHERE nl.parent_note_id = n.id)"
+                )),
                 // Unsupported types
                 NoteField::CustomData(_) => Err(miette!("it holds JSON")),
             },
@@ -2087,6 +2097,17 @@ fn link_query_notes(
     Ok(query_context.build_query(EvaluatorReturnItemType::NoteIds))
 }
 
+/// The name of `nl.relation`, a [`crate::model::LinkRelation`], as `rel:` writes it
+const LINK_RELATION_NAME_SQL: &str =
+    "(CASE nl.relation WHEN 1 THEN 'dependent' WHEN 2 THEN 'related' ELSE 'prerequisite' END)";
+
+/// The condition that a link of `n` has a relation whose name compares with `value_str`.
+fn link_relation_sql(value_str: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM note_link nl WHERE nl.parent_note_id = n.id AND {LINK_RELATION_NAME_SQL} {value_str})"
+    )
+}
+
 /// [`link_walk_sql`] from the note whose id compares with `value_str`, as in `prerequisite_of=gir`.
 fn link_walk_from_sql(field: &Field, value_str: &str) -> String {
     link_walk_sql(
@@ -2101,9 +2122,11 @@ fn link_walk_from_sql(field: &Field, value_str: &str) -> String {
 /// (`prerequisite_of`), or reaches them (`dependent_of`), stepping only onto the notes `via`
 /// selects, at most `max_depth` steps. See [`evaluate_link_walk`].
 fn link_walk_sql(field: &Field, seed: &str, via: Option<&str>, max_depth: Option<u32>) -> String {
+    // A step goes from a note to one of its prerequisites (`prerequisite_of`) or the other way
+    // (`dependent_of`), whichever way the link that makes it points (see `LinkRelation`).
     let (from, to) = match field {
-        Field::Note(NoteField::DependentOf) => ("linked_note_id", "parent_note_id"),
-        _ => ("parent_note_id", "linked_note_id"),
+        Field::Note(NoteField::DependentOf) => ("prerequisite_id", "note_id"),
+        _ => ("note_id", "prerequisite_id"),
     };
     // A walk inside the seed or `via`, as in `prerequisite_of=(prerequisite_of=(x))`, gets its own
     // name, so the inner one doesn't hide the outer one.
@@ -2124,8 +2147,8 @@ fn link_walk_sql(field: &Field, seed: &str, via: Option<&str>, max_depth: Option
     };
     format!(
         "n.id IN (WITH RECURSIVE {walk}({columns}) AS (\
-         SELECT nl.{to}{first} FROM note_link nl WHERE nl.{from} IN ({seed}) AND nl.{to} IS NOT NULL{via} \
-         UNION SELECT nl.{to}{next} FROM {walk} JOIN note_link nl ON nl.{from} = {walk}.id \
+         SELECT nl.{to}{first} FROM note_prerequisite nl WHERE nl.{from} IN ({seed}) AND nl.{to} IS NOT NULL{via} \
+         UNION SELECT nl.{to}{next} FROM {walk} JOIN note_prerequisite nl ON nl.{from} = {walk}.id \
          WHERE nl.{to} IS NOT NULL{via}{bound}) SELECT id FROM {walk})"
     )
 }
@@ -4417,6 +4440,34 @@ mod tests {
                 "{bad} should be an error"
             );
         }
+
+        // `x` says `s` builds on it, and `s` only mentions `m`: walks step from `s` up to `x`,
+        // and no longer to `m` or `d`.
+        let set_relation = async |from: &str, to: &str, relation: u8| {
+            exec(&format!(
+                "UPDATE note_link SET relation = {relation} WHERE parent_note_id = {} AND linked_note_id = {}",
+                id(from),
+                id(to)
+            ))
+            .await;
+        };
+        set_relation("x", "s", 1).await;
+        set_relation("s", "m", 2).await;
+        assert_eq!(
+            search("prerequisite_of=(tag=top)").await,
+            ["a", "b", "c", "x"]
+        );
+        assert_eq!(search("dependent_of=(id=d)").await, ["m"]);
+        assert_eq!(search("dependent_of=(id=x)").await, ["s"]);
+        // Plain link searches see every link, whatever its relation.
+        assert_eq!(search("linked_from_note=(id=s)").await, ["a", "m"]);
+        assert_eq!(search("link_relation=dependent").await, ["x"]);
+        assert_eq!(search("link_relation=related").await, ["s"]);
+        // `d`'s link matched no note, but it is still a prerequisite link.
+        assert_eq!(
+            search("link_relation=prerequisite").await,
+            ["a", "b", "c", "d", "m", "s"]
+        );
     }
 
     #[sqlx::test]

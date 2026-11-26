@@ -460,13 +460,15 @@ pub(crate) fn waiting_on_links(
     let in_query = query_card_ids
         .map(|ids| format!(" AND lc.id IN ({ids})"))
         .unwrap_or_default();
-    // Only older notes hold newer ones back, which is a strict order, so there are no cycles
+    // Only older notes hold newer ones back, which is a strict order, so there are no cycles. A
+    // card waits for its note's prerequisites: the notes its prerequisite links point to, and the
+    // notes whose dependent links point to it.
     Some(formatdoc! {"
         EXISTS (
-            SELECT 1 FROM note_link nl
-            JOIN note ln ON ln.id = nl.linked_note_id
+            SELECT 1 FROM note_prerequisite nl
+            JOIN note ln ON ln.id = nl.prerequisite_id
             JOIN card lc ON lc.note_id = ln.id
-            WHERE nl.parent_note_id = c.note_id
+            WHERE nl.note_id = c.note_id
                 AND nl.score <= {max_score}
                 AND (ln.created_at, ln.id) < (n.created_at, n.id)
                 AND (lc.special_state IS NULL OR lc.special_state IN ({scheduler_buried}, {buried_until_later_today}))
@@ -543,9 +545,9 @@ pub(crate) async fn unblocking_sql(
         .collect::<HashMap<_, _>>();
     let links: Vec<(crate::model::NoteId, crate::model::NoteId)> =
         sqlx::query_as(AssertSqlSafe(format!(
-            "SELECT DISTINCT nl.parent_note_id, nl.linked_note_id FROM note_link nl \
-             WHERE nl.score <= ? AND nl.parent_note_id IN ({notes_sql}) \
-             AND nl.linked_note_id IN ({notes_sql})"
+            "SELECT DISTINCT nl.note_id, nl.prerequisite_id FROM note_prerequisite nl \
+             WHERE nl.score <= ? AND nl.note_id IN ({notes_sql}) \
+             AND nl.prerequisite_id IN ({notes_sql})"
         )))
         .bind(config.linked_note_max_score)
         .fetch_all(db)
@@ -2047,6 +2049,41 @@ mod linked_note_tests {
         link(&pool, b, Some(a), 0.0).await;
         link(&pool, c, Some(c), 0.0).await;
         assert_eq!(shown(&pool, &holding(true, false), now).await, [a, c]);
+    }
+
+    /// A dependent link holds back the note it links to, and a related link holds nothing back.
+    /// Only older notes hold newer ones back, whichever way the link points.
+    #[sqlx::test]
+    async fn relations_say_which_note_waits(pool: SqlitePool) {
+        let now = Utc::now();
+        let [a, b, c, d] = create_cards(&pool, 4, now - Duration::days(30)).await[..] else {
+            unreachable!()
+        };
+        let set_relation = async |from: CardId, relation: u8| {
+            sqlx::query(
+                "UPDATE note_link SET relation = ?
+                 WHERE parent_note_id = (SELECT note_id FROM card WHERE id = ?)",
+            )
+            .bind(relation)
+            .bind(from)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+        // `a` is used in `b`, which is newer, so `b` waits
+        link(&pool, a, Some(b), 0.0).await;
+        set_relation(a, 1).await;
+        // `d` is used in `c`, which is older, so nothing waits
+        link(&pool, d, Some(c), 0.0).await;
+        set_relation(d, 1).await;
+        let config = holding(true, false);
+        assert_eq!(shown(&pool, &config, now).await, [a, c, d]);
+
+        set_relation(a, 2).await;
+        assert_eq!(shown(&pool, &config, now).await, [a, b, c, d]);
+        // As a prerequisite, the link would hold back `a` for the newer `b`: nothing waits
+        set_relation(a, 0).await;
+        assert_eq!(shown(&pool, &config, now).await, [a, b, c, d]);
     }
 
     #[sqlx::test]

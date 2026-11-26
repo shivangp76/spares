@@ -151,6 +151,7 @@ pub mod note {
     use super::card::CardResponse;
     use crate::Error;
     use crate::model::CustomData;
+    use crate::model::LinkRelation;
     use crate::model::Note;
     use crate::model::NoteId;
     use crate::model::NoteLink;
@@ -450,16 +451,19 @@ pub mod note {
         pub suspended: u32,
     }
 
-    /// A note linking to a note it builds on.
+    /// A link between two notes of a graph, from a note to a note it builds on.
     #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
     pub struct GraphEdge {
-        /// The note with the link.
+        /// The note that builds on `to`: the note with the link, or the note it links to for a
+        /// [`LinkRelation::Dependent`] link. For a [`LinkRelation::Related`] link, where neither
+        /// builds on the other, the note with the link.
         pub from: NoteId,
-        /// The note it links to.
+        /// The other note.
         pub to: NoteId,
-        /// The keyword of `to` the link matched.
+        /// The keyword the link matched.
         pub keyword: String,
         pub score: Option<Score>,
+        pub relation: LinkRelation,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -594,6 +598,8 @@ pub mod note {
         pub searched_keyword: String,
         pub linked_note_id: Option<NoteId>,
         pub matched_keyword: Option<String>,
+        #[serde(default)]
+        pub relation: LinkRelation,
     }
 
     impl LinkedNote {
@@ -602,6 +608,7 @@ pub mod note {
                 searched_keyword: note_link.searched_keyword,
                 linked_note_id: note_link.linked_note_id,
                 matched_keyword: note_link.matched_keyword,
+                relation: note_link.relation,
             }
         }
     }
@@ -990,6 +997,8 @@ pub mod review {
         pub note_id: NoteId,
         pub matched_keyword: Option<String>,
         pub note_raw_path: PathBuf,
+        #[serde(default)]
+        pub relation: crate::model::LinkRelation,
     }
 
     /// Response for a review card.

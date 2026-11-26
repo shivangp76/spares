@@ -659,11 +659,13 @@ pub fn render_note_data_to_generate_files_request<S: ::std::hash::BuildHasher>(
                          searched_keyword,
                          linked_note_id,
                          matched_keyword,
+                         relation,
                          ..
                      }| LinkedNote {
                         searched_keyword: searched_keyword.clone(),
                         linked_note_id: *linked_note_id,
                         matched_keyword: matched_keyword.clone(),
+                        relation: *relation,
                     },
                 )
                 .collect::<Vec<_>>()

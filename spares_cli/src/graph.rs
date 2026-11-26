@@ -4,6 +4,7 @@ use petgraph::Graph;
 use petgraph::dot::Config;
 use petgraph::dot::Dot;
 use petgraph::graph::NodeIndex;
+use spares_core::model::LinkRelation;
 use spares_core::model::NoteId;
 use spares_core::schema::note::LinkedNote;
 use spares_core::schema::note::NoteResponse;
@@ -27,14 +28,24 @@ pub(crate) fn chart(note_responses: Vec<NoteResponse>) {
                 .into_iter()
                 .filter(|x| x.linked_note_id.is_some())
                 .collect::<Vec<_>>();
-            for LinkedNote { linked_note_id, .. } in linked_notes_filtered {
+            for LinkedNote {
+                linked_note_id,
+                relation,
+                ..
+            } in linked_notes_filtered
+            {
                 if !nodes.contains_key(&linked_note_id.unwrap()) {
                     let node = graph.add_node(linked_note_id.unwrap().letters());
                     nodes.insert(note_response.id, node);
                 }
                 let from_node = nodes.get(&note_response.id).unwrap();
                 let to_node = nodes.get(&linked_note_id.unwrap()).unwrap();
-                edges.push((*from_node, *to_node));
+                // Each edge points from a note to a note it builds on
+                match relation {
+                    LinkRelation::Prerequisite => edges.push((*from_node, *to_node)),
+                    LinkRelation::Dependent => edges.push((*to_node, *from_node)),
+                    LinkRelation::Related => {}
+                }
             }
         }
     }

@@ -18,6 +18,7 @@ use crate::config::read_external_config;
 use crate::config::read_internal_config;
 use crate::model::Card;
 use crate::model::CardId;
+use crate::model::LinkRelation;
 use crate::model::NEW_CARD_STATE;
 use crate::model::Note;
 use crate::model::NoteId;
@@ -537,36 +538,44 @@ pub async fn get_note_graph(
     walk.follow(db, &found, GraphRelation::Dependent, descendant_depth)
         .await?;
 
-    // Every link between two notes shown, including those not followed to reach them
+    // Every link between two notes shown, including those not followed to reach them. A pair of
+    // notes gets one edge, and one that says which builds on which wins over a related one.
     let links_map = get_note_links_map(db, &walk.order).await?;
-    let mut seen_edges = HashSet::new();
-    let mut edges = Vec::new();
-    let mut unmatched = Vec::new();
-    for link in walk
+    let mut links: Vec<&NoteLink> = walk
         .order
         .iter()
         .filter_map(|id| links_map.get(id))
         .flatten()
-    {
+        .collect();
+    links.sort_by_key(|link| link.relation == LinkRelation::Related);
+    let mut seen_edges = HashSet::new();
+    let mut edges = Vec::new();
+    let mut unmatched = Vec::new();
+    for link in links {
         match link.linked_note_id {
             None => unmatched.push(UnmatchedLink {
                 from: link.parent_note_id,
                 keyword: link.searched_keyword.clone(),
             }),
-            Some(to)
-                if walk.reached.contains_key(&to)
-                    && walk.keeps(link)
-                    && seen_edges.insert((link.parent_note_id, to)) =>
-            {
-                edges.push(GraphEdge {
-                    from: link.parent_note_id,
-                    to,
-                    keyword: link
-                        .matched_keyword
-                        .clone()
-                        .unwrap_or_else(|| link.searched_keyword.clone()),
-                    score: link.score,
-                });
+            Some(linked) if walk.reached.contains_key(&linked) && walk.keeps(link) => {
+                let (from, to) = if link.relation == LinkRelation::Dependent {
+                    (linked, link.parent_note_id)
+                } else {
+                    (link.parent_note_id, linked)
+                };
+                let pair = (from.min(to), from.max(to));
+                if seen_edges.insert(pair) {
+                    edges.push(GraphEdge {
+                        from,
+                        to,
+                        keyword: link
+                            .matched_keyword
+                            .clone()
+                            .unwrap_or_else(|| link.searched_keyword.clone()),
+                        score: link.score,
+                        relation: link.relation,
+                    });
+                }
             }
             Some(_) => {}
         }
@@ -641,22 +650,31 @@ impl GraphWalk {
         while !level.is_empty() && max_depth.is_none_or(|max| depth < max) {
             depth += 1;
             let mut next = Vec::new();
-            let neighbors: Vec<NoteId> = if relation == GraphRelation::Dependent {
-                links_to(db, &level)
-                    .await?
-                    .into_iter()
-                    .filter(|link| self.keeps(link))
-                    .map(|link| link.parent_note_id)
-                    .collect()
+            // Up from a note: its prerequisite links, and the dependent links to it. Down: the
+            // other two. Related links are never followed.
+            let (out_relation, in_relation) = if relation == GraphRelation::Dependent {
+                (LinkRelation::Dependent, LinkRelation::Prerequisite)
             } else {
-                let links_map = get_note_links_map(db, &level).await?;
-                level
-                    .iter()
-                    .filter_map(|id| links_map.get(id))
-                    .flatten()
-                    .filter(|link| self.keeps(link))
-                    .filter_map(|link| link.linked_note_id)
-                    .collect()
+                (LinkRelation::Prerequisite, LinkRelation::Dependent)
+            };
+            let links_map = get_note_links_map(db, &level).await?;
+            let outgoing: Vec<NoteId> = level
+                .iter()
+                .filter_map(|id| links_map.get(id))
+                .flatten()
+                .filter(|link| link.relation == out_relation && self.keeps(link))
+                .filter_map(|link| link.linked_note_id)
+                .collect();
+            let incoming: Vec<NoteId> = links_to(db, &level)
+                .await?
+                .into_iter()
+                .filter(|link| link.relation == in_relation && self.keeps(link))
+                .map(|link| link.parent_note_id)
+                .collect();
+            let neighbors = if relation == GraphRelation::Dependent {
+                [incoming, outgoing].concat()
+            } else {
+                [outgoing, incoming].concat()
             };
             for id in neighbors {
                 if self.reach(id, relation, depth) {
@@ -1360,6 +1378,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A dependent link is followed and drawn the other way, and a related link is drawn but not
+    /// followed.
+    #[sqlx::test]
+    async fn graph_follows_links_the_way_their_relation_points(
+        pool_options: sqlx::sqlite::SqlitePoolOptions,
+        options: sqlx::sqlite::SqliteConnectOptions,
+    ) {
+        let pool = graph_pool(pool_options, options).await;
+        for (from, to, relation) in [("b", "a", 1), ("c", "b", 2)] {
+            sqlx::query(
+                "UPDATE note_link SET relation = ? WHERE parent_note_id = ? AND linked_note_id = ?",
+            )
+            .bind(relation)
+            .bind(from.parse::<NoteId>().unwrap())
+            .bind(to.parse::<NoteId>().unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // `a` builds on `d` (its link) and on `b` (`b`'s dependent link), and `d` on `c`. `c`
+        // only mentions `b`, and `e`, which builds on `a`, is below it.
+        let (nodes, edges, _) = graph(&pool, graph_request("id=a")).await;
+        assert_eq!(
+            nodes,
+            [
+                ("a".to_string(), 0),
+                ("d".to_string(), 1),
+                ("b".to_string(), 1),
+                ("c".to_string(), 2)
+            ]
+        );
+        assert_eq!(
+            edges,
+            pairs([("a", "d"), ("d", "c"), ("a", "b"), ("c", "b")])
+        );
+        let full = get_note_graph(&pool, graph_request("id=a")).await.unwrap();
+        let relations = full.edges.iter().map(|e| e.relation).collect::<Vec<_>>();
+        assert_eq!(
+            relations,
+            [
+                LinkRelation::Prerequisite,
+                LinkRelation::Prerequisite,
+                LinkRelation::Dependent,
+                LinkRelation::Related
+            ]
+        );
+
+        let below = NoteGraphRequest {
+            ancestor_depth: Some(0),
+            descendant_depth: None,
+            ..graph_request("id=b")
+        };
+        let (nodes, _, _) = graph(&pool, below).await;
+        assert_eq!(
+            nodes,
+            [
+                ("b".to_string(), 0),
+                ("a".to_string(), 1),
+                ("e".to_string(), 2)
+            ]
+        );
     }
 
     #[sqlx::test]

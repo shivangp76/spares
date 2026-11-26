@@ -633,6 +633,7 @@ fn get_linked_notes_string(
                     searched_keyword,
                     linked_note_id,
                     matched_keyword,
+                    ..
                 } = linked_note_request;
                 assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
                 match (linked_note_id, matched_keyword) {
@@ -743,16 +744,19 @@ pub mod tests {
                 searched_keyword: "keyword 1".to_string(),
                 linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
+                relation: crate::model::LinkRelation::Prerequisite,
             },
             LinkedNote {
                 searched_keyword: "keyword 1.5".to_string(),
                 linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
+                relation: crate::model::LinkRelation::Prerequisite,
             },
             LinkedNote {
                 searched_keyword: "keyword 2".to_string(),
                 linked_note_id: Some("aab".parse().unwrap()),
                 matched_keyword: Some("keyword 2".to_string()),
+                relation: crate::model::LinkRelation::Prerequisite,
             },
         ]);
         let (new_note_data, linked_notes_string) = get_linked_notes_string(

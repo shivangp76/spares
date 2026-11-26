@@ -499,6 +499,7 @@ pub fn linked_notes_from_map(
                 searched_keyword: link.searched_keyword.clone(),
                 linked_note_id: link.linked_note_id,
                 matched_keyword: link.matched_keyword.clone(),
+                relation: link.relation,
             })
             .collect()
     })
