@@ -11,6 +11,12 @@ use spares_core::schema::note::NoteResponse;
 
 /// Usage: Paste output into <https://dreampuf.github.io/GraphvizOnline/> with engine set to `osage`.
 pub(crate) fn chart(note_responses: Vec<NoteResponse>) {
+    println!("{}", dot(note_responses));
+}
+
+/// The notes and the links between them, in Graphviz's DOT language. A note linked to but not
+/// among `note_responses` gets a node of its own.
+fn dot(note_responses: Vec<NoteResponse>) -> String {
     let mut nodes = HashMap::<NoteId, NodeIndex>::new();
     let mut graph = Graph::<String, String>::new();
 
@@ -34,16 +40,15 @@ pub(crate) fn chart(note_responses: Vec<NoteResponse>) {
                 ..
             } in linked_notes_filtered
             {
-                if !nodes.contains_key(&linked_note_id.unwrap()) {
-                    let node = graph.add_node(linked_note_id.unwrap().letters());
-                    nodes.insert(note_response.id, node);
-                }
-                let from_node = nodes.get(&note_response.id).unwrap();
-                let to_node = nodes.get(&linked_note_id.unwrap()).unwrap();
+                let linked_note_id = linked_note_id.unwrap();
+                let to_node = *nodes
+                    .entry(linked_note_id)
+                    .or_insert_with(|| graph.add_node(linked_note_id.letters()));
+                let from_node = nodes[&note_response.id];
                 // Each edge points from a note to a note it builds on
                 match relation {
-                    LinkRelation::Prerequisite => edges.push((*from_node, *to_node)),
-                    LinkRelation::Dependent => edges.push((*to_node, *from_node)),
+                    LinkRelation::Prerequisite => edges.push((from_node, to_node)),
+                    LinkRelation::Dependent => edges.push((to_node, from_node)),
                     LinkRelation::Related => {}
                 }
             }
@@ -51,5 +56,61 @@ pub(crate) fn chart(note_responses: Vec<NoteResponse>) {
     }
     graph.extend_with_edges(&edges);
 
-    println!("{:?}", Dot::with_config(&graph, &[Config::EdgeNoLabel]));
+    format!("{:?}", Dot::with_config(&graph, &[Config::EdgeNoLabel]))
+}
+
+#[cfg(test)]
+mod tests {
+    use spares_core::model::LinkRelation;
+    use spares_core::model::NoteId;
+    use spares_core::schema::note::LinkedNote;
+    use spares_core::schema::note::NoteResponse;
+
+    fn note(id: &str, links: &[(&str, LinkRelation)]) -> NoteResponse {
+        serde_json::from_value(serde_json::json!({
+            "id": id.parse::<NoteId>().unwrap(),
+            "data": "",
+            "parser_id": 1,
+            "parser_name": "typst",
+            "keywords": [],
+            "tags": [],
+            "custom_data": {},
+            "linked_notes": links
+                .iter()
+                .map(|(to, relation)| LinkedNote {
+                    searched_keyword: (*to).to_string(),
+                    linked_note_id: Some(to.parse().unwrap()),
+                    matched_keyword: Some((*to).to_string()),
+                    relation: *relation,
+                })
+                .collect::<Vec<_>>(),
+            "card_count": 0,
+            "created_at": "2026-11-26T00:00:00Z",
+            "updated_at": "2026-11-26T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    /// A linked note that isn't exported gets its own node, instead of the lookup of its node
+    /// panicking, and edges point from a note to a note it builds on.
+    #[test]
+    fn links_to_notes_outside_the_export_get_their_own_nodes() {
+        let dot = super::dot(vec![
+            note("a", &[("b", LinkRelation::Prerequisite)]),
+            note(
+                "c",
+                &[("d", LinkRelation::Dependent), ("a", LinkRelation::Related)],
+            ),
+        ]);
+        for letters in ["a", "c", "b", "d"] {
+            assert!(
+                dot.contains(&format!(r#"label = "\"{letters}\"""#)),
+                "{dot}"
+            );
+        }
+        // Nodes in order a, c, b, d: a -> b, and d -> c for the dependent link
+        assert!(dot.contains("0 -> 2"), "{dot}");
+        assert!(dot.contains("3 -> 1"), "{dot}");
+        assert_eq!(dot.matches("->").count(), 2, "{dot}");
+    }
 }
