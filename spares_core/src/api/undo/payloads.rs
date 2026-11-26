@@ -22,8 +22,6 @@ pub struct CreateTagPayload {
     pub description: String,
     pub query: Option<String>,
     pub auto_delete: bool,
-    /// Absent from events recorded before tags had it, which all rescheduled.
-    #[serde(default = "reschedule_default")]
     pub reschedule: bool,
     #[serde(with = "ts_seconds")]
     pub created_at: DateTime<Utc>,
@@ -53,10 +51,6 @@ pub struct UpdateTagPayload {
     pub reschedule: Option<Transition<bool>>,
 }
 
-fn reschedule_default() -> bool {
-    true
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeleteTagPayload {
     pub id: Option<TagId>,
@@ -64,8 +58,6 @@ pub struct DeleteTagPayload {
     pub description: String,
     pub query: Option<String>,
     pub auto_delete: bool,
-    /// Absent from events recorded before tags had it, which all rescheduled.
-    #[serde(default = "reschedule_default")]
     pub reschedule: bool,
     #[serde(with = "ts_seconds")]
     pub created_at: DateTime<Utc>,
@@ -396,10 +388,8 @@ pub struct ForgetCardPayload {
 pub struct RateCardPayload {
     /// The review the rating wrote, or for a rating in a filtered tag that does not reschedule
     /// ([`Tag::reschedule`](crate::model::Tag::reschedule)), its
-    /// [cram](crate::model::ReviewLogKind::Cram). `None` for such a rating from before crams were
-    /// logged, which wrote nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub review_log_id: Option<i64>,
+    /// [cram](crate::model::ReviewLogKind::Cram).
+    pub review_log_id: i64,
     pub card: UpdateCardPayload,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub left_tag: Option<FilteredTagExit>,
@@ -431,9 +421,7 @@ pub struct FilteredTagExit {
 /// Its `id` is not reused on reinsert, since SQLite may have handed it to a newer row.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UnreviewPayload {
-    /// `None` when the rating wrote no row (see `RateCardPayload::review_log_id`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub review_log: Option<ReviewLog>,
+    pub review_log: ReviewLog,
     pub card: UpdateCardPayload,
     /// Carried from `RateCardPayload::left_tag`; always `None` for `UnforgetCard`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -453,7 +441,7 @@ pub struct UnreviewPayload {
 pub struct UnmoveCardsPayload {
     /// The moves, swapped.
     pub cards: Vec<UpdateCardPayload>,
-    /// Empty for a move from before moves were logged.
+    /// Empty when the moves wrote no row.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review_logs: Vec<ReviewLog>,
 }

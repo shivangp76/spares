@@ -46,13 +46,11 @@ pub(crate) async fn summarize_as(
     // An undo's payload is the inverse of the action, so describe the event it reverted instead.
     // Undoing a rating deleted its `review_log` row, but the undo kept it.
     let (action, review_log) = if event_action == EventAction::Undo {
-        let review_log = (event.kind == EventType::UnrateCard)
-            .then(|| {
-                serde_json::from_value::<UnreviewPayload>(event.payload.clone())
-                    .unwrap()
-                    .review_log
-            })
-            .flatten();
+        let review_log = (event.kind == EventType::UnrateCard).then(|| {
+            serde_json::from_value::<UnreviewPayload>(event.payload.clone())
+                .unwrap()
+                .review_log
+        });
         (fetch_reverted(db, event).await?, review_log)
     } else {
         (event.clone(), None)

@@ -144,8 +144,7 @@ async fn restore_review_log(db: &SqlitePool, review_log: &ReviewLog) -> Result<i
 /// Deletes the [`ReviewLogKind::Reschedule`] rows a move (`AdvanceCards`, `PostponeCards`,
 /// `SetCardsDue` or `ScheduleBreak`) wrote
 /// for `moves`, returning them so a redo can restore them. Each is the latest row of a moved card
-/// that moved it from where `moves` did to where it did. A move from before moves were logged has
-/// none.
+/// that moved it from where `moves` did to where it did.
 ///
 /// The row is found by what it moved, not by the event's time: a redo restores the rows with the
 /// time they were first written, but is an event of its own, at the time of the redo.
@@ -348,10 +347,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::RateCard => {
             let payload: RateCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
-            let review_log = match payload.review_log_id {
-                Some(review_log_id) => Some(take_review_log(db, review_log_id).await?),
-                None => None,
-            };
+            let review_log = take_review_log(db, payload.review_log_id).await?;
             let undo_payload = UnreviewPayload {
                 review_log,
                 card: payload.card.swap(),
@@ -368,7 +364,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             let payload: ForgetCardPayload = serde_json::from_value(event.payload.clone()).unwrap();
             let review_log = take_review_log(db, payload.review_log_id).await?;
             let undo_payload = UnreviewPayload {
-                review_log: Some(review_log),
+                review_log,
                 card: payload.card.swap(),
                 left_tag: None,
                 buried_siblings: Vec::new(),
@@ -377,10 +373,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::UnrateCard => {
             let payload: UnreviewPayload = serde_json::from_value(event.payload.clone()).unwrap();
-            let review_log_id = match &payload.review_log {
-                Some(review_log) => Some(restore_review_log(db, review_log).await?),
-                None => None,
-            };
+            let review_log_id = restore_review_log(db, &payload.review_log).await?;
             let redo_payload = RateCardPayload {
                 review_log_id,
                 card: payload.card.swap(),
@@ -395,11 +388,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         }
         EventType::UnforgetCard => {
             let payload: UnreviewPayload = serde_json::from_value(event.payload.clone()).unwrap();
-            let review_log = payload
-                .review_log
-                .as_ref()
-                .expect("undoing a forget keeps the review log row it took");
-            let review_log_id = restore_review_log(db, review_log).await?;
+            let review_log_id = restore_review_log(db, &payload.review_log).await?;
             let redo_payload = ForgetCardPayload {
                 review_log_id,
                 card: payload.card.swap(),
@@ -586,6 +575,7 @@ mod tests {
             "description": tag.description,
             "query": null,
             "auto_delete": false,
+            "reschedule": true,
             "created_at": tag.created_at.timestamp(),
             "updated_at": tag.updated_at.timestamp(),
         });
@@ -673,6 +663,7 @@ mod tests {
             "description": tag.description,
             "query": null,
             "auto_delete": false,
+            "reschedule": true,
             "created_at": tag.created_at.timestamp(),
             "updated_at": tag.updated_at.timestamp(),
         });

@@ -1808,7 +1808,7 @@ async fn rate_card_on(
     let mut event_id = None;
     if log {
         let payload = RateCardPayload {
-            review_log_id: Some(review_log_id),
+            review_log_id,
             card: UpdateCardPayload {
                 card_id,
                 order: None,
@@ -1939,7 +1939,7 @@ async fn rate_card_without_rescheduling(
         return Ok(None);
     }
     let payload = RateCardPayload {
-        review_log_id: Some(review_log_id),
+        review_log_id,
         card: UpdateCardPayload {
             card_id: before_card.id,
             order: None,
