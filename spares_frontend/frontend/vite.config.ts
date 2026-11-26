@@ -16,17 +16,13 @@ import { promisify } from "node:util";
 import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import { buildId } from "./build-id.ts";
+import { buildId, outDirOf } from "./build-id.ts";
 import wasm from "vite-plugin-wasm";
 import { pandocWasm } from "./pandoc-wasm.ts";
 
 const SVGEDIT_EDITOR_DIR = fileURLToPath(
   new URL("./svgedit/src/editor", import.meta.url),
 );
-// TODO: the svgedit-copy, service-worker and precompress plugins write here even
-// with `--outDir`, so a build into another directory still rewrites `./dist`'s
-// svgedit files, `sw.js` and `.br`/`.gz` files.
-const DIST_DIR = fileURLToPath(new URL("./dist", import.meta.url));
 
 const IMAGE_OCCLUSION_TEMPLATE = fileURLToPath(
   new URL(
@@ -97,14 +93,18 @@ function imageOcclusionEditorConfig(): Plugin {
 /** svgedit fetches its icons, shape libraries, etc. by URL at runtime, so they are copied next to
     its page rather than bundled. Its scripts are bundled from the entry. */
 function copySvgeditAssets(): Plugin {
+  let outDir: string;
   return {
     name: "copy-svgedit-assets",
     apply: "build",
+    configResolved(config) {
+      outDir = outDirOf(config);
+    },
     closeBundle() {
       for (const dir of ["images", "extensions"]) {
         cpSync(
           `${SVGEDIT_EDITOR_DIR}/${dir}`,
-          `${DIST_DIR}/svgedit/src/editor/${dir}`,
+          `${outDir}/svgedit/src/editor/${dir}`,
           {
             recursive: true,
             filter: (source) => !source.endsWith(".js"),
@@ -126,28 +126,32 @@ function listFiles(dir: string): string[] {
   });
 }
 
-/** Writes `dist/sw.js` from service-worker.js, with the files to cache for offline use. These are
+/** Writes `sw.js` in the build from service-worker.js, with the files to cache for offline use. These are
     the page and everything it may load except the image occlusion editor and WebAssembly modules,
     which are large and only cached once used. The modules, having hashed names, are kept across
     builds that still have them. Devices that keep a copy of the collection cache the modules with
     the page, since they can't do without spares_wasm and the Typst compiler (see src/local), and
     the editor, so image occlusions can be inserted offline. */
 function serviceWorker(): Plugin {
+  let outDir: string;
   return {
     name: "service-worker",
     apply: "build",
+    configResolved(config) {
+      outDir = outDirOf(config);
+    },
     // After `copySvgeditAssets`, so the build hash covers every file
     closeBundle: {
       order: "post",
       handler() {
-        const files = listFiles(DIST_DIR)
-          .map((path) => relative(DIST_DIR, path).split(sep).join("/"))
+        const files = listFiles(outDir)
+          .map((path) => relative(outDir, path).split(sep).join("/"))
           .filter((path) => path !== "sw.js" && !COMPRESSED.test(path))
           .sort();
         const template = readFileSync(SERVICE_WORKER_TEMPLATE, "utf8");
         const hash = createHash("sha256").update(template);
         for (const path of files)
-          hash.update(path).update(readFileSync(join(DIST_DIR, path)));
+          hash.update(path).update(readFileSync(join(outDir, path)));
         const precache = files.filter(
           (path) => !path.startsWith("svgedit/") && !path.endsWith(".wasm"),
         );
@@ -160,7 +164,7 @@ function serviceWorker(): Plugin {
           .replace("__PRECACHE__", JSON.stringify(precache, null, 2))
           .replace("__KEEP__", JSON.stringify(keep, null, 2))
           .replace("__EDITOR__", JSON.stringify(editor, null, 2));
-        writeFileSync(join(DIST_DIR, "sw.js"), source);
+        writeFileSync(join(outDir, "sw.js"), source);
       },
     },
   };
@@ -173,12 +177,16 @@ function serviceWorker(): Plugin {
 function pandocWasmFile(): Plugin {
   let wasm: { version: string; path: string };
   let url: string;
+  let outDir: string;
   return {
     name: "pandoc-wasm",
     async config() {
       wasm = await pandocWasm();
       url = `/pandoc/pandoc-${wasm.version}.wasm`;
       return { define: { __PANDOC_WASM__: JSON.stringify(url) } };
+    },
+    configResolved(config) {
+      outDir = outDirOf(config);
     },
     configureServer(server) {
       server.middlewares.use(url, (_req, res) => {
@@ -188,7 +196,7 @@ function pandocWasmFile(): Plugin {
     },
     // Before `serviceWorker`, so the build hash covers it, and `precompress`, which leaves it as it is
     closeBundle() {
-      const out = join(DIST_DIR, url);
+      const out = join(outDir, url);
       mkdirSync(join(out, ".."), { recursive: true });
       for (const suffix of ["", ".br", ".gz"])
         copyFileSync(`${wasm.path}${suffix}`, `${out}${suffix}`);
@@ -207,18 +215,22 @@ const LARGE_FILE_BROTLI_QUALITY = 9;
 /** Writes brotli and gzip copies of the build's files (`foo.js.br`, `foo.js.gz`), which the server
     sends to browsers that accept them (see `create_router` in spares_server). */
 function precompress(): Plugin {
+  let outDir: string;
   const brotli = promisify(brotliCompress);
   const gzipAsync = promisify(gzip);
   return {
     name: "precompress",
     apply: "build",
+    configResolved(config) {
+      outDir = outDirOf(config);
+    },
     // After `serviceWorker`, which lists the files to cache without these, so `sw.js` is compressed too
     closeBundle: {
       order: "post",
       async handler() {
         // Not files that come with their compressed copies, such as pandoc.wasm
         await Promise.all(
-          listFiles(DIST_DIR)
+          listFiles(outDir)
             .filter(
               (path) => COMPRESSIBLE.test(path) && !existsSync(`${path}.br`),
             )

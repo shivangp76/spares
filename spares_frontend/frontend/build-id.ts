@@ -1,15 +1,18 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
-import type { Plugin } from "vite";
+import { join, relative, resolve, sep } from "node:path";
+import type { Plugin, ResolvedConfig } from "vite";
 
-const DIST_DIR = fileURLToPath(new URL("./dist", import.meta.url));
 const BUILD_FILE = "build.json";
 
 /** The id of a build, as the page and `build.json` have it (see `buildId`). */
 export interface BuildInfo {
   build: string;
+}
+
+/** The directory a build writes to: `build.outDir` (`dist` unless `--outDir` says otherwise). */
+export function outDirOf(config: ResolvedConfig): string {
+  return resolve(config.root, config.build.outDir);
 }
 
 function listFiles(dir: string): string[] {
@@ -29,14 +32,18 @@ function listFiles(dir: string): string[] {
  * Runs before `serviceWorker`, whose own hash then covers the page with its id.
  */
 export function buildId(): Plugin {
+  let outDir: string;
   return {
     name: "build-id",
     apply: "build",
+    configResolved(config) {
+      outDir = outDirOf(config);
+    },
     closeBundle: {
       order: "post",
       handler() {
-        const files = listFiles(DIST_DIR)
-          .map((path) => relative(DIST_DIR, path).split(sep).join("/"))
+        const files = listFiles(outDir)
+          .map((path) => relative(outDir, path).split(sep).join("/"))
           .filter(
             (path) =>
               path !== "sw.js" &&
@@ -46,9 +53,9 @@ export function buildId(): Plugin {
           .sort();
         const hash = createHash("sha256");
         for (const path of files)
-          hash.update(path).update(readFileSync(join(DIST_DIR, path)));
+          hash.update(path).update(readFileSync(join(outDir, path)));
         const build = hash.digest("hex").slice(0, 12);
-        const page = join(DIST_DIR, "index.html");
+        const page = join(outDir, "index.html");
         const html = readFileSync(page, "utf8");
         writeFileSync(
           page,
@@ -58,7 +65,7 @@ export function buildId(): Plugin {
           ),
         );
         const info: BuildInfo = { build };
-        writeFileSync(join(DIST_DIR, BUILD_FILE), JSON.stringify(info));
+        writeFileSync(join(outDir, BUILD_FILE), JSON.stringify(info));
       },
     },
   };
