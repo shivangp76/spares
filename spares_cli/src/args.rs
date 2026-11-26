@@ -639,6 +639,10 @@ pub(crate) struct GenerateArgs {
     pub(crate) render: bool,
     #[arg(short, long, default_value_t = false)]
     pub(crate) force_render: bool,
+    /// Skip the confirmation prompt asked when there is no notes repository, as the files are
+    /// written over the ones you edit
+    #[arg(long)]
+    pub(crate) yes: bool,
 }
 
 #[derive(Args, Debug)]

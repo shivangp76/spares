@@ -1,4 +1,3 @@
-use inquire::Confirm;
 use miette::Error;
 use miette::IntoDiagnostic;
 use miette::miette;
@@ -29,6 +28,7 @@ use crate::search::print_examples;
 use crate::search::print_fields;
 use crate::search::search;
 use crate::search::search_note_responses;
+use crate::utils::confirm_or_fail;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
 use crate::utils::parse_custom_data;
@@ -299,12 +299,12 @@ pub(crate) async fn handle(
             include_cards,
             render,
             force_render,
+            yes,
         }) => {
             // With a notes repository, files are written to spares' copy, never over your edits.
-            if !spares_core::notes_vcs::enabled() {
+            if !spares_core::notes_vcs::enabled() && !yes {
                 let prompt = "Note that this will overwrite any unsaved changes you have. Please sync your notes before proceeding. Are you sure you want to continue?";
-                let ans = Confirm::new(prompt).with_default(false).prompt();
-                if !ans.unwrap_or(false) {
+                if !confirm_or_fail(prompt, "pass --yes to go ahead")? {
                     return Ok(());
                 }
             }

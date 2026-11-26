@@ -1,6 +1,5 @@
 use std::fmt::Write;
 
-use inquire::Confirm;
 use miette::Error;
 use miette::miette;
 use reqwest::Client;
@@ -45,6 +44,7 @@ use crate::search::search;
 use crate::search::search_cards;
 use crate::statistics::print_statistics;
 use crate::steps::print_steps_stats;
+use crate::utils::confirm_or_fail;
 use crate::utils::ensure_ok;
 use crate::utils::page_limit_queries;
 use crate::utils::with_spinner;
@@ -277,8 +277,7 @@ pub(crate) async fn handle(
                     "This recomputes the memory state and due date of every card, including suspended and buried ones.{} Are you sure you want to continue?",
                     moved_cards_note(&preview)
                 );
-                let ans = Confirm::new(&prompt).with_default(false).prompt();
-                if !ans.unwrap_or(false) {
+                if !confirm_or_fail(&prompt, "pass --yes to go ahead")? {
                     return Ok(());
                 }
             }
@@ -301,8 +300,7 @@ pub(crate) async fn handle(
         }) => {
             if apply && !yes {
                 let prompt = "If the optimized parameters are better, this saves them to the config and recomputes the memory state and due date of every card. Are you sure you want to continue?";
-                let ans = Confirm::new(prompt).with_default(false).prompt();
-                if !ans.unwrap_or(false) {
+                if !confirm_or_fail(prompt, "pass --yes to go ahead")? {
                     return Ok(());
                 }
             }
@@ -423,11 +421,10 @@ async fn schedule_break(args: BreakArgs, base_url: &str, client: &Client) -> Res
             preview.start,
             preview.end.pred_opt().unwrap_or(preview.end)
         );
-        if !Confirm::new(&prompt)
-            .with_default(false)
-            .prompt()
-            .unwrap_or(false)
-        {
+        if !confirm_or_fail(
+            &prompt,
+            "pass --yes to go ahead, or --dry-run to only see the moves",
+        )? {
             return Ok(());
         }
     }

@@ -183,6 +183,35 @@ pub(crate) fn local_timezone() -> Option<String> {
         .map(|(_, zone)| zone.to_string())
 }
 
+/// Asks a yes or no question before a command changes data, no by default. `Ok(false)` when the
+/// user answers no or presses Escape or Ctrl-C, after printing "Cancelled.". When it can't ask, e.g.
+/// without a terminal (scripts, agents, `ssh host cmd`), it fails with `skip_hint` (such as "pass
+/// --yes to go ahead") rather than doing nothing with exit status 0, which looks like success.
+pub(crate) fn confirm_or_fail(prompt: &str, skip_hint: &str) -> Result<bool, Error> {
+    let answer = inquire::Confirm::new(prompt).with_default(false).prompt();
+    let confirmed = confirm_answer(answer, skip_hint)?;
+    if !confirmed {
+        println!("Cancelled.");
+    }
+    Ok(confirmed)
+}
+
+/// What [`confirm_or_fail`] makes of the prompt's answer.
+fn confirm_answer(
+    answer: Result<bool, inquire::InquireError>,
+    skip_hint: &str,
+) -> Result<bool, Error> {
+    use inquire::InquireError;
+    match answer {
+        Ok(answer) => Ok(answer),
+        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => Ok(false),
+        Err(InquireError::NotTTY) => Err(miette!(
+            "can't ask for confirmation without a terminal; {skip_hint}"
+        )),
+        Err(e) => Err(miette!("can't ask for confirmation ({e}); {skip_hint}")),
+    }
+}
+
 /// Awaits `work` while a spinner on stderr says what is being waited on and for how long, so a
 /// request the server takes a while to answer, e.g. rendering every note, does not look like a
 /// hang. The spinner is cleared when `work` is done and is not shown when stderr is not a
@@ -197,4 +226,28 @@ pub(crate) async fn with_spinner<T>(message: &'static str, work: impl Future<Out
     let output = work.await;
     spinner.finish_and_clear();
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use inquire::InquireError;
+
+    use super::*;
+
+    #[test]
+    fn a_confirmation_that_cannot_ask_fails() {
+        let hint = "pass --yes to go ahead";
+        assert!(confirm_answer(Ok(true), hint).unwrap());
+        assert!(!confirm_answer(Ok(false), hint).unwrap());
+        assert!(!confirm_answer(Err(InquireError::OperationCanceled), hint).unwrap());
+        assert!(!confirm_answer(Err(InquireError::OperationInterrupted), hint).unwrap());
+        let error = confirm_answer(Err(InquireError::NotTTY), hint).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "can't ask for confirmation without a terminal; pass --yes to go ahead"
+        );
+        let error = confirm_answer(Err(InquireError::IO(std::io::Error::other("closed"))), hint)
+            .unwrap_err();
+        assert!(error.to_string().contains("pass --yes"), "{error}");
+    }
 }
