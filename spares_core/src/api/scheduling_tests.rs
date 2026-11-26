@@ -712,15 +712,14 @@ async fn reschedule_places_other_cards_around_a_kept_card(pool: SqlitePool) {
     );
 }
 
-// TODO(flaky): fails in about 1 of 5–25 runs, alone too, with one `reschedule_rows` row left
-// after the undo. Already so at 09b5bbb7 (2026-11-26).
 #[sqlx::test]
 async fn undoing_a_due_date_set_by_hand_deletes_its_row(pool: SqlitePool) {
     let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
     let now = Utc::now();
     graduate(&pool, card_id, now, &[10, 9, 5]).await;
     let before = fetch_card(&pool, card_id).await.due;
-    let event_id = set_due(&pool, card_id, now + Duration::days(40), now).await;
+    // Not `now + 40 days`: with some fuzz, that is the date the card already has
+    let event_id = set_due(&pool, card_id, before + Duration::days(7), now).await;
     let kind: EventType = sqlx::query_scalar("SELECT kind FROM event WHERE id = ?")
         .bind(event_id)
         .fetch_one(&pool)
@@ -739,6 +738,19 @@ async fn undoing_a_due_date_set_by_hand_deletes_its_row(pool: SqlitePool) {
     .unwrap();
 
     assert_eq!(fetch_card(&pool, card_id).await.due, before);
+    assert_eq!(reschedule_rows(&pool, card_id).await.len(), 0);
+}
+
+/// The due date a card already has, to the second it is stored in, logs no move: one would keep
+/// the card where it is through reschedules, and its undo would have no due change to find it by.
+#[sqlx::test]
+async fn setting_the_due_date_a_card_has_logs_no_move(pool: SqlitePool) {
+    let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
+    let now = Utc::now();
+    graduate(&pool, card_id, now, &[10, 9, 5]).await;
+    let due = fetch_card(&pool, card_id).await.due;
+    set_due(&pool, card_id, due + Duration::milliseconds(300), now).await;
+    assert_eq!(fetch_card(&pool, card_id).await.due, due);
     assert_eq!(reschedule_rows(&pool, card_id).await.len(), 0);
 }
 

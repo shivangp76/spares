@@ -312,7 +312,10 @@ pub async fn update_cards(
             .desired_retention
             .unwrap_or(existing_card.desired_retention);
         let new_special_state = requested_special_state.unwrap_or(existing_card.special_state);
-        let new_due = body.due.unwrap_or(existing_card.due);
+        // In whole seconds, as stored, so that a due date the card already has changes nothing
+        let new_due = body.due.map_or(existing_card.due, |due| {
+            DateTime::from_timestamp(due.timestamp(), 0).expect("from a valid date")
+        });
         if let Some(Some(SpecialState::UserBuried)) = requested_special_state {
             validate_bury_target(existing_card.special_state)?;
             if config.is_none() {
