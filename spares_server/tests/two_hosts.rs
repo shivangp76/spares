@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use spares_core::collection::Collection;
 use spares_core::config::Replica;
@@ -33,16 +35,17 @@ impl Drop for TestHost {
     }
 }
 
-/// A host on a port of its own, with the account `me`.
-// TODO(flaky): when the tests run together, creating `me` sometimes fails with "UNIQUE
-// constraint failed: user.name" (seen 2026-11-17). Likely cause: macOS's clock has microsecond
-// resolution, so two tests creating a host of the same name in the same microsecond share a root.
+/// A host on a port of its own, with the account `me`, in a root of its own: numbered, since the
+/// clock can't tell apart two tests that start together (macOS's has microsecond resolution).
 async fn host(name: &str) -> TestHost {
+    static HOSTS: AtomicUsize = AtomicUsize::new(0);
     let root = std::env::temp_dir().join(format!(
         "spares-two-hosts-{name}-{}-{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        HOSTS.fetch_add(1, Ordering::Relaxed)
     ));
+    // What a run that panicked under the same process id left
+    let _ = std::fs::remove_dir_all(&root);
     let host = Host::create(&root, "127.0.0.1:0").await.unwrap();
     host.create_user(NewUser {
         id: Some("me"),
