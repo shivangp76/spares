@@ -691,12 +691,12 @@ mod tests {
         // The second note, created later, links to the first, whose card is new
         sqlx::query(
             r#"INSERT INTO note_link
-                (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score)
+                (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score, relation)
             VALUES (
                 (SELECT note_id FROM card WHERE id = ?),
                 (SELECT note_id FROM card WHERE id = ?),
                 0, 'keyword', 'keyword', 1.0
-            )"#,
+            , 0)"#,
         )
         .bind(ids[1])
         .bind(ids[0])

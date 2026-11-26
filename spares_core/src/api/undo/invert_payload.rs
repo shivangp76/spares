@@ -121,8 +121,8 @@ async fn restore_review_log(db: &SqlitePool, review_log: &ReviewLog) -> Result<i
     sqlx::query_scalar(
         r"INSERT INTO review_log
             (id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
-             recall_duration, rate_duration, previous_state, tag_id, custom_data)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+             recall_duration, rate_duration, previous_state, tag_id, custom_data, usn)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, -1) RETURNING id",
     )
     .bind(review_log.id)
     .bind(review_log.card_id)

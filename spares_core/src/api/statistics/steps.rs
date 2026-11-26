@@ -126,8 +126,8 @@ mod tests {
     ) {
         sqlx::query(
             r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
-              scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-              VALUES (?, ?, 0, ?, 'fsrs', 600, 5, 1, ?, '{}')",
+              scheduled_time, recall_duration, rate_duration, previous_state, custom_data, usn)
+              VALUES (?, ?, 0, ?, 'fsrs', 600, 5, 1, ?, '{}', -1)",
         )
         .bind(card_id)
         .bind(at.timestamp())
@@ -140,7 +140,7 @@ mod tests {
 
     async fn tag(pool: &SqlitePool, card_id: CardId, name: &str) {
         let tag_id: i64 = sqlx::query_scalar(
-            "INSERT INTO tag (name, description, auto_delete) VALUES (?, '', 0) RETURNING id",
+            "INSERT INTO tag (name, description, auto_delete, created_at, updated_at, usn, reschedule) VALUES (?, '', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1, 1) RETURNING id",
         )
         .bind(name)
         .fetch_one(pool)

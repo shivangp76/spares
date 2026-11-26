@@ -3710,7 +3710,7 @@ mod tests {
     async fn relative_dates_select_by_another_notes_timestamp(pool: SqlitePool) {
         let now = chrono::Utc::now().timestamp();
         let day = 24 * 60 * 60;
-        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
@@ -3725,7 +3725,7 @@ mod tests {
         ];
         for (letters, created_at) in notes {
             sqlx::query(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, '', ?, ?, '{}', 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (?, '', ?, ?, '{}', 1, -1)",
             )
             .bind(letters.parse::<NoteId>().unwrap())
             .bind(created_at)
@@ -3779,7 +3779,7 @@ mod tests {
                 .await
                 .unwrap();
         };
-        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        exec("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)").await;
         // Days start at 4 AM, so before then, yesterday is the day before the calendar's.
         let zone = crate::api::queue::tests::zone();
         let today = crate::helpers::study_date(chrono::Utc::now(), zone);
@@ -3802,7 +3802,7 @@ mod tests {
         ];
         for (letters, data, created_at) in notes {
             sqlx::query(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, ?, ?, ?, '{}', 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (?, ?, ?, ?, '{}', 1, -1)",
             )
             .bind(letters.parse::<NoteId>().unwrap())
             .bind(data)
@@ -3815,14 +3815,14 @@ mod tests {
         for letters in ["a", "b", "c"] {
             sqlx::query(
                 r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
-                   desired_retention, state, custom_data) VALUES (?, 1, 1, 0, 0, 0, 0.9, 0, '{}')"#,
+                   desired_retention, state, custom_data, created_at, updated_at, usn, stability_fast) VALUES (?, 1, 1, 0, 0, 0, 0.9, 0, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 0)"#,
             )
             .bind(letters.parse::<NoteId>().unwrap())
             .execute(&pool)
             .await
             .unwrap();
         }
-        exec("INSERT INTO tag (id, name, description, auto_delete) VALUES (1, 'math', '', 0), (2, 'math:algebra', '', 0), (3, 'physics:math', '', 0), (4, 'mathx', '', 0)").await;
+        exec("INSERT INTO tag (id, name, description, auto_delete, created_at, updated_at, usn, reschedule) VALUES (1, 'math', '', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1, 1), (2, 'math:algebra', '', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1, 1), (3, 'physics:math', '', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1, 1), (4, 'mathx', '', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1, 1)").await;
         // `a` is tagged `math`, `b` a descendant, `c` has `math` in the middle and `d` (with no
         // cards) is `mathx`.
         exec(&format!(
@@ -3912,7 +3912,7 @@ mod tests {
         };
         let now = chrono::Utc::now().timestamp();
         let day = 24 * 60 * 60;
-        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        exec("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)").await;
         // `a` was reviewed 20, 10 and 2 days ago, lapsing 10 days ago, and is due in 5 days. `b`
         // was reviewed 30 days ago and crammed yesterday. `c` is new.
         let cards = [
@@ -3923,15 +3923,17 @@ mod tests {
         for (letters, card_id, state, stability, due) in cards {
             let note_id = letters.parse::<NoteId>().unwrap();
             sqlx::query(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, '', 0, 0, '{}', 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (?, '', 0, 0, '{}', 1, -1)",
             )
             .bind(note_id)
             .execute(&pool)
             .await
             .unwrap();
             sqlx::query(
-                r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
-                   desired_retention, state, custom_data) VALUES (?, ?, 1, 1, ?, ?, 5, 0.9, ?, '{}')"#,
+                r#"INSERT INTO card (id, note_id, "order", back_type, created_at, updated_at, due,
+                   stability, stability_fast, difficulty, desired_retention, state, custom_data,
+                   usn)
+                   VALUES (?1, ?2, 1, 1, 0, 0, ?3, ?4, ?4, 5, 0.9, ?5, '{}', -1)"#,
             )
             .bind(card_id)
             .bind(note_id)
@@ -3952,7 +3954,7 @@ mod tests {
         ];
         for (card_id, days_ago, kind, rating, previous_state) in reviews {
             sqlx::query(
-                "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (?, ?, ?, ?, 'fsrs', ?, '{}')",
+                "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data, usn) VALUES (?, ?, ?, ?, 'fsrs', ?, '{}', -1)",
             )
             .bind(card_id)
             .bind(now - days_ago * day)
@@ -3995,7 +3997,7 @@ mod tests {
         let curve = crate::schedulers::fsrs::utils::Curve::new(&config);
         let memory = crate::schedulers::CardMemory {
             stability: 10.0,
-            stability_fast: 0.0,
+            stability_fast: 10.0,
             difficulty: 5.0,
         };
         let recall = curve.retrievability(memory, 2.0);
@@ -4042,12 +4044,12 @@ mod tests {
     #[sqlx::test]
     async fn searches_leeches_by_card(pool: SqlitePool) {
         let threshold = read_external_config().unwrap().leech.lapses_threshold;
-        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (1, '', 0, 0, '{}', 1)",
+            "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (1, '', 0, 0, '{}', 1, -1)",
         )
         .execute(&pool)
         .await
@@ -4061,7 +4063,7 @@ mod tests {
         for (card_id, lapses, special_state) in cards {
             sqlx::query(
                 r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
-                   desired_retention, state, special_state, custom_data) VALUES (?, 1, ?, 1, 0, 1, 5, 0.9, 3, ?, '{}')"#,
+                   desired_retention, state, special_state, custom_data, created_at, updated_at, usn, stability_fast) VALUES (?, 1, ?, 1, 0, 1, 5, 0.9, 3, ?, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 1)"#,
             )
             .bind(card_id)
             .bind(card_id)
@@ -4071,7 +4073,7 @@ mod tests {
             .unwrap();
             for i in 0..lapses {
                 sqlx::query(
-                    "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (?, ?, 0, 1, 'fsrs', 2, '{}')",
+                    "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data, usn) VALUES (?, ?, 0, 1, 'fsrs', 2, '{}', -1)",
                 )
                 .bind(card_id)
                 .bind(i64::from(i))
@@ -4103,12 +4105,12 @@ mod tests {
     async fn searches_postponed_cards(pool: SqlitePool) {
         let now = chrono::Utc::now().timestamp();
         let day = 24 * 60 * 60;
-        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (1, '', 0, 0, '{}', 1)",
+            "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (1, '', 0, 0, '{}', 1, -1)",
         )
         .execute(&pool)
         .await
@@ -4116,7 +4118,7 @@ mod tests {
         for card_id in 1..=4 {
             sqlx::query(
                 r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
-                   desired_retention, state, custom_data) VALUES (?, 1, ?, 1, 0, 1, 5, 0.9, 2, '{}')"#,
+                   desired_retention, state, custom_data, created_at, updated_at, usn, stability_fast) VALUES (?, 1, ?, 1, 0, 1, 5, 0.9, 2, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 1)"#,
             )
             .bind(card_id)
             .bind(card_id)
@@ -4138,7 +4140,7 @@ mod tests {
                 },
             };
             sqlx::query(
-                "INSERT INTO review_log (card_id, reviewed_at, kind, scheduler_name, previous_state, custom_data) VALUES (?, ?, ?, 'fsrs', 2, ?)",
+                "INSERT INTO review_log (card_id, reviewed_at, kind, scheduler_name, previous_state, custom_data, usn) VALUES (?, ?, ?, 'fsrs', 2, ?, -1)",
             )
             .bind(card_id)
             .bind(moved_at)
@@ -4149,7 +4151,7 @@ mod tests {
             .unwrap();
         }
         sqlx::query(
-            "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (4, ?, 0, 3, 'fsrs', 2, '{}')",
+            "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data, usn) VALUES (4, ?, 0, 3, 'fsrs', 2, '{}', -1)",
         )
         .bind(now)
         .execute(&pool)
@@ -4183,7 +4185,7 @@ mod tests {
 
     #[sqlx::test]
     async fn negated_special_states_match_cards_without_one(pool: SqlitePool) {
-        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
@@ -4198,7 +4200,7 @@ mod tests {
         for (letters, card_id, special_state) in cards {
             let note_id = letters.parse::<NoteId>().unwrap();
             sqlx::query(
-                "INSERT OR IGNORE INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, '', 0, 0, '{}', 1)",
+                "INSERT OR IGNORE INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (?, '', 0, 0, '{}', 1, -1)",
             )
             .bind(note_id)
             .execute(&pool)
@@ -4206,7 +4208,7 @@ mod tests {
             .unwrap();
             sqlx::query(
                 r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
-                   desired_retention, state, special_state, custom_data) VALUES (?, ?, ?, 1, 0, 0, 5, 0.9, 0, ?, '{}')"#,
+                   desired_retention, state, special_state, custom_data, created_at, updated_at, usn, stability_fast) VALUES (?, ?, ?, 1, 0, 0, 5, 0.9, 0, ?, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 0)"#,
             )
             .bind(card_id)
             .bind(note_id)
@@ -4256,14 +4258,14 @@ mod tests {
                 .unwrap();
         };
         let id = |letters: &str| letters.parse::<NoteId>().unwrap().packed();
-        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
-        exec("INSERT INTO tag (id, name, description, auto_delete) VALUES (1, 'math', '', 0)")
+        exec("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)").await;
+        exec("INSERT INTO tag (id, name, description, auto_delete, created_at, updated_at, usn, reschedule) VALUES (1, 'math', '', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1, 1)")
             .await;
         // `a` links to `m`, which is tagged `math`, `b` links to `a`, `c` links to `x`, which isn't,
         // and `d` links to nothing.
         for letters in ["a", "b", "c", "d", "m", "x"] {
             exec(&format!(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES ({}, '', 0, 0, '{{}}', 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES ({}, '', 0, 0, '{{}}', 1, -1)",
                 id(letters)
             ))
             .await;
@@ -4275,7 +4277,7 @@ mod tests {
         .await;
         for (order, (from, to)) in [("a", "m"), ("b", "a"), ("c", "x")].into_iter().enumerate() {
             exec(&format!(
-                "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword) VALUES ({}, {}, {order}, 'k')",
+                "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, relation) VALUES ({}, {}, {order}, 'k', 0)",
                 id(from),
                 id(to)
             ))
@@ -4322,14 +4324,14 @@ mod tests {
                 .unwrap();
         };
         let id = |letters: &str| letters.parse::<NoteId>().unwrap().packed();
-        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
-        exec("INSERT INTO tag (id, name, description, auto_delete) VALUES (1, 'top', '', 0)").await;
-        exec("INSERT INTO tag (id, name, description, auto_delete) VALUES (2, 'fa', '', 0)").await;
+        exec("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)").await;
+        exec("INSERT INTO tag (id, name, description, auto_delete, created_at, updated_at, usn, reschedule) VALUES (1, 'top', '', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1, 1)").await;
+        exec("INSERT INTO tag (id, name, description, auto_delete, created_at, updated_at, usn, reschedule) VALUES (2, 'fa', '', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1, 1)").await;
         // `s` (tagged `top`) -> `a` (fa) -> `b` (fa) -> `c` (fa) -> `a`, a cycle, and
         // `s` -> `m` (untagged) -> `d` (fa). `x` links to `s`. `u` is unlinked.
         for letters in ["s", "a", "b", "c", "m", "d", "x", "u"] {
             exec(&format!(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES ({}, '', 0, 0, '{{}}', 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES ({}, '', 0, 0, '{{}}', 1, -1)",
                 id(letters)
             ))
             .await;
@@ -4352,7 +4354,7 @@ mod tests {
         ];
         for (order, (from, to)) in links.into_iter().enumerate() {
             exec(&format!(
-                "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword) VALUES ({}, {}, {order}, 'k')",
+                "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, relation) VALUES ({}, {}, {order}, 'k', 0)",
                 id(from),
                 id(to)
             ))
@@ -4360,7 +4362,7 @@ mod tests {
         }
         // A link that matched no note is not followed.
         exec(&format!(
-            "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword) VALUES ({}, NULL, 9, 'missing')",
+            "INSERT INTO note_link (parent_note_id, linked_note_id, \"order\", searched_keyword, relation) VALUES ({}, NULL, 9, 'missing', 0)",
             id("d")
         ))
         .await;
@@ -4483,7 +4485,7 @@ mod tests {
                 .unwrap();
         };
         let id = |letters: &str| letters.parse::<NoteId>().unwrap().packed();
-        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        exec("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)").await;
         let notes = [
             ("a", "a dog sat on a mat"),
             ("b", "the cat and the dog"),
@@ -4492,7 +4494,7 @@ mod tests {
         ];
         for (letters, data) in notes {
             exec(&format!(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES ({}, '{data}', 0, 0, '{{}}', 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES ({}, '{data}', 0, 0, '{{}}', 1, -1)",
                 id(letters)
             ))
             .await;
@@ -4605,7 +4607,7 @@ mod tests {
                 .await
                 .unwrap();
         };
-        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
+        exec("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)").await;
         // (note, text, card, due)
         let cards = [
             ("a", "a dog sat on a mat", 1, 100),
@@ -4616,12 +4618,12 @@ mod tests {
         for (letters, data, card, due) in cards {
             let note = letters.parse::<NoteId>().unwrap().packed();
             exec(&format!(
-                "INSERT OR IGNORE INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES ({note}, '{data}', 0, 0, '{{}}', 1)"
+                "INSERT OR IGNORE INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES ({note}, '{data}', 0, 0, '{{}}', 1, -1)"
             ))
             .await;
             exec(&format!(
                 r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
-                   desired_retention, state, custom_data) VALUES ({card}, {note}, {card}, 1, {due}, 1, 5, 0.9, 2, '{{}}')"#
+                   desired_retention, state, custom_data, created_at, updated_at, usn, stability_fast) VALUES ({card}, {note}, {card}, 1, {due}, 1, 5, 0.9, 2, '{{}}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 1)"#
             ))
             .await;
         }
@@ -4672,7 +4674,7 @@ mod tests {
 
     #[sqlx::test]
     async fn searches_custom_data(pool: SqlitePool) {
-        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
@@ -4684,7 +4686,7 @@ mod tests {
         ];
         for (letters, custom_data) in notes {
             sqlx::query(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, '', 0, 0, ?, 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (?, '', 0, 0, ?, 1, -1)",
             )
             .bind(letters.parse::<NoteId>().unwrap())
             .bind(custom_data)

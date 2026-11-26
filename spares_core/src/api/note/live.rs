@@ -358,13 +358,14 @@ pub(crate) async fn relocate_cards_event(
     }
     for NoteCardSnapshot { note_id, card } in &payload.restored_cards {
         sqlx::query(
-            r#"INSERT INTO card (id, note_id, "order", back_type, updated_at, due, stability, stability_fast, difficulty, desired_retention, special_state, state, custom_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO card (id, note_id, "order", back_type, created_at, updated_at, due, stability, stability_fast, difficulty, desired_retention, special_state, state, custom_data, usn)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, -1)"#,
         )
         .bind(card.id)
         .bind(note_id)
         .bind(card.order)
         .bind(card.back_type)
+        .bind(Utc::now().timestamp())
         .bind(Utc::now().timestamp())
         .bind(card.due.timestamp())
         .bind(card.stability)

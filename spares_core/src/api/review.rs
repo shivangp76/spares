@@ -2162,8 +2162,8 @@ pub(crate) async fn rejoin_filtered_tag(
         // The tag is restored as it was, without rerunning its query, which today could match
         // cards that were never in it.
         sqlx::query(
-            r"INSERT OR IGNORE INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            r"INSERT OR IGNORE INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at, usn)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, -1)",
         )
         .bind(tag.id)
         .bind(&tag.name)
@@ -2208,7 +2208,7 @@ async fn insert_review_on(
     tag_id: Option<TagId>,
 ) -> Result<i64, Error> {
     let id = next_id(&mut *db, IdTable::ReviewLog).await?;
-    sqlx::query_scalar(r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, tag_id, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
+    sqlx::query_scalar(r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time, recall_duration, rate_duration, previous_state, tag_id, custom_data, usn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, -1) RETURNING id")
         .bind(id)
         .bind(review_log.card_id)
         .bind(review_log.reviewed_at.timestamp())

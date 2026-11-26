@@ -634,8 +634,8 @@ pub async fn forget_card(
     sqlx::query(
         r"INSERT INTO review_log
             (id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
-             recall_duration, rate_duration, previous_state, tag_id, custom_data)
-          VALUES (?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, ?)",
+             recall_duration, rate_duration, previous_state, tag_id, custom_data, usn)
+          VALUES (?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, ?, -1)",
     )
     .bind(review_log_id)
     .bind(card_id)

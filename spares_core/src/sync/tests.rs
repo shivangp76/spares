@@ -1007,7 +1007,7 @@ async fn row_count_mismatch_needs_a_full_sync() {
     let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
     super::set_applying(&mut tx, true).await.unwrap();
     sqlx::query(
-        "INSERT INTO tag (id, name, description, auto_delete, usn) VALUES (9, 'drift', '', 0, 0)",
+        "INSERT INTO tag (id, name, description, auto_delete, usn, created_at, updated_at, reschedule) VALUES (9, 'drift', '', 0, 0, strftime('%s', 'now'), strftime('%s', 'now'), 1)",
     )
     .execute(&mut *tx)
     .await

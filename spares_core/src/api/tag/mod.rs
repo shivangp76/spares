@@ -68,11 +68,14 @@ pub(crate) async fn create_tag_row(
 ) -> Result<Tag, Error> {
     let id = next_id(&mut *conn, IdTable::Tag).await?;
     sqlx::query_as(
-        r"INSERT INTO tag (id, name, description, query, auto_delete) VALUES (?, ?, '', NULL, ?) RETURNING *",
+        r"INSERT INTO tag (id, name, description, query, auto_delete, reschedule, created_at,
+          updated_at, usn)
+          VALUES (?1, ?2, '', NULL, ?3, 1, ?4, ?4, -1) RETURNING *",
     )
     .bind(id)
     .bind(name)
     .bind(DEFAULT_TAG_AUTO_DELETE)
+    .bind(Utc::now().timestamp())
     .fetch_one(&mut *conn)
     .await
     .map_err(|e| Error::Sqlx { source: e })
@@ -107,8 +110,8 @@ pub async fn create_tag_event(
         None => next_id_in(db, IdTable::Tag).await?,
     };
     let tag: Tag = sqlx::query_as(
-        r"INSERT INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        r"INSERT INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at, usn)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, -1)
         RETURNING *",
     )
     .bind(id)
@@ -190,8 +193,8 @@ pub(crate) async fn restore_tags(db: &SqlitePool, tags: &[DeletedTag]) -> Result
     } in tags
     {
         sqlx::query(
-            r"INSERT INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at)
-            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+            r"INSERT INTO tag (id, name, description, query, auto_delete, reschedule, created_at, updated_at, usn)
+            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, -1
             WHERE NOT EXISTS (SELECT 1 FROM tag WHERE id = ?1 OR name = ?2)",
         )
         .bind(tag.id)

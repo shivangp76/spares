@@ -337,7 +337,7 @@ async fn reinserting_a_row_removes_its_grave(pool: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(graves(&pool).await.len(), 1);
-    sqlx::query("INSERT INTO note (id, data, custom_data, parser_id) VALUES (?, ?, ?, ?)")
+    sqlx::query("INSERT INTO note (id, data, custom_data, parser_id, created_at, updated_at, usn) VALUES (?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'), -1)")
         .bind(note_id)
         .bind(&row.0)
         .bind(&row.1)

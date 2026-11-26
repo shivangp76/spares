@@ -95,8 +95,8 @@ async fn log(
     };
     sqlx::query(
         r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
-          scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-          VALUES (?, ?, ?, ?, 'fsrs', ?, ?, ?, ?, '{}')",
+          scheduled_time, recall_duration, rate_duration, previous_state, custom_data, usn)
+          VALUES (?, ?, ?, ?, 'fsrs', ?, ?, ?, ?, '{}', -1)",
     )
     .bind(card_id)
     .bind(at.timestamp())
@@ -154,7 +154,7 @@ async fn set_card(
 ) {
     sqlx::query(
         r"UPDATE card SET state = ?, due = ?, special_state = ?, created_at = ?, stability = 10,
-          difficulty = 5 WHERE id = ?",
+          stability_fast = 10, difficulty = 5 WHERE id = ?",
     )
     .bind(state)
     .bind(due.timestamp())
@@ -491,10 +491,10 @@ async fn every_section_over_all_time(pool: SqlitePool) {
         .unwrap()
         .retrievability(&config(21))
         .unwrap();
-    // The cards were set up with a stability of 10 and no fast stability.
+    // The cards were set up with a stability of 10, and a fast stability equal to it.
     let memory = CardMemory {
         stability: 10.0,
-        stability_fast: 0.0,
+        stability_fast: 10.0,
         difficulty: 5.0,
     };
     let recall = (curve(memory, 9.0 + 3.0 / 24.0)

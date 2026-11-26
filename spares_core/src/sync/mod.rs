@@ -46,9 +46,9 @@
 //!
 //! The migrations (`spares_core/migrations`) add:
 //!
-//! - **`usn`** on `parser`, `tag`, `note`, `card`, `review_log` and `saved_search`, defaulting to
-//!   `-1` (changed and not yet synced), so new rows are dirty without a trigger. A client marks the rows it is pushing `-2`
-//!   (see [`run`]); they count as dirty too.
+//! - **`usn`** on `parser`, `tag`, `note`, `card`, `review_log` and `saved_search`. Every insert
+//!   writes `-1` (changed and not yet synced), so new rows are dirty without a trigger. A client
+//!   marks the rows it is pushing `-2` (see [`run`]); they count as dirty too.
 //! - **`grave(oid, kind, usn)`**: ids deleted here and not synced yet. Without it, "deleted over
 //!   there" looks the same as "never synced", and the deleted row would come back. Soft deletes
 //!   would mean `deleted_at IS NULL` in every query. Inserting a row under an id with a grave (undo

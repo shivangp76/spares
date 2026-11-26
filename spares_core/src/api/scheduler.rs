@@ -96,7 +96,7 @@ mod tests {
     /// `card_count` cards, each reviewed on days 0, 1, 3, 7, 15 and 30, and forgotten far more
     /// often than the default parameters expect.
     async fn seed_review_history(pool: &SqlitePool, card_count: i64, start: DateTime<Utc>) {
-        sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
+        sqlx::query("INSERT INTO parser (name, usn) VALUES ('markdown', -1)")
             .execute(pool)
             .await
             .unwrap();
@@ -104,8 +104,8 @@ mod tests {
         for order in 1..=card_count {
             let card_id: i64 = sqlx::query_scalar(
                 r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
-                   desired_retention, state, custom_data)
-                   VALUES (?, ?, 1, ?, 5.0, 4.0, 0.9, 2, '{}') RETURNING id"#,
+                   desired_retention, state, custom_data, created_at, updated_at, usn, stability_fast)
+                   VALUES (?, ?, 1, ?, 5.0, 4.0, 0.9, 2, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 5.0) RETURNING id"#,
             )
             .bind(note_id)
             .bind(order)
@@ -119,8 +119,8 @@ mod tests {
                 sqlx::query(
                     r"INSERT INTO review_log
                         (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
-                         recall_duration, rate_duration, previous_state, custom_data)
-                      VALUES (?, ?, 0, ?, 'fsrs', 86400, 5, 2, ?, '{}')",
+                         recall_duration, rate_duration, previous_state, custom_data, usn)
+                      VALUES (?, ?, 0, ?, 'fsrs', 86400, 5, 2, ?, '{}', -1)",
                 )
                 .bind(card_id)
                 .bind((start + Duration::days(day)).timestamp())

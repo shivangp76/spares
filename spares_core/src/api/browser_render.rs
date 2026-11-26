@@ -849,7 +849,7 @@ mod tests {
             ("{{Paris}} [🔊](/m/a.ogg)", markdown.id),
             ("= Typst", typst.id),
         ] {
-            sqlx::query("INSERT INTO note (data, custom_data, parser_id) VALUES (?, '{}', ?)")
+            sqlx::query("INSERT INTO note (data, custom_data, parser_id, created_at, updated_at, usn) VALUES (?, '{}', ?, strftime('%s', 'now'), strftime('%s', 'now'), -1)")
                 .bind(data)
                 .bind(parser)
                 .execute(&pool)

@@ -428,8 +428,8 @@ mod tests {
     ) {
         sqlx::query(
             r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
-            scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-            VALUES (?, ?, 0, 3, 'fsrs', 0, ?, 0, ?, '{}')",
+            scheduled_time, recall_duration, rate_duration, previous_state, custom_data, usn)
+            VALUES (?, ?, 0, 3, 'fsrs', 0, ?, 0, ?, '{}', -1)",
         )
         .bind(card_id)
         .bind(at.timestamp())

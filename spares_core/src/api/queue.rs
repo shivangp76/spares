@@ -775,7 +775,7 @@ pub(crate) mod tests {
         ids.into_iter().map(|(card_id, _)| card_id).collect()
     }
 
-    /// Sets a card's state, due date, stability and difficulty.
+    /// Sets a card's state, due date, stability (both, as under FSRS-6) and difficulty.
     pub(crate) async fn set_card(
         pool: &SqlitePool,
         card_id: CardId,
@@ -785,7 +785,8 @@ pub(crate) mod tests {
         difficulty: f64,
     ) {
         sqlx::query(
-            r"UPDATE card SET state = ?, due = ?, stability = ?, difficulty = ? WHERE id = ?",
+            r"UPDATE card SET state = ?1, due = ?2, stability = ?3, stability_fast = ?3, difficulty = ?4
+              WHERE id = ?5",
         )
         .bind(state)
         .bind(due.timestamp())
@@ -806,8 +807,8 @@ pub(crate) mod tests {
     ) {
         sqlx::query(
             r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
-            scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-            VALUES (?, ?, 0, 3, 'fsrs', 0, 0, 0, ?, '{}')",
+            scheduled_time, recall_duration, rate_duration, previous_state, custom_data, usn)
+            VALUES (?, ?, 0, 3, 'fsrs', 0, 0, 0, ?, '{}', -1)",
         )
         .bind(card_id)
         .bind(at.timestamp())
@@ -1009,7 +1010,7 @@ pub(crate) mod tests {
         let recall = |stability, difficulty, days| {
             let memory = crate::schedulers::CardMemory {
                 stability,
-                stability_fast: 0.0,
+                stability_fast: stability,
                 difficulty,
             };
             curve.retrievability(memory, days)
@@ -1785,9 +1786,9 @@ mod sibling_tests {
     async fn link_cards(pool: &SqlitePool, from: CardId, to: CardId) {
         sqlx::query(
             r#"INSERT INTO note_link
-                (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score)
+                (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score, relation)
             VALUES ((SELECT note_id FROM card WHERE id = ?), (SELECT note_id FROM card WHERE id = ?),
-                0, 'keyword', 'keyword', 0)"#,
+                0, 'keyword', 'keyword', 0, 0)"#,
         )
         .bind(from)
         .bind(to)
@@ -1942,12 +1943,12 @@ mod linked_note_tests {
     async fn link(pool: &SqlitePool, from: CardId, to: Option<CardId>, score: f64) {
         sqlx::query(
             r#"INSERT INTO note_link
-                (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score)
+                (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score, relation)
             VALUES (
                 (SELECT note_id FROM card WHERE id = ?),
                 (SELECT note_id FROM card WHERE id = ?),
                 0, 'keyword', 'keyword', ?
-            )"#,
+            , 0)"#,
         )
         .bind(from)
         .bind(to)

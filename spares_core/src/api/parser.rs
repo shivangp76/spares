@@ -45,7 +45,7 @@ pub async fn create_parser_event(
     log: bool,
 ) -> Result<ParserResponse, Error> {
     let id: i64 = if let Some(id) = payload.id {
-        sqlx::query(r"INSERT INTO parser (id, name) VALUES (?, ?)")
+        sqlx::query(r"INSERT INTO parser (id, name, usn) VALUES (?, ?, -1)")
             .bind(id)
             .bind(&payload.name)
             .execute(db)
@@ -54,7 +54,7 @@ pub async fn create_parser_event(
         id
     } else {
         let id = next_id_in(db, IdTable::Parser).await?;
-        sqlx::query_scalar(r"INSERT INTO parser (id, name) VALUES (?, ?) RETURNING id")
+        sqlx::query_scalar(r"INSERT INTO parser (id, name, usn) VALUES (?, ?, -1) RETURNING id")
             .bind(id)
             .bind(payload.name)
             .fetch_one(db)

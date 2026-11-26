@@ -562,7 +562,7 @@ mod tests {
     async fn migration_baseline_accepts_a_database_the_old_migrations_made(pool: SqlitePool) {
         let migrator = crate::collection::migrator();
         migrator.run(&pool).await.unwrap();
-        sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
+        sqlx::query("INSERT INTO parser (name, usn) VALUES ('markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
@@ -645,12 +645,12 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         for statement in [
             "PRAGMA foreign_keys = OFF",
-            "INSERT INTO parser (id, name) VALUES (1, 'markdown')",
-            "INSERT INTO note (id, data, custom_data, parser_id) VALUES (1, '', '{}', 1)",
+            "INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)",
+            "INSERT INTO note (id, data, custom_data, parser_id, created_at, updated_at, usn) VALUES (1, '', '{}', 1, strftime('%s', 'now'), strftime('%s', 'now'), -1)",
             r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
-               desired_retention, state, custom_data, stability_fast)
-               VALUES (1, 1, 1, 0, 0, 6.0, 5.0, 0.9, 2, '{}', 0),
-                      (2, 1, 2, 0, 0, 0.0, 0.0, 0.9, 0, '{}', 0)"#,
+               desired_retention, state, custom_data, stability_fast, created_at, updated_at, usn)
+               VALUES (1, 1, 1, 0, 0, 6.0, 5.0, 0.9, 2, '{}', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1),
+                      (2, 1, 2, 0, 0, 0.0, 0.0, 0.9, 0, '{}', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1)"#,
         ] {
             sqlx::query(statement).execute(&mut *conn).await.unwrap();
         }
@@ -660,7 +660,7 @@ mod tests {
             .await
             .unwrap();
         for (i, payload) in events.iter().enumerate() {
-            sqlx::query("INSERT INTO event (id, kind, payload) VALUES (?, 7, ?)")
+            sqlx::query("INSERT INTO event (id, kind, payload, created_at) VALUES (?, 7, ?, strftime('%s', 'now'))")
                 .bind(i64::try_from(i).unwrap() + 1)
                 .bind(payload.to_string())
                 .execute(&mut *conn)
@@ -700,6 +700,73 @@ mod tests {
         assert_eq!(fast(&notes["b"][1]), Some(0.5));
         assert_eq!(fast(&payloads[1]["deleted_cards"][0]), Some(7.0));
         assert_eq!(payloads[2], events[2]);
+    }
+
+    /// The strict schema keeps every row (and the rowids of the tables without an integer key),
+    /// and leaves every table STRICT, without defaults, refusing a value of the wrong type.
+    #[sqlx::test(migrations = false)]
+    async fn migration_strict_schema_keeps_the_rows_and_checks_types(pool: SqlitePool) {
+        let migrator = crate::collection::migrator();
+        migrator.run_to(20_261_126_210_000, &pool).await.unwrap();
+        sqlx::raw_sql(
+            r#"INSERT INTO parser (id, name) VALUES (1, 'markdown');
+               INSERT INTO note (id, data, custom_data, parser_id) VALUES (1, 'a', '{}', 1);
+               INSERT INTO card (id, note_id, "order", back_type, due, stability, stability_fast,
+                   difficulty, desired_retention, state, custom_data)
+               VALUES (1, 1, 1, 0, 100, 2.5, 2.5, 5, 0.9, 2, '{}');
+               INSERT INTO note_keyword (rowid, note_id, keyword, embedded) VALUES (7, 1, 'k', 0);
+               INSERT INTO event (id, kind, payload) VALUES (1, 6, '{}');"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let rows = async || -> (i64, f64, i64, i64, String) {
+            sqlx::query_as(
+                "SELECT (SELECT due FROM card), (SELECT stability FROM card),
+                        (SELECT rowid FROM note_keyword), (SELECT kind FROM event),
+                        (SELECT data FROM note)",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let before = rows().await;
+
+        migrator.run(&pool).await.unwrap();
+
+        assert_eq!(rows().await, before);
+        let loose: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM pragma_table_list
+             WHERE schema = 'main' AND type = 'table' AND NOT strict
+                 AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'note_fts%'
+                 AND name != '_sqlx_migrations'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(loose, Vec::<String>::new());
+        let defaults: Vec<String> = sqlx::query_scalar(
+            "SELECT m.name || '.' || p.name FROM sqlite_master m, pragma_table_info(m.name) p
+             WHERE m.type = 'table' AND m.name != '_sqlx_migrations' AND p.dflt_value IS NOT NULL",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(defaults, Vec::<String>::new());
+        let wrong_type = sqlx::query("UPDATE card SET due = 'tomorrow'")
+            .execute(&pool)
+            .await
+            .unwrap_err();
+        assert!(
+            wrong_type
+                .to_string()
+                .contains("cannot store TEXT value in INTEGER column")
+        );
+        let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(foreign_keys, 1);
     }
 
     #[test]

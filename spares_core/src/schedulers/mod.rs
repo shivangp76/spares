@@ -1003,11 +1003,11 @@ mod tests {
                 .await
                 .unwrap();
         };
-        exec("INSERT INTO parser (id, name) VALUES (1, 'markdown')").await;
-        exec("INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (1, '', 0, 0, '{}', 1)").await;
+        exec("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)").await;
+        exec("INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (1, '', 0, 0, '{}', 1, -1)").await;
         sqlx::query(
             r#"INSERT INTO card (id, note_id, "order", back_type, due, stability, difficulty,
-               desired_retention, state, custom_data) VALUES (1, 1, 1, 1, 0, 1, 5, 0.9, ?, '{}')"#,
+               desired_retention, state, custom_data, created_at, updated_at, usn, stability_fast) VALUES (1, 1, 1, 1, 0, 1, 5, 0.9, ?, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 1)"#,
         )
         .bind(review_state())
         .execute(&pool)
@@ -1027,7 +1027,7 @@ mod tests {
             ]);
         for (i, (scheduler_name, rating, previous_state)) in (0_i64..).zip(reviews) {
             sqlx::query(
-                "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data) VALUES (1, ?, ?, ?, ?, ?, '{}')",
+                "INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name, previous_state, custom_data, usn) VALUES (1, ?, ?, ?, ?, ?, '{}', -1)",
             )
             .bind(i)
             .bind(ReviewLogKind::Review)

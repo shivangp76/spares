@@ -713,7 +713,7 @@ pub(crate) async fn next_ids_for(
 #[cfg(test)]
 pub(crate) async fn insert_test_note(db: &SqlitePool, data: &str, parser_id: i64) -> NoteId {
     let id = allocate_note_ids(db, 1).await.unwrap()[0];
-    sqlx::query("INSERT INTO note (id, data, custom_data, parser_id) VALUES (?, ?, '{}', ?)")
+    sqlx::query("INSERT INTO note (id, data, custom_data, parser_id, created_at, updated_at, usn) VALUES (?, ?, '{}', ?, strftime('%s', 'now'), strftime('%s', 'now'), -1)")
         .bind(id)
         .bind(data)
         .bind(parser_id)
@@ -1024,7 +1024,7 @@ mod tests {
     }
 
     async fn insert_note(pool: &SqlitePool, id: NoteId) {
-        sqlx::query("INSERT INTO note (id, data, custom_data, parser_id) VALUES (?, '', '{}', 1)")
+        sqlx::query("INSERT INTO note (id, data, custom_data, parser_id, created_at, updated_at, usn) VALUES (?, '', '{}', 1, strftime('%s', 'now'), strftime('%s', 'now'), -1)")
             .bind(id)
             .execute(pool)
             .await
@@ -1033,7 +1033,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_allocate_never_reuses_deleted_ids(pool: SqlitePool) {
-        sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
+        sqlx::query("INSERT INTO parser (name, usn) VALUES ('markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
@@ -1080,7 +1080,7 @@ mod tests {
     async fn test_next_ids_are_congruent_and_never_reused(pool: SqlitePool) {
         let mut conn = pool.acquire().await.unwrap();
         // Rows from before sync keep their ids, and new ones go above them.
-        sqlx::query("INSERT INTO parser (id, name) VALUES (13, 'markdown')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (13, 'markdown', -1)")
             .execute(&mut *conn)
             .await
             .unwrap();
@@ -1108,7 +1108,7 @@ mod tests {
             .execute(&mut *conn)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO parser (id, name) VALUES (56, 'typst')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (56, 'typst', -1)")
             .execute(&mut *conn)
             .await
             .unwrap();

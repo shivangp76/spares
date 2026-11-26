@@ -70,8 +70,8 @@ pub async fn fill(path: &Path) {
     let statements = [
         format!(
             "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {CARDS})
-             INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id)
-             SELECT i, 'Note ' || i || ': {{{{answer}}}}', {start} + i * 1200, {start}, '{{}}', {parser}
+             INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn)
+             SELECT i, 'Note ' || i || ': {{{{answer}}}}', {start} + i * 1200, {start}, '{{}}', {parser}, -1
              FROM n",
             start = NOW - 730 * 86_400,
             parser = parser.id,
@@ -80,22 +80,25 @@ pub async fn fill(path: &Path) {
         // One in 50 suspended, one in 77 buried.
         format!(
             "INSERT INTO card (id, note_id, \"order\", back_type, created_at, updated_at, due,
-                 stability, difficulty, desired_retention, special_state, state, custom_data)
-             SELECT id, id, 1, 1, created_at, created_at,
-                 {NOW} + abs(random()) % (200 * 86400), 1 + abs(random()) % 100,
-                 1 + abs(random()) % 9, 0.9,
-                 CASE WHEN id % 50 = 0 THEN 1 WHEN id % 77 = 0 THEN 2 END,
+                 stability, stability_fast, difficulty, desired_retention, special_state, state,
+                 custom_data, usn)
+             SELECT id, id, 1, 1, created_at, created_at, due, stability, stability, difficulty,
+                 0.9, special_state, state, custom_data, -1
+             FROM (SELECT id, created_at,
+                 {NOW} + abs(random()) % (200 * 86400) AS due, 1 + abs(random()) % 100 AS stability,
+                 1 + abs(random()) % 9 AS difficulty,
+                 CASE WHEN id % 50 = 0 THEN 1 WHEN id % 77 = 0 THEN 2 END AS special_state,
                  CASE WHEN id % 10 = 0 THEN 0 WHEN id % 13 = 0 THEN 1 WHEN id % 17 = 0 THEN 3
-                      ELSE 2 END,
-                 '{{}}'
-             FROM note"
+                      ELSE 2 END AS state,
+                 '{{}}' AS custom_data
+             FROM note)"
         ),
         // Sessions at 08:00, 13:00 and 21:00 UTC. One in 40 a cram, one in 10 failed, three in
         // four of cards in review.
         format!(
             "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < {REVIEWS} - 1)
              INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
-                 scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
+                 scheduled_time, recall_duration, rate_duration, previous_state, custom_data, usn)
              SELECT 1 + abs(random()) % {CARDS},
                  {first} + (i / {REVIEWS_PER_DAY}) * 86400
                      + (CASE (i % {REVIEWS_PER_DAY}) % 3 WHEN 0 THEN 8 WHEN 1 THEN 13 ELSE 21 END)
@@ -108,7 +111,7 @@ pub async fn fill(path: &Path) {
                  CASE WHEN i % 40 = 0 THEN NULL ELSE 86400 * (1 + abs(random()) % 60) END,
                  abs(random()) % 20, abs(random()) % 5,
                  CASE WHEN abs(random()) % 4 = 0 THEN abs(random()) % 4 ELSE 2 END,
-                 '{{}}'
+                 '{{}}', -1
              FROM n",
             first = NOW - i64::from(REVIEWS / REVIEWS_PER_DAY) * 86_400,
         ),

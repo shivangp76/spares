@@ -178,7 +178,7 @@ pub async fn create_notes(
             check_card_moves(&mut conn, &moves).await?;
         }
         // Create note
-        sqlx::query(r"INSERT INTO note (id, data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?, ?)")
+        sqlx::query(r"INSERT INTO note (id, data, created_at, updated_at, parser_id, custom_data, usn) VALUES (?, ?, ?, ?, ?, ?, -1)")
             .bind(note_id)
             .bind(&note_data)
             .bind(at.timestamp())
@@ -451,7 +451,7 @@ pub(crate) async fn create_notes_event(
 
         // Insert note with specific ID
         sqlx::query(
-            r"INSERT INTO note (id, data, created_at, updated_at, parser_id, custom_data) VALUES (?, ?, ?, ?, ?, ?)",
+            r"INSERT INTO note (id, data, created_at, updated_at, parser_id, custom_data, usn) VALUES (?, ?, ?, ?, ?, ?, -1)",
         )
         .bind(id)
         .bind(data)
@@ -513,10 +513,11 @@ pub(crate) async fn create_notes_event(
 
         // Insert cards with specific IDs
         if !cards.is_empty() {
-            execute_batched_query(db, cards, max_rows_for(13), async |db, chunk| {
+            let restored_at = Utc::now().timestamp();
+            execute_batched_query(db, cards, max_rows_for(15), async |db, chunk| {
                 let query_str = format!(
-                    "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, stability_fast, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
-                    placeholders_2d(chunk.len(), 13)
+                    "INSERT INTO card (id, note_id, \"order\", back_type, created_at, updated_at, due, stability, stability_fast, difficulty, desired_retention, special_state, state, custom_data, usn) VALUES {}",
+                    placeholders_2d(chunk.len(), 15)
                 );
                 let mut query = sqlx::query(AssertSqlSafe(query_str));
                 for card in chunk {
@@ -524,6 +525,7 @@ pub(crate) async fn create_notes_event(
                     query = query.bind(id);
                     query = query.bind(card.order);
                     query = query.bind(card.back_type);
+                    query = query.bind(restored_at);
                     query = query.bind(card.due.timestamp());
                     query = query.bind(card.due.timestamp());
                     query = query.bind(card.stability);
@@ -533,6 +535,7 @@ pub(crate) async fn create_notes_event(
                     query = query.bind(card.special_state);
                     query = query.bind(card.state);
                     query = query.bind(&card.custom_data);
+                    query = query.bind(-1);
                 }
                 query
                     .execute(db)
@@ -800,8 +803,8 @@ pub(crate) async fn copy_review_logs_on(
             sqlx::query(
                 r"INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name,
                    scheduled_time, recall_duration, rate_duration, previous_state, tag_id,
-                   custom_data)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   custom_data, usn)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, -1)",
             )
             .bind(id)
             .bind(dst_card_id)
@@ -834,12 +837,12 @@ pub(crate) async fn create_cards_on(
 ) -> Result<(), Error> {
     let ids = next_ids(&mut *conn, IdTable::Card, card_entries.len()).await?;
     for (chunk, id_chunk) in card_entries
-        .chunks(max_rows_for(13))
-        .zip(ids.chunks(max_rows_for(13)))
+        .chunks(max_rows_for(15))
+        .zip(ids.chunks(max_rows_for(15)))
     {
         let query_str = format!(
-            "INSERT INTO card (id, note_id, \"order\", back_type, updated_at, due, stability, stability_fast, difficulty, desired_retention, special_state, state, custom_data) VALUES {}",
-            placeholders_2d(chunk.len(), 13)
+            "INSERT INTO card (id, note_id, \"order\", back_type, created_at, updated_at, due, stability, stability_fast, difficulty, desired_retention, special_state, state, custom_data, usn) VALUES {}",
+            placeholders_2d(chunk.len(), 15)
         );
         let mut query = sqlx::query(AssertSqlSafe(query_str));
         for (card, id) in chunk.iter().zip(id_chunk) {
@@ -847,6 +850,7 @@ pub(crate) async fn create_cards_on(
             query = query.bind(card.note_id);
             query = query.bind(card.order);
             query = query.bind(card.back_type);
+            query = query.bind(card.created_at.timestamp());
             query = query.bind(card.updated_at.timestamp());
             query = query.bind(card.due.timestamp());
             query = query.bind(card.stability);
@@ -856,6 +860,7 @@ pub(crate) async fn create_cards_on(
             query = query.bind(card.special_state);
             query = query.bind(card.state);
             query = query.bind(&card.custom_data);
+            query = query.bind(-1);
         }
         query
             .execute(&mut *conn)

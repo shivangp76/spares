@@ -625,15 +625,15 @@ mod tests {
         older: DateTime<Utc>,
         newer: DateTime<Utc>,
     ) -> Card {
-        sqlx::query("INSERT INTO parser (name) VALUES ('markdown')")
+        sqlx::query("INSERT INTO parser (name, usn) VALUES ('markdown', -1)")
             .execute(pool)
             .await
             .unwrap();
         let note_id = crate::ids::insert_test_note(pool, "n", 1).await;
         let card_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
-               desired_retention, state, custom_data)
-               VALUES (?, 1, 1, ?, 5.0, 4.0, 0.9, 2, '{}') RETURNING id"#,
+               desired_retention, state, custom_data, created_at, updated_at, usn, stability_fast)
+               VALUES (?, 1, 1, ?, 5.0, 4.0, 0.9, 2, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 5.0) RETURNING id"#,
         )
         .bind(note_id)
         .bind(newer.timestamp())
@@ -644,8 +644,8 @@ mod tests {
             sqlx::query(
                 r"INSERT INTO review_log
                     (card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
-                     recall_duration, rate_duration, previous_state, custom_data)
-                  VALUES (?, ?, 0, 3, 'fsrs', ?, 5, 2, 2, '{}')",
+                     recall_duration, rate_duration, previous_state, custom_data, usn)
+                  VALUES (?, ?, 0, 3, 'fsrs', ?, 5, 2, 2, '{}', -1)",
             )
             .bind(card_id)
             .bind(reviewed_at.timestamp())

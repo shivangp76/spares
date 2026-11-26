@@ -912,8 +912,8 @@ mod tests {
         let log = |card: CardId, days_ago: i64, kind: ReviewLogKind, recall: i64, rate: i64| {
             sqlx::query(
                 r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
-                scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-                VALUES (?, ?, ?, 3, 'fsrs', 0, ?, ?, ?, '{}')",
+                scheduled_time, recall_duration, rate_duration, previous_state, custom_data, usn)
+                VALUES (?, ?, ?, 3, 'fsrs', 0, ?, ?, ?, '{}', -1)",
             )
             .bind(card)
             .bind((now - Duration::days(days_ago)).timestamp())
@@ -966,9 +966,9 @@ mod tests {
         let link = |from: CardId, to: CardId| {
             sqlx::query(
                 r#"INSERT INTO note_link
-                    (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score)
+                    (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score, relation)
                 VALUES ((SELECT note_id FROM card WHERE id = ?), (SELECT note_id FROM card WHERE id = ?),
-                    0, 'keyword', 'keyword', 0)"#,
+                    0, 'keyword', 'keyword', 0, 0)"#,
             )
             .bind(from)
             .bind(to)

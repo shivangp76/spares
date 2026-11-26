@@ -811,14 +811,14 @@ mod tests {
         options: sqlx::sqlite::SqliteConnectOptions,
     ) {
         let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
-        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
         for (i, letters) in ["a", "b", "c", "d", "e"].into_iter().enumerate() {
             let note_id = letters.parse::<NoteId>().unwrap();
             sqlx::query(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, ?, 0, 0, '{}', 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (?, ?, 0, 0, '{}', 1, -1)",
             )
             .bind(note_id)
             .bind(format!("dog {i} and a cat"))
@@ -827,7 +827,7 @@ mod tests {
             .unwrap();
             sqlx::query(
                 r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
-                   desired_retention, state, custom_data) VALUES (?, 1, 1, ?, 0, 0, 0.9, 0, '{}')"#,
+                   desired_retention, state, custom_data, created_at, updated_at, usn, stability_fast) VALUES (?, 1, 1, ?, 0, 0, 0.9, 0, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 0)"#,
             )
             .bind(note_id)
             .bind(i64::try_from(10 - i).unwrap())
@@ -910,14 +910,14 @@ mod tests {
         options: sqlx::sqlite::SqliteConnectOptions,
     ) -> SqlitePool {
         let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
-        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
         for (letters, due) in [("a", 300_000), ("b", 100_000), ("c", 200_000)] {
             let note_id = letters.parse::<NoteId>().unwrap();
             sqlx::query(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, ?, 0, 0, '{}', 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (?, ?, 0, 0, '{}', 1, -1)",
             )
             .bind(note_id)
             .bind(format!("dog {letters}"))
@@ -926,7 +926,7 @@ mod tests {
             .unwrap();
             sqlx::query(
                 r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
-                   desired_retention, state, custom_data) VALUES (?, 1, 1, ?, 0, 0, 0.9, 2, '{}')"#,
+                   desired_retention, state, custom_data, created_at, updated_at, usn, stability_fast) VALUES (?, 1, 1, ?, 0, 0, 0.9, 2, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 0)"#,
             )
             .bind(note_id)
             .bind(due)
@@ -1142,10 +1142,10 @@ mod tests {
         // The lapse wins the timestamp tie with the pass, so FSRS supplies the curve. A later cram is excluded.
         sqlx::query(
             r"INSERT INTO review_log (card_id, reviewed_at, kind, rating, scheduler_name,
-               scheduled_time, recall_duration, rate_duration, previous_state, custom_data)
-               VALUES (?1, 300000 - 86400, 0, 3, 'unknown', 0, 1, 1, 2, '{}'),
-                      (?1, 300000 - 86400, 0, 1, 'fsrs', 0, 1, 1, 2, '{}'),
-                      (?1, 250000, 16, 3, 'fsrs', 0, 1, 1, 2, '{}')",
+               scheduled_time, recall_duration, rate_duration, previous_state, custom_data, usn)
+               VALUES (?1, 300000 - 86400, 0, 3, 'unknown', 0, 1, 1, 2, '{}', -1),
+                      (?1, 300000 - 86400, 0, 1, 'fsrs', 0, 1, 1, 2, '{}', -1),
+                      (?1, 250000, 16, 3, 'fsrs', 0, 1, 1, 2, '{}', -1)",
         )
         .bind(card_id)
         .execute(&pool)
@@ -1157,7 +1157,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO tag (id, name, description, auto_delete) VALUES (1, 'animal', '', 0)",
+            "INSERT INTO tag (id, name, description, auto_delete, created_at, updated_at, usn, reschedule) VALUES (1, 'animal', '', 0, strftime('%s', 'now'), strftime('%s', 'now'), -1, 1)",
         )
         .execute(&pool)
         .await
@@ -1236,14 +1236,14 @@ mod tests {
         options: sqlx::sqlite::SqliteConnectOptions,
     ) -> SqlitePool {
         let pool = crate::helpers::pool_with_regexp(pool_options, options).await;
-        sqlx::query("INSERT INTO parser (id, name) VALUES (1, 'markdown')")
+        sqlx::query("INSERT INTO parser (id, name, usn) VALUES (1, 'markdown', -1)")
             .execute(&pool)
             .await
             .unwrap();
         for letters in ["a", "b", "c", "d", "e"] {
             let note_id = letters.parse::<NoteId>().unwrap();
             sqlx::query(
-                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) VALUES (?, ?, 0, 0, '{}', 1)",
+                "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) VALUES (?, ?, 0, 0, '{}', 1, -1)",
             )
             .bind(note_id)
             .bind(format!("note {letters}"))
@@ -1265,8 +1265,8 @@ mod tests {
             ("a", "d", 3.0),
         ] {
             sqlx::query(
-                r#"INSERT INTO note_link (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score)
-                   VALUES (?, ?, 0, ?, ?, ?)"#,
+                r#"INSERT INTO note_link (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score, relation)
+                   VALUES (?, ?, 0, ?, ?, ?, 0)"#,
             )
             .bind(from.parse::<NoteId>().unwrap())
             .bind(to.parse::<NoteId>().unwrap())
@@ -1279,8 +1279,8 @@ mod tests {
         }
         // `e` also links to a keyword no note has
         sqlx::query(
-            r#"INSERT INTO note_link (parent_note_id, linked_note_id, "order", searched_keyword)
-               VALUES (?, NULL, 1, 'zeta')"#,
+            r#"INSERT INTO note_link (parent_note_id, linked_note_id, "order", searched_keyword, relation)
+               VALUES (?, NULL, 1, 'zeta', 0)"#,
         )
         .bind("e".parse::<NoteId>().unwrap())
         .execute(&pool)
@@ -1289,8 +1289,8 @@ mod tests {
         // A suspended review card and a new one for `c`
         sqlx::query(
             r#"INSERT INTO card (note_id, "order", back_type, due, stability, difficulty,
-               desired_retention, state, special_state, custom_data)
-               VALUES (?, 1, 1, 0, 0, 0, 0.9, 2, 1, '{}'), (?, 2, 1, 0, 0, 0, 0.9, 0, NULL, '{}')"#,
+               desired_retention, state, special_state, custom_data, created_at, updated_at, usn, stability_fast)
+               VALUES (?, 1, 1, 0, 0, 0, 0.9, 2, 1, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 0), (?, 2, 1, 0, 0, 0, 0.9, 0, NULL, '{}', strftime('%s', 'now'), strftime('%s', 'now'), -1, 0)"#,
         )
         .bind("c".parse::<NoteId>().unwrap())
         .bind("c".parse::<NoteId>().unwrap())

@@ -140,7 +140,7 @@ mod tests {
         // `note[gir]` must exist
         let gir = "gir".parse::<NoteId>().unwrap();
         sqlx::query(
-            "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id) SELECT ?, 'gir', 0, 0, '{}', parser_id FROM note",
+            "INSERT INTO note (id, data, created_at, updated_at, custom_data, parser_id, usn) SELECT ?, 'gir', 0, 0, '{}', parser_id, -1 FROM note",
         )
             .bind(gir)
             .execute(&pool)

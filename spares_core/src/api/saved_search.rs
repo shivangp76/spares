@@ -58,12 +58,14 @@ pub async fn save_search(db: &SqlitePool, search: SavedSearch) -> Result<SavedSe
     // A search saved again keeps its id, so the id taken here goes unused.
     let id = next_id_in(db, IdTable::SavedSearch).await?;
     sqlx::query(
-        "INSERT INTO saved_search (id, name, query) VALUES (?, ?, ?)
-         ON CONFLICT (name) DO UPDATE SET query = excluded.query, updated_at = strftime('%s', 'now')",
+        "INSERT INTO saved_search (id, name, query, created_at, updated_at, usn)
+         VALUES (?1, ?2, ?3, ?4, ?4, -1)
+         ON CONFLICT (name) DO UPDATE SET query = excluded.query, updated_at = excluded.updated_at",
     )
     .bind(id)
     .bind(name)
     .bind(query)
+    .bind(chrono::Utc::now().timestamp())
     .execute(db)
     .await
     .map_err(sqlx_error)?;

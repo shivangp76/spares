@@ -49,9 +49,9 @@ async fn rematch(db: &sqlx::SqlitePool) {
             .await
             .unwrap();
         sqlx::query(
-            r#"INSERT INTO note_link (parent_note_id, "order", searched_keyword)
+            r#"INSERT INTO note_link (parent_note_id, "order", searched_keyword, relation)
                SELECT id, 1, (CASE id % 3 WHEN 0 THEN 'Continuity' WHEN 1 THEN 'Continuty'
-                              ELSE 'Missing' END) || ' theorem ' || (1 + id % ?)
+                              ELSE 'Missing' END) || ' theorem ' || (1 + id % ?), 0
                FROM note WHERE id <= 1000"#,
         )
         .bind(distinct)
