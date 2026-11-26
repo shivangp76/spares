@@ -32,7 +32,7 @@ use crate::helpers::study_date;
 use crate::model::CardId;
 use crate::model::SpecialState;
 use crate::model::StateId;
-use crate::schedulers::retrievability_key_sql;
+use crate::schedulers::card_retrievability_sql;
 use crate::schedulers::state_ids_sql;
 use crate::schedulers::state_role;
 use crate::schedulers::states_with_role;
@@ -148,11 +148,10 @@ fn review_keys(config: &SparesExternalConfig, order: ReviewOrder, now: DateTime<
     let now_ts = now.timestamp();
     match order {
         ReviewOrder::Due => vec![asc("c.due"), asc("n.created_at")],
-        // The scheduler's key falls as retrievability rises.
-        ReviewOrder::Retrievability => vec![desc(retrievability_key_sql(
+        // The cards least likely to be recalled first
+        ReviewOrder::Retrievability => vec![asc(card_retrievability_sql(
             config,
             &format!("({now_ts} - COALESCE({LAST_REVIEW}, c.due))"),
-            |key| key.sql.clone(),
         ))],
         ReviewOrder::RelativeOverdueness => vec![desc(format!(
             "({now_ts} - c.due) * 1.0 / MAX(c.due - COALESCE({LAST_REVIEW}, c.due), 1)"

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::hash_map::Entry;
+use std::sync::Arc;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -24,6 +25,7 @@ use crate::model::NoteLink;
 use crate::model::ReviewLogKind;
 use crate::model::Score;
 use crate::model::SpecialState;
+use crate::schedulers::CardMemory;
 use crate::schedulers::RetrievabilityFn;
 use crate::schedulers::get_default_scheduler_name;
 use crate::schedulers::get_scheduler_from_string;
@@ -56,7 +58,6 @@ use crate::search::evaluator::lapses_sql;
 use crate::search::evaluator::reps_sql;
 use crate::search::evaluator::text_matches;
 use crate::search::evaluator::text_patterns;
-use std::sync::Arc;
 
 pub async fn get_keywords(db: &SqlitePool) -> Result<Vec<(NoteId, String)>, Error> {
     let keywords_data: Vec<(NoteId, String)> =
@@ -313,7 +314,7 @@ async fn card_matches(db: &SqlitePool, ids_sql: &str) -> Result<HashMap<CardId, 
                 let elapsed_days = (now - at).num_seconds() as f64 / 86400.0;
                 curve
                     .as_ref()
-                    .map(|curve| curve(row.card.stability, elapsed_days))
+                    .map(|curve| curve(CardMemory::from(&row.card), elapsed_days))
                     .filter(|recall| recall.is_finite())
             }
         };

@@ -15,8 +15,7 @@ use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use super::SCHEDULER_NAME;
-use super::utils::decay;
-use super::utils::retrievability;
+use super::utils::Curve;
 use crate::Error;
 use crate::LibraryError;
 use crate::SchedulerErrorKind;
@@ -35,6 +34,7 @@ use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::schedulers::BreakOutcome;
 use crate::schedulers::BreakPlan;
+use crate::schedulers::CardMemory;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::placement::PlacementContext;
 use crate::schedulers::state_ids_sql;
@@ -49,7 +49,7 @@ pub struct CardInternal<'a> {
 /// Where a card in review stands, to tell whether moving it is safe.
 #[derive(Clone, Copy, Debug)]
 struct Estimate {
-    stability: f64,
+    memory: CardMemory,
     desired_retention: f64,
     // Advance
     current_elapsed_time: Duration,
@@ -77,11 +77,11 @@ pub async fn count_safe_cards(
     bound: i64,
     action: &MoveCardAction,
     requested_date: DateTime<Utc>,
-    decay: f32,
+    curve: &Curve,
 ) -> Result<u32, Error> {
     let (json,): (String,) = sqlx::query_as(AssertSqlSafe(format!(
-        r"SELECT json_group_array(json_array(c.stability, c.desired_retention, l.reviewed_at,
-                 l.scheduled_time))
+        r"SELECT json_group_array(json_array(c.stability, c.stability_fast, c.difficulty,
+                 c.desired_retention, l.reviewed_at, l.scheduled_time))
           FROM card c LEFT JOIN review_log l ON l.id = ({LAST_REVIEW_ID})
           WHERE {where_clause}"
     )))
@@ -89,20 +89,32 @@ pub async fn count_safe_cards(
     .fetch_one(db)
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
-    let cards: Vec<(f64, f64, Option<i64>, Option<i64>)> =
-        serde_json::from_str(&json).map_err(|e| Error::Sqlx {
+    #[expect(clippy::type_complexity, reason = "one row of the query")]
+    let cards: Vec<(f64, f64, f64, f64, Option<i64>, Option<i64>)> = serde_json::from_str(&json)
+        .map_err(|e| Error::Sqlx {
             source: sqlx::Error::Decode(Box::new(e)),
         })?;
     let count = cards
         .into_iter()
         .filter_map(
-            |(stability, desired_retention, reviewed_at, scheduled_time)| {
+            |(
+                stability,
+                stability_fast,
+                difficulty,
+                desired_retention,
+                reviewed_at,
+                scheduled_time,
+            )| {
                 estimate(
-                    stability,
+                    CardMemory {
+                        stability,
+                        stability_fast,
+                        difficulty,
+                    },
                     desired_retention,
                     reviewed_at.map(|at| (at, scheduled_time)),
                     requested_date,
-                    decay,
+                    curve,
                 )
             },
         )
@@ -135,13 +147,13 @@ fn card_sort_key(d: &Estimate, action: &MoveCardAction) -> (f64, f64) {
         // = 1-ln(current retention)/ln(requested retention), -stability (ascending)
         MoveCardAction::Advance => (
             1. - (1. / d.current_retention - 1.) / (1. / d.desired_retention - 1.),
-            -d.stability,
+            -d.memory.stability,
         ),
         // sort by (elapsed_days / scheduled_days - 1)
         // = ln(current retention)/ln(requested retention)-1, -stability (ascending)
         MoveCardAction::Postpone => (
             ((1. / d.approx_retention_after_postpone - 1.) / (1. / d.desired_retention - 1.) - 1.),
-            -d.stability,
+            -d.memory.stability,
         ),
     }
 }
@@ -149,11 +161,11 @@ fn card_sort_key(d: &Estimate, action: &MoveCardAction) -> (f64, f64) {
 /// `None` if the card was last reviewed after `requested_date` (e.g. statistics for a past date),
 /// so its current schedule did not exist yet at that date and it cannot be moved from there.
 fn estimate(
-    stability: f64,
+    memory: CardMemory,
     desired_retention: f64,
     last_review: Option<LastReview>,
     requested_date: DateTime<Utc>,
-    decay: f32,
+    curve: &Curve,
 ) -> Option<Estimate> {
     let scheduled_time = last_review
         .and_then(|(_, scheduled_time)| scheduled_time)
@@ -168,10 +180,10 @@ fn estimate(
     }
     // Equivalent to `current_retrievability`.
     let current_retention =
-        retrievability(current_elapsed_time.num_fractional_days(), stability, decay);
+        curve.retrievability(memory, current_elapsed_time.num_fractional_days());
     assert!(
         !current_retention.is_nan(),
-        "card in review has stability {stability}"
+        "card in review has memory {memory:?}"
     );
 
     // Postpone
@@ -184,13 +196,12 @@ fn estimate(
                         + scheduled_time.num_fractional_days() * 0.075,
                 )
             });
-    let approx_retention_after_postpone = retrievability(
+    let approx_retention_after_postpone = curve.retrievability(
+        memory,
         approx_elapsed_time_after_postpone.num_fractional_days(),
-        stability,
-        decay,
     );
     Some(Estimate {
-        stability,
+        memory,
         desired_retention,
         current_elapsed_time,
         scheduled_time,
@@ -229,18 +240,18 @@ async fn get_all_cards_internal<'a>(
     cards: &'a [Card],
     action: &MoveCardAction,
     requested_date: DateTime<Utc>,
-    decay: f32,
+    curve: &Curve,
 ) -> Result<Vec<CardInternal<'a>>, Error> {
     let last_reviews = last_reviews(db, cards).await?;
     let mut cards_internal = cards
         .iter()
         .filter_map(|card| {
             let estimate = estimate(
-                card.stability,
+                CardMemory::from(card),
                 card.desired_retention,
                 last_reviews.get(&card.id).copied(),
                 requested_date,
-                decay,
+                curve,
             )?;
             Some(CardInternal { card, estimate })
         })
@@ -269,8 +280,8 @@ pub async fn move_cards(
     moved_at: DateTime<Utc>,
     config: &SparesExternalConfig,
 ) -> Result<MoveCardsResult, Error> {
-    let decay = decay(config);
-    let cards_internal = get_all_cards_internal(db, cards, action, requested_date, decay).await?;
+    let curve = Curve::new(config);
+    let cards_internal = get_all_cards_internal(db, cards, action, requested_date, &curve).await?;
     let (mut safe_cards, not_safe_cards): (Vec<_>, Vec<_>) = cards_internal
         .into_iter()
         .partition(|x| is_card_safe(&x.estimate, action));
@@ -370,20 +381,18 @@ pub async fn move_cards(
             custom_data: None,
         });
 
-        let prev_target_retention = retrievability(
+        let prev_target_retention = curve.retrievability(
+            card_internal.estimate.memory,
             card_internal
                 .estimate
                 .scheduled_time
                 .unwrap_or_else(Duration::zero)
                 .num_fractional_days(),
-            card_internal.card.stability,
-            decay,
         );
         prev_target_retentions.push(prev_target_retention);
-        let new_target_retention = retrievability(
+        let new_target_retention = curve.retrievability(
+            card_internal.estimate.memory,
             new_scheduled_time.num_fractional_days(),
-            card_internal.card.stability,
-            decay,
         );
         new_target_retentions.push(new_target_retention);
     }
@@ -519,16 +528,15 @@ pub async fn schedule_break(
     let spread_days = plan.spread_days();
     let cards = cards_due_in_break(db, zone, today, plan).await?;
 
-    let decay = decay(config);
+    let curve = Curve::new(config);
     let last_reviews = last_reviews(db, &cards).await?;
     // The predicted recall of `card` if it is due at `due`, if it has a review to predict from.
     let recall_at = |card: &Card, due: DateTime<Utc>| {
         last_reviews.get(&card.id).map(|(reviewed_at, _)| {
             let last_review = DateTime::from_timestamp(*reviewed_at, 0).unwrap_or_default();
-            retrievability(
+            curve.retrievability(
+                CardMemory::from(card),
                 (due - last_review).num_fractional_days().max(0.0),
-                card.stability,
-                decay,
             )
         })
     };
@@ -669,7 +677,7 @@ mod tests {
             std::slice::from_ref(&card),
             &MoveCardAction::Advance,
             now,
-            fsrs_rs::FSRS6_DEFAULT_PARAMETERS[20],
+            &Curve::new(&SparesExternalConfig::default()),
         )
         .await
         .unwrap();

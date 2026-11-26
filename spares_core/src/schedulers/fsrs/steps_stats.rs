@@ -21,15 +21,15 @@ use chrono::DateTime;
 use chrono::Utc;
 
 use super::SCHEDULER_NAME;
+use super::utils::Curve;
 use super::utils::Rating;
 use super::utils::State;
-use super::utils::days_until_retrievability;
 use super::utils::rating_to_number;
-use super::utils::retrievability;
 use super::utils::state_to_number;
 use crate::model::NEW_CARD_STATE;
 use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
+use crate::schedulers::CardMemory;
 use crate::schedulers::effective_review_logs;
 use crate::schema::statistics::RecommendedSteps;
 use crate::schema::statistics::StepsGroup;
@@ -67,7 +67,7 @@ type Pairs = HashMap<i64, (u32, u32)>;
 pub(crate) fn steps_stats(
     review_logs: &[ReviewLog],
     since: Option<DateTime<Utc>>,
-    decay: f32,
+    curve: &Curve,
     desired_retention: f64,
 ) -> (Vec<StepsGroup>, RecommendedSteps) {
     let pairs = group_reviews(review_logs, since);
@@ -81,14 +81,14 @@ pub(crate) fn steps_stats(
                 .fold((0, 0), |(r, f), (recalled, forgotten)| {
                     (r + recalled, f + forgotten)
                 });
-            let stability = pairs.and_then(|pairs| fit_stability(pairs, decay));
+            let stability = pairs.and_then(|pairs| fit_stability(pairs, curve));
             StepsGroup {
                 kind,
                 reviews: recalled + forgotten,
                 recalled,
                 stability,
                 interval: stability
-                    .map(|stability| step_seconds(stability, desired_retention, decay)),
+                    .map(|stability| step_seconds(stability, desired_retention, curve)),
             }
         })
         .collect::<Vec<_>>();
@@ -101,9 +101,9 @@ pub(crate) fn steps_stats(
     clippy::cast_precision_loss,
     reason = "a step of up to 100 days of stability fits in an i64, and a day in an f64"
 )]
-fn step_seconds(stability: f64, desired_retention: f64, decay: f32) -> i64 {
-    (days_until_retrievability(stability, desired_retention, decay) * SECONDS_PER_DAY as f64)
-        .round() as i64
+fn step_seconds(stability: f64, desired_retention: f64, curve: &Curve) -> i64 {
+    (curve.days_until(step_memory(stability), desired_retention) * SECONDS_PER_DAY as f64).round()
+        as i64
 }
 
 fn recommend(groups: &[StepsGroup]) -> RecommendedSteps {
@@ -221,7 +221,7 @@ fn group_reviews(
     clippy::cast_sign_loss,
     reason = "seconds within a day, and a grid of a few thousand points"
 )]
-fn fit_stability(pairs: &Pairs, decay: f32) -> Option<f64> {
+fn fit_stability(pairs: &Pairs, curve: &Curve) -> Option<f64> {
     if pairs.is_empty() {
         return None;
     }
@@ -233,7 +233,9 @@ fn fit_stability(pairs: &Pairs, decay: f32) -> Option<f64> {
         pairs
             .iter()
             .map(|(days, (recalled, forgotten))| {
-                let recall = retrievability(*days, stability, decay).clamp(1e-6, 1.0 - 1e-6);
+                let recall = curve
+                    .retrievability(step_memory(stability), *days)
+                    .clamp(1e-6, 1.0 - 1e-6);
                 -(f64::from(*recalled) * recall.ln() + f64::from(*forgotten) * (1.0 - recall).ln())
             })
             .sum::<f64>()
@@ -250,6 +252,16 @@ fn fit_stability(pairs: &Pairs, decay: f32) -> Option<f64> {
     (index > 0 && index < points as usize).then_some(stability)
 }
 
+/// The memory a step is fitted as: one `stability` for both of FSRS-7's, and the middle
+/// difficulty, which leaves FSRS-7's curve unscaled. FSRS-6's curve only reads the stability.
+fn step_memory(stability: f64) -> CardMemory {
+    CardMemory {
+        stability,
+        stability_fast: stability,
+        difficulty: 5.0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Duration;
@@ -261,7 +273,6 @@ mod tests {
     use super::*;
     use crate::config::SparesExternalConfig;
     use crate::model::CardId;
-    use crate::schedulers::fsrs::utils::decay;
 
     fn start() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 10, 1, 9, 0, 0).unwrap()
@@ -290,14 +301,17 @@ mod tests {
         max_minutes: i64,
         seed: u64,
     ) -> Vec<ReviewLog> {
-        let decay = decay(&SparesExternalConfig::default());
+        let curve = Curve::new(&SparesExternalConfig::default());
         let mut rng = StdRng::seed_from_u64(seed);
         let mut logs = Vec::new();
         for card_id in 0..cards {
             let at = start() + Duration::minutes(card_id);
             let seconds = rng.random_range(30..max_minutes * 60);
             let recalled = rng.random::<f64>()
-                < retrievability(seconds as f64 / SECONDS_PER_DAY as f64, stability, decay);
+                < curve.retrievability(
+                    step_memory(stability),
+                    seconds as f64 / SECONDS_PER_DAY as f64,
+                );
             logs.push(log(card_id, at, first, State::New));
             logs.push(log(
                 card_id,
@@ -315,11 +329,11 @@ mod tests {
 
     #[test]
     fn the_fit_finds_the_stability_reviews_were_generated_with() {
-        let decay = decay(&SparesExternalConfig::default());
+        let curve = Curve::new(&SparesExternalConfig::default());
         // 5 minutes
         let stability = 5.0 / 1440.0;
         let logs = generated(3000, 1, stability, 60, 1);
-        let (groups, recommended) = steps_stats(&logs, None, decay, 0.9);
+        let (groups, recommended) = steps_stats(&logs, None, &curve, 0.9);
         let again = group(&groups, StepsGroupKind::Again);
         assert_eq!(again.reviews, 3000);
         let fitted = again.stability.unwrap();
@@ -337,19 +351,19 @@ mod tests {
 
     #[test]
     fn a_small_group_is_fitted_but_recommends_nothing() {
-        let decay = decay(&SparesExternalConfig::default());
+        let curve = Curve::new(&SparesExternalConfig::default());
         let logs = generated(i64::from(MIN_REVIEWS) - 1, 1, 0.01, 60, 2);
-        let (groups, recommended) = steps_stats(&logs, None, decay, 0.9);
+        let (groups, recommended) = steps_stats(&logs, None, &curve, 0.9);
         assert!(group(&groups, StepsGroupKind::Again).interval.is_some());
         assert_eq!(recommended, RecommendedSteps::default());
     }
 
     #[test]
     fn every_review_recalled_pins_nothing_down() {
-        let decay = decay(&SparesExternalConfig::default());
+        let curve = Curve::new(&SparesExternalConfig::default());
         let pairs = Pairs::from([(600, (50, 0)), (1200, (50, 0))]);
-        assert_eq!(fit_stability(&pairs, decay), None);
-        assert_eq!(fit_stability(&Pairs::new(), decay), None);
+        assert_eq!(fit_stability(&pairs, &curve), None);
+        assert_eq!(fit_stability(&Pairs::new(), &curve), None);
     }
 
     #[test]

@@ -29,6 +29,7 @@ use crate::model::RatingId;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
+use crate::schedulers::CardMemory;
 use crate::schedulers::RetrievabilityFn;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::get_scheduler_from_string;
@@ -654,7 +655,7 @@ async fn cards_and_distributions(
     // to read with tens of thousands of cards.
     let cards_sql = format!(
         "SELECT json_group_array(json_array(c.state, c.special_state, c.due, c.stability,
-                    c.difficulty,
+                    c.stability_fast, c.difficulty,
                     (SELECT MAX(rl.reviewed_at) FROM review_log rl
                      WHERE rl.card_id = c.id AND rl.kind = {REVIEW})))
          FROM card c WHERE c.state NOT IN ({new}){cards}",
@@ -682,9 +683,9 @@ async fn cards_and_distributions(
 /// The cards in a state and special state.
 type StateCount = (StateId, Option<u8>, u32);
 
-/// A card that is not new: its state, special state, due date, stability, difficulty and last
-/// review.
-type CardRow = (StateId, Option<u8>, i64, f64, f64, Option<i64>);
+/// A card that is not new: its state, special state, due date, stability, fast stability,
+/// difficulty and last review.
+type CardRow = (StateId, Option<u8>, i64, f64, f64, f64, Option<i64>);
 
 #[expect(
     clippy::cast_precision_loss,
@@ -716,7 +717,7 @@ fn summarize_cards(
     let mut daily_load = 0.0;
     let mut review_recalls = Vec::new();
     let mut review_stabilities = Vec::new();
-    for (state, special_state, due, stability, difficulty, last_review) in rows {
+    for (state, special_state, due, stability, stability_fast, difficulty, last_review) in rows {
         let interval = last_review.map(|last| due - last);
         let in_review = state_role(state) == Some(StateRole::Review);
         if in_review && special_state.is_none() {
@@ -733,7 +734,11 @@ fn summarize_cards(
         difficulties.push(difficulty);
         let recall = match (retrievability, last_review) {
             (Some(retrievability), Some(last)) => Some(retrievability(
-                stability,
+                CardMemory {
+                    stability,
+                    stability_fast,
+                    difficulty,
+                },
                 (now - last) as f64 / SECONDS_PER_DAY as f64,
             )),
             _ => None,
@@ -860,7 +865,7 @@ mod tests {
     #[test]
     fn a_scheduler_without_a_forgetting_curve_leaves_retrievability_out() {
         let review = review_state();
-        let rows = vec![(review, None, 30 * SECONDS_PER_DAY, 20.0, 5.0, Some(0))];
+        let rows = vec![(review, None, 30 * SECONDS_PER_DAY, 20.0, 20.0, 5.0, Some(0))];
         let (counts, distributions) = summarize_cards(
             vec![(review, None, 1)],
             rows,

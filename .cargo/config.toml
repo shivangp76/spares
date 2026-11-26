@@ -7,3 +7,9 @@ xtask = "run -q -p xtask --"
 # usually yanked before it's picked up. Override one update with
 # `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <version>`.
 global-min-publish-age = "3 days"
+
+[env]
+# SQLite's math functions (pow, exp, ...), for FSRS-7's forgetting curve in SQL: searching and
+# ordering the queue by retrievability. The bundled SQLite leaves them out unless asked;
+# sqlite-wasm-rs, the web app's SQLite, has them already.
+LIBSQLITE3_FLAGS = "-DSQLITE_ENABLE_MATH_FUNCTIONS"

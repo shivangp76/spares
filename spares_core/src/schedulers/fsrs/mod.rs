@@ -53,16 +53,15 @@ use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 use steps::LearningSteps;
 use steps::next_step;
+use utils::Curve;
 use utils::Rating as FsrsRating;
 use utils::State;
-use utils::decay;
 use utils::get_fuzz_range;
 use utils::memory_state;
 use utils::model;
 use utils::number_to_rating;
 use utils::number_to_state;
 use utils::rating_to_number;
-use utils::retrievability;
 use utils::state_to_number;
 
 use crate::Error;
@@ -82,7 +81,6 @@ use crate::schedulers::BreakOutcome;
 use crate::schedulers::BreakPlan;
 use crate::schedulers::MoveCardsResult;
 use crate::schedulers::RetrievabilityFn;
-use crate::schedulers::RetrievabilityKey;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::effective_review_logs;
 use crate::schema::review::CardState;
@@ -163,28 +161,18 @@ impl SrsScheduler for Fsrs {
     }
 
     fn retrievability(&self, config: &SparesExternalConfig) -> Option<RetrievabilityFn> {
-        let decay = decay(config);
-        Some(Box::new(move |stability, elapsed_days| {
-            retrievability(elapsed_days.max(0.0), stability, decay)
+        let curve = Curve::new(config);
+        Some(Box::new(move |memory, elapsed_days| {
+            curve.retrievability(memory, elapsed_days)
         }))
     }
 
-    /// Days since the last review over stability: retrievability falls as it grows, on the same
-    /// curve for every card, so a bound on one is a bound on the other. NULL for a new card.
-    fn retrievability_key(
-        &self,
-        config: &SparesExternalConfig,
-        elapsed: &str,
-    ) -> Option<RetrievabilityKey> {
-        let decay = f64::from(decay(config));
-        let factor = 0.9_f64.powf(-1.0 / decay) - 1.0;
-        Some(RetrievabilityKey {
-            sql: format!(
-                "(CASE WHEN c.state != {} THEN MAX({elapsed}, 0) / 86400.0 / MAX(c.stability, 0.0001) END)",
-                state_to_number(State::New),
-            ),
-            at: Box::new(move |recall| (recall.max(0.0).powf(-1.0 / decay) - 1.0) / factor),
-        })
+    fn retrievability_sql(&self, config: &SparesExternalConfig, elapsed: &str) -> Option<String> {
+        Some(format!(
+            "(CASE WHEN c.state != {} THEN {} END)",
+            state_to_number(State::New),
+            Curve::new(config).sql(elapsed),
+        ))
     }
 
     // Note that this can be optimized to account for the correlation between retention amongst siblings. The ratings can also be chosen better to better reflect human tendencies.
@@ -388,7 +376,7 @@ impl SrsScheduler for Fsrs {
             card_due_limit.timestamp(),
             &MoveCardAction::Advance,
             card_due_limit,
-            decay(&config),
+            &Curve::new(&config),
         )
         .await
     }
@@ -409,7 +397,7 @@ impl SrsScheduler for Fsrs {
             card_due_limit.timestamp(),
             &MoveCardAction::Postpone,
             card_due_limit,
-            decay(&config),
+            &Curve::new(&config),
         )
         .await
     }
@@ -631,17 +619,6 @@ mod tests {
                 state(3, "Relearning", StateRole::Relearning),
             ]
         );
-    }
-
-    #[test]
-    fn retrievability_key_inverts_the_forgetting_curve() {
-        let config = SparesExternalConfig::default();
-        let key = Fsrs.retrievability_key(&config, "0").unwrap();
-        let elapsed_over_stability = (key.at)(0.8);
-        let recall = retrievability(elapsed_over_stability, 1.0, decay(&config));
-        assert!((recall - 0.8).abs() < 1e-6, "{recall}");
-        assert_eq!((key.at)(1.0), 0.0);
-        assert!((key.at)(0.0).is_infinite());
     }
 
     /// Random histories, each ending with the review that produced the card.

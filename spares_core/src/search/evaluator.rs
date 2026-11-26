@@ -34,10 +34,9 @@ use crate::model::StateId;
 use crate::parsers::cloze_contexts;
 use crate::parsers::find_parser;
 use crate::parsers::get_all_parsers;
-use crate::schedulers::RetrievabilityKey;
 use crate::schedulers::all_states;
+use crate::schedulers::card_retrievability_sql;
 use crate::schedulers::lapse_sql;
-use crate::schedulers::retrievability_key_sql;
 use crate::search::Atom;
 use crate::search::Op;
 use crate::search::QueryReturnItemType;
@@ -1209,10 +1208,7 @@ impl Field {
                 CardField::Reps => Ok(reps_sql()),
                 CardField::Lapses => Ok(lapses_sql()),
                 CardField::Interval => Ok(interval_sql()),
-                // The key falls as retrievability rises.
-                CardField::Retrievability(None) => {
-                    Ok(format!("-{}", retrievability_sql(|key| key.sql.clone())?))
-                }
+                CardField::Retrievability(None) => retrievability_sql(),
                 CardField::Retrievability(Some(_)) => Err(miette!(
                     "only `c.retrievability` now can be sorted by, not at a time"
                 )),
@@ -2407,10 +2403,10 @@ fn evaluate_comparison(
                         Some(at) => retrievability_elapsed_at_sql(at),
                         None => retrievability_elapsed_sql(),
                     };
-                    value_context.params.push(retrievability_key_sql(
-                        context.config()?,
-                        &elapsed,
-                        |key| format!("{} {}", key.sql, key_bound(op, value, &key.at)),
+                    value_context.params.push(format!(
+                        "{} {}",
+                        card_retrievability_sql(context.config()?, &elapsed),
+                        recall_bound(op, value),
                     ));
                 } else if matches!(field_type, FieldType::Float)
                     && matches!(op, Op::Equal)
@@ -2536,19 +2532,17 @@ pub(crate) fn interval_sql() -> String {
     )
 }
 
-/// SQL that is `sql_for` the [`RetrievabilityKey`] of the scheduler that last reviewed the card,
-/// as [`retrievability_key_sql`] describes.
-fn retrievability_sql(sql_for: impl Fn(&RetrievabilityKey) -> String) -> Result<String, Error> {
+/// SQL for the retrievability of the card now, as [`card_retrievability_sql`] describes.
+fn retrievability_sql() -> Result<String, Error> {
     let config = read_external_config().map_err(|e| miette!("{e}"))?;
-    Ok(retrievability_key_sql(
+    Ok(card_retrievability_sql(
         &config,
         &retrievability_elapsed_sql(),
-        sql_for,
     ))
 }
 
 /// Seconds from the card's last review to `at`, SQL for a Unix time, for
-/// [`retrievability_key_sql`]. A time before the last review counts as the review itself.
+/// [`card_retrievability_sql`]. A time before the last review counts as the review itself.
 fn retrievability_elapsed_at_sql(at: &str) -> String {
     format!("MAX(({at}) - {}, 0)", last_rated_sql())
 }
@@ -2576,7 +2570,7 @@ fn point_in_time_sql(field: &str, time: &str) -> Result<String, Error> {
         .ok_or_else(invalid)
 }
 
-/// Seconds since the card's last review, for [`retrievability_key_sql`]
+/// Seconds since the card's last review, for [`card_retrievability_sql`]
 fn retrievability_elapsed_sql() -> String {
     format!(
         "(CAST(strftime('%s', 'now') AS INTEGER) - {})",
@@ -2584,31 +2578,20 @@ fn retrievability_elapsed_sql() -> String {
     )
 }
 
-/// The bound on a [`RetrievabilityKey`] that is the same as the card's retrievability comparing
-/// with `value` by `op`, where `key_at` is [`RetrievabilityKey::at`]. The key falls as
-/// retrievability rises, so the comparison is turned around. Equal is within a millionth, as for
-/// other numbers.
-fn key_bound(op: Op, value: f64, key_at: impl Fn(f64) -> f64) -> String {
-    let at = |recall: f64| {
-        let key = key_at(recall);
-        if key.is_infinite() {
-            // SQLite reads this as infinity.
-            format!("{}1e999", if key < 0.0 { "-" } else { "" })
-        } else {
-            key.to_string()
-        }
-    };
+/// The comparison of a card's retrievability with `value` by `op`. Equal is within a millionth,
+/// as for other numbers.
+fn recall_bound(op: Op, value: f64) -> String {
     match op {
-        Op::GreaterThan => format!("< {}", at(value)),
-        Op::GreaterThanEqual => format!("<= {}", at(value)),
-        Op::LessThan => format!("> {}", at(value)),
-        Op::LessThanEqual => format!(">= {}", at(value)),
+        Op::GreaterThan => format!("> {value:?}"),
+        Op::GreaterThanEqual => format!(">= {value:?}"),
+        Op::LessThan => format!("< {value:?}"),
+        Op::LessThanEqual => format!("<= {value:?}"),
         _ => {
             let tolerance = 1e-6 * value.abs().max(1.0);
             format!(
-                "BETWEEN {} AND {}",
-                at(value + tolerance),
-                at(value - tolerance)
+                "BETWEEN {:?} AND {:?}",
+                value - tolerance,
+                value + tolerance
             )
         }
     }
@@ -3986,11 +3969,13 @@ mod tests {
         assert_eq!(search("c.retrievability>1").await, Vec::<CardId>::new());
         // The same retrievability as FSRS gives
         let config = read_external_config().unwrap();
-        let recall = crate::schedulers::fsrs::utils::retrievability(
-            2.0,
-            10.0,
-            crate::schedulers::fsrs::utils::decay(&config),
-        );
+        let curve = crate::schedulers::fsrs::utils::Curve::new(&config);
+        let memory = crate::schedulers::CardMemory {
+            stability: 10.0,
+            stability_fast: 0.0,
+            difficulty: 5.0,
+        };
+        let recall = curve.retrievability(memory, 2.0);
         assert_eq!(
             search(&format!(
                 "c.retrievability>{} c.retrievability<{}",
@@ -4001,11 +3986,7 @@ mod tests {
             [1]
         );
         // At a later time, as FSRS would predict it then: 28 days on is 30 days after the review
-        let later = crate::schedulers::fsrs::utils::retrievability(
-            30.0,
-            10.0,
-            crate::schedulers::fsrs::utils::decay(&config),
-        );
+        let later = curve.retrievability(memory, 30.0);
         assert!(later < recall - 0.05);
         assert_eq!(
             search(&format!(
@@ -4636,15 +4617,6 @@ mod tests {
         assert_eq!(marks("tag=math or (dog)", text), ["dog", "dog"]);
         assert_eq!(marks("og", text), Vec::<String>::new());
         assert_eq!(marks("dog (", text), Vec::<String>::new());
-    }
-
-    #[test]
-    fn retrievability_key_bounds_turn_around() {
-        // A key that is 1 at retrievability 0.5, and infinite at 0
-        let key_at = |recall: f64| 1.0 / recall - 1.0;
-        assert_eq!(key_bound(Op::LessThan, 0.5, key_at), "> 1");
-        assert_eq!(key_bound(Op::GreaterThan, 0.0, key_at), "< 1e999");
-        assert_eq!(key_bound(Op::GreaterThanEqual, 1.0, key_at), "<= 0");
     }
 
     #[sqlx::test]

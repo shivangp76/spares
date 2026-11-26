@@ -18,7 +18,7 @@ use crate::model::ReviewLog;
 use crate::model::ReviewLogKind;
 use crate::schedulers::fsrs::steps_stats::MIN_REVIEWS;
 use crate::schedulers::fsrs::steps_stats::steps_stats;
-use crate::schedulers::fsrs::utils::decay;
+use crate::schedulers::fsrs::utils::Curve;
 use crate::schema::statistics::StepsStatsRequest;
 use crate::schema::statistics::StepsStatsResponse;
 
@@ -82,7 +82,8 @@ pub(crate) async fn get_steps_stats_with(
     let desired_retention = desired_retention.unwrap_or(DEFAULT_DESIRED_RETENTION);
 
     let since = period_days.map(|days| now - Duration::days(i64::from(days)));
-    let (groups, recommended) = steps_stats(&review_logs, since, decay(config), desired_retention);
+    let (groups, recommended) =
+        steps_stats(&review_logs, since, &Curve::new(config), desired_retention);
     let config = config.for_preset(index);
     let seconds = |steps: &[Duration]| steps.iter().map(Duration::num_seconds).collect();
     Ok(StepsStatsResponse {

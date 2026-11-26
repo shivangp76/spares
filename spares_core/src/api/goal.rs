@@ -20,6 +20,7 @@ use crate::model::CardId;
 use crate::model::ReviewLogKind;
 use crate::model::SpecialState;
 use crate::model::StateId;
+use crate::schedulers::CardMemory;
 use crate::schedulers::RetrievabilityFn;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::all_schedulers;
@@ -56,6 +57,8 @@ struct GoalCard {
     state: StateId,
     special_state: Option<u8>,
     stability: f64,
+    stability_fast: f64,
+    difficulty: f64,
     /// When it was first reviewed (crams left out), if it was
     first_review: Option<i64>,
     /// When it was last reviewed
@@ -108,7 +111,7 @@ async fn part_status(
 ) -> Result<GoalPartStatus, Error> {
     let review = ReviewLogKind::Review as u8;
     let cards: Vec<GoalCard> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT c.state, c.special_state, c.stability, \
+        "SELECT c.state, c.special_state, c.stability, c.stability_fast, c.difficulty, \
          (SELECT MIN(rl.reviewed_at) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {review}) AS first_review, \
          (SELECT MAX(rl.reviewed_at) FROM review_log rl WHERE rl.card_id = c.id AND rl.kind = {review}) AS last_review \
          FROM card c WHERE c.id IN ({cards_sql})"
@@ -160,7 +163,12 @@ async fn part_status(
                 reason = "seconds between reviews fit in f64"
             )]
             let days = (on_date - last_review) as f64 / 86400.0;
-            let predicted = recall(card.stability, days.max(0.0));
+            let memory = CardMemory {
+                stability: card.stability,
+                stability_fast: card.stability_fast,
+                difficulty: card.difficulty,
+            };
+            let predicted = recall(memory, days.max(0.0));
             recall_sum += predicted;
             recall_count += 1;
             if predicted < retention {
@@ -280,7 +288,7 @@ pub(crate) async fn keep_due_for_goals(
         }
         #[expect(clippy::cast_precision_loss, reason = "seconds until a date")]
         let days_to_day = (day - at).num_seconds() as f64 / 86400.0;
-        if recall(card.stability, days_to_day) >= retention
+        if recall(CardMemory::from(card), days_to_day) >= retention
             || !is_among(db, card.id, &goal.query_sql).await?
         {
             continue;
@@ -290,7 +298,7 @@ pub(crate) async fn keep_due_for_goals(
         let (mut kept, mut lost) = (0.0, days_to_day);
         for _ in 0..40 {
             let middle = f64::midpoint(kept, lost);
-            if recall(card.stability, middle) >= retention {
+            if recall(CardMemory::from(card), middle) >= retention {
                 kept = middle;
             } else {
                 lost = middle;
@@ -427,7 +435,8 @@ mod tests {
         assert!(due < day, "{due} should be before {day}");
         #[expect(clippy::cast_precision_loss, reason = "a test's seconds")]
         let days = (due - now).num_seconds() as f64 / 86400.0;
-        assert!((recall(20.0, days) - 0.95).abs() < 0.001, "{days}");
+        let memory = CardMemory::from(&card(&pool, ids[0]).await);
+        assert!((recall(memory, days) - 0.95).abs() < 0.001, "{days}");
         // A card of no goal, or of a goal without retention, keeps its due date.
         let other = card(&pool, ids[1]).await;
         assert_eq!(

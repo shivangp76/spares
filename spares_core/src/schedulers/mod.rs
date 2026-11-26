@@ -91,20 +91,27 @@ pub struct BreakOutcome {
     pub mean_retrievability: Option<(f64, f64)>,
 }
 
-/// See [`SrsScheduler::retrievability`]. Takes a card's stability and the days elapsed since its
-/// last review.
-pub type RetrievabilityFn = Box<dyn Fn(f64, f64) -> f64 + Send + Sync>;
-
-/// How search compares and sorts cards by retrievability, since SQLite cannot work out a
-/// forgetting curve. See [`SrsScheduler::retrievability_key`].
-pub struct RetrievabilityKey {
-    /// SQL over the card `c` that falls as the card's retrievability rises, or NULL if the card
-    /// has none, like a new card.
-    pub sql: String,
-    /// The value of [`Self::sql`] at which retrievability is the given number: infinite for 0 or
-    /// less, which no card reaches.
-    pub at: Box<dyn Fn(f64) -> f64 + Send + Sync>,
+/// What a forgetting curve may need to know of a card's memory, as stored on the card.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CardMemory {
+    pub stability: f64,
+    pub stability_fast: f64,
+    pub difficulty: f64,
 }
+
+impl From<&Card> for CardMemory {
+    fn from(card: &Card) -> Self {
+        Self {
+            stability: card.stability,
+            stability_fast: card.stability_fast,
+            difficulty: card.difficulty,
+        }
+    }
+}
+
+/// See [`SrsScheduler::retrievability`]. Takes a card's memory and the days elapsed since its
+/// last review.
+pub type RetrievabilityFn = Box<dyn Fn(CardMemory, f64) -> f64 + Send + Sync>;
 
 /// SQL that is true for a lapse in the review log row `alias`: a review in the review state with
 /// a rating that the scheduler named in the row's `scheduler_name` rejects with
@@ -236,7 +243,7 @@ pub trait SrsScheduler: Send + Sync {
             .is_none_or(|lowest| rating != lowest)
     }
 
-    /// The probability of recalling a card, as a function of its stability and the days since its
+    /// The probability of recalling a card, as a function of its memory and the days since its
     /// last review, under `config`. `None`, the default, if the scheduler has no forgetting curve,
     /// in which case statistics leave retrievability out.
     ///
@@ -246,15 +253,12 @@ pub trait SrsScheduler: Send + Sync {
         None
     }
 
-    /// [`Self::retrievability`] as a key SQL can compute, for search and the queue's
+    /// [`Self::retrievability`] as SQL, for search and the queue's
     /// [`crate::config::ReviewOrder::Retrievability`], where `elapsed` is SQL for the seconds since
-    /// the card `c` was last reviewed. `None`, the default, if the scheduler has no forgetting
-    /// curve, in which case its cards have no retrievability.
-    fn retrievability_key(
-        &self,
-        _config: &SparesExternalConfig,
-        _elapsed: &str,
-    ) -> Option<RetrievabilityKey> {
+    /// the card `c` was last reviewed. It is NULL for a card with no memory state, like a new
+    /// card. `None`, the default, if the scheduler has no forgetting curve, in which case its cards
+    /// have no retrievability.
+    fn retrievability_sql(&self, _config: &SparesExternalConfig, _elapsed: &str) -> Option<String> {
         None
     }
 
@@ -620,23 +624,17 @@ fn get_all_schedulers() -> Vec<fn() -> Box<dyn SrsScheduler>> {
     all_schedulers
 }
 
-/// SQL that is `sql_for` the [`RetrievabilityKey`] of the scheduler that last reviewed the card
-/// `c` (the default scheduler if none did), or NULL if that scheduler has no forgetting curve.
-/// `elapsed` is passed on to [`SrsScheduler::retrievability_key`]. Each scheduler has its own key,
-/// so sorting by it orders cards by retrievability only among those of the same scheduler.
-pub(crate) fn retrievability_key_sql(
-    config: &SparesExternalConfig,
-    elapsed: &str,
-    sql_for: impl Fn(&RetrievabilityKey) -> String,
-) -> String {
+/// SQL for the retrievability of the card `c` under the scheduler that last reviewed it (the
+/// default scheduler if none did), or NULL if that scheduler has no forgetting curve. `elapsed` is
+/// passed on to [`SrsScheduler::retrievability_sql`].
+pub(crate) fn card_retrievability_sql(config: &SparesExternalConfig, elapsed: &str) -> String {
     let whens = all_schedulers()
         .into_iter()
         .filter_map(|scheduler| {
-            let key = scheduler.retrievability_key(config, elapsed)?;
+            let sql = scheduler.retrievability_sql(config, elapsed)?;
             Some(format!(
-                "WHEN '{}' THEN {}",
+                "WHEN '{}' THEN {sql}",
                 scheduler.get_scheduler_name().replace('\'', "''"),
-                sql_for(&key)
             ))
         })
         .join(" ");

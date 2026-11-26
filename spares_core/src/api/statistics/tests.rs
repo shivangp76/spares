@@ -16,6 +16,7 @@ use crate::api::queue::tests::create_cards;
 use crate::config::SparesExternalConfig;
 use crate::config::StatisticsConfig;
 use crate::model::CardId;
+use crate::schedulers::CardMemory;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schema::statistics::AddedDay;
 use crate::schema::statistics::ForecastDay;
@@ -490,9 +491,16 @@ async fn every_section_over_all_time(pool: SqlitePool) {
         .unwrap()
         .retrievability(&config(21))
         .unwrap();
-    let recall =
-        (curve(10.0, 9.0 + 3.0 / 24.0) + curve(10.0, 4.0 / 24.0) + curve(10.0, 6.0 + 1.0 / 24.0))
-            / 3.0;
+    // The cards were set up with a stability of 10 and no fast stability.
+    let memory = CardMemory {
+        stability: 10.0,
+        stability_fast: 0.0,
+        difficulty: 5.0,
+    };
+    let recall = (curve(memory, 9.0 + 3.0 / 24.0)
+        + curve(memory, 4.0 / 24.0)
+        + curve(memory, 6.0 + 1.0 / 24.0))
+        / 3.0;
     let average = distributions.average_retrievability.unwrap();
     assert!((average - recall).abs() < 1e-9, "{average} {recall}");
 }
