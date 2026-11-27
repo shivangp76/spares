@@ -111,7 +111,13 @@ const TOKEN = run(
   ["host", "init", "--user", USER, "--user-id", USER, "--bind", `127.0.0.1:${PORT}`, "--password-stdin", "--print-token"],
   "demo-password\n",
 ).trim();
-writeFileSync(join(ROOT, "host.toml"), `bind = "127.0.0.1:${PORT}"\n`);
+// Renders get far longer than a server's (60 seconds, 120 of CPU): on a CI runner, LuaTeX's first
+// renders of the Japanese and Chinese notes build its font caches, and a render stopped for
+// taking too long fails the whole build
+writeFileSync(
+  join(ROOT, "host.toml"),
+  `bind = "127.0.0.1:${PORT}"\n\n[render]\ntimeout_seconds = 900\ncpu_seconds = 900\n`,
+);
 const COLLECTION = join(ROOT, "users", USER);
 const CONFIG = join(COLLECTION, "config/config.toml");
 
