@@ -3,6 +3,12 @@
 \newenvironment{note}{}{}
 \newcommand{\se}[1]{[#1]} % settings
 \newcommand{\li}[1]{#1} % linked note
+% The list of linked notes spares writes after a note: an enumerate with a label, of links to
+% their files. `\providecommand` keeps a `\lhref` a template defines itself, such as one with
+% `run:` links for a PDF viewer.
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\providecommand{\lhref}[2]{\href{#1}{#2}}
 \begin{document}
 \begin{minipage}{\linewidth}
 % spares: body
