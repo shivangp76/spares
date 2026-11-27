@@ -1,6 +1,7 @@
 mod graphs;
 pub(crate) mod local_time;
 mod steps;
+pub mod recap;
 pub mod tag_retention;
 #[cfg(test)]
 mod tests;

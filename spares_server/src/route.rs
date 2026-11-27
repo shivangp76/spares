@@ -429,6 +429,10 @@ fn review_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             post(get_statistics_graphs_handler),
         )
         .route("/api/statistics/steps", post(get_steps_stats_handler))
+        .route(
+            "/api/statistics/recap",
+            get(crate::handlers::review::year_recap_handler),
+        )
         .route("/api/goals", get(get_goals_handler))
         .route("/api/goals/status", get(get_goal_status_handler))
         .route("/api/review/config", get(get_review_config_handler))

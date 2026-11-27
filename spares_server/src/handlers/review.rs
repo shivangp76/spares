@@ -244,6 +244,24 @@ pub(crate) async fn get_statistics_graphs_handler(
     Ok(Json(graphs))
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct RecapQuery {
+    year: Option<i32>,
+}
+
+/// A year in review (`spares_core::api::statistics::recap`): of `year`, else the latest with
+/// reviews.
+pub(crate) async fn year_recap_handler(
+    axum::extract::Query(query): axum::extract::Query<RecapQuery>,
+    Coll(data): Coll,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let recap =
+        spares_core::api::statistics::recap::year_recap(&data.db, query.year, chrono::Utc::now())
+            .await
+            .map_err(error_to_response)?;
+    Ok(Json(recap))
+}
+
 pub(crate) async fn get_steps_stats_handler(
     Coll(data): Coll,
     Json(body): Json<StepsStatsRequest>,
