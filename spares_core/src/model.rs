@@ -531,6 +531,22 @@ mod tests {
     /// The last migration the baseline replaced
     const LAST_OLD_MIGRATION: i64 = 20_261_126_200_000;
 
+    /// The baseline migration
+    const BASELINE: i64 = 20_261_126_235_900;
+
+    /// The migrations up to the baseline, which make the schema the old migrations made.
+    fn baseline_migrator() -> sqlx::migrate::Migrator {
+        let mut migrator = crate::collection::migrator();
+        migrator.migrations = migrator
+            .migrations
+            .iter()
+            .filter(|m| m.version <= BASELINE)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        migrator
+    }
+
     /// Rows of `_sqlx_migrations` as the migrations before the baseline left them, by version.
     async fn pretend_old_migrations_ran(pool: &SqlitePool, versions: &[i64]) {
         sqlx::query("DELETE FROM _sqlx_migrations")
@@ -558,11 +574,11 @@ mod tests {
     }
 
     /// A database the migrations before the baseline made has its schema already: the baseline
-    /// changes nothing there, neither its schema nor its data.
+    /// changes nothing there, neither its schema nor its data, and the migrations after it run.
     #[sqlx::test(migrations = false)]
     async fn migration_baseline_accepts_a_database_the_old_migrations_made(pool: SqlitePool) {
-        let migrator = crate::collection::migrator();
-        migrator.run(&pool).await.unwrap();
+        let baseline = baseline_migrator();
+        baseline.run(&pool).await.unwrap();
         sqlx::query("INSERT INTO parser (name, usn) VALUES ('markdown', -1)")
             .execute(&pool)
             .await
@@ -575,7 +591,7 @@ mod tests {
         let old = [20_240_326_145_400, 20_261_126_120_000, LAST_OLD_MIGRATION];
         pretend_old_migrations_ran(&pool, &old).await;
 
-        migrator.run(&pool).await.unwrap();
+        baseline.run(&pool).await.unwrap();
 
         assert_eq!(schema(&pool).await, before);
         let parsers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parser")
@@ -588,6 +604,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tokens, [token]);
+        let migrator = crate::collection::migrator();
+        migrator.run(&pool).await.unwrap();
         let applied: Vec<i64> =
             sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
                 .fetch_all(&pool)

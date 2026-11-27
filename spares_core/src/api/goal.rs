@@ -1019,6 +1019,48 @@ mod tests {
         assert!((lost - 0.1).abs() < 1e-9, "{lost}");
     }
 
+    /// The projection orders notes as the queue does: an older note building on a newer one waits
+    /// for it, unless `order_by_links` is off.
+    #[sqlx::test]
+    async fn projects_newer_prerequisites_first(pool: SqlitePool) {
+        let now = Utc::now();
+        let ids = tagged_cards(
+            &pool,
+            &[&["exam:prob"], &["exam:prob"]],
+            now - Duration::days(1),
+        )
+        .await;
+        sqlx::query(
+            r#"INSERT INTO note_link
+                (parent_note_id, linked_note_id, "order", searched_keyword, matched_keyword, score, relation)
+            VALUES ((SELECT note_id FROM card WHERE id = ?), (SELECT note_id FROM card WHERE id = ?),
+                0, 'keyword', 'keyword', 0, 0)"#,
+        )
+        .bind(ids[0])
+        .bind(ids[1])
+        .execute(&pool)
+        .await
+        .unwrap();
+        let today = SparesExternalConfig::default().zone().date(now);
+        let date = today + Duration::days(30);
+        let config = |order_by_links: bool| {
+            parse(&format!(
+                "[queue]\nnew_after_linked_notes = true\norder_by_links = {order_by_links}\n\
+                 [goals.exam]\ndate = \"{date}\"\nquery = 'tag=exam'\n"
+            ))
+        };
+        let learned = async |order_by_links: bool| {
+            let statuses = goal_status(&pool, &config(order_by_links), now)
+                .await
+                .unwrap();
+            let projection = statuses[0].parts[0].projection.clone().unwrap();
+            (projection.learned_earliest, projection.learned_latest)
+        };
+        let tomorrow = Some(today + Duration::days(1));
+        assert_eq!(learned(true).await, (tomorrow, tomorrow));
+        assert_eq!(learned(false).await, (Some(today), Some(today)));
+    }
+
     /// A card whose next review is after the goal's day, with too little recall left on the day,
     /// is due when its recall falls to the retention instead.
     #[sqlx::test]

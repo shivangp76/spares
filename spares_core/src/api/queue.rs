@@ -12,6 +12,8 @@ use sqlx::FromRow;
 use sqlx::SqlitePool;
 
 use crate::Error;
+use crate::api::note_position::ensure_note_positions_in;
+use crate::api::note_position::position_sql;
 use crate::api::preset::PresetLimitsLeft;
 use crate::api::preset::preset_index;
 use crate::api::preset::sql_string;
@@ -166,9 +168,16 @@ fn review_keys(config: &SparesExternalConfig, order: ReviewOrder, now: DateTime<
 /// `unblocking` is [`unblocking_sql`]'s weight of note `n`, for [`NewCardOrder::Unblocking`].
 fn new_keys(order: NewCardOrder, now: DateTime<Utc>, zone: Zone, unblocking: &str) -> Vec<Key> {
     match order {
-        NewCardOrder::Created => vec![asc("n.created_at"), asc("n.id"), asc("c.\"order\"")],
+        // Notes not positioned yet, as in tests that build SQL by hand, come by when created.
+        NewCardOrder::Created => vec![
+            asc(position_sql("n")),
+            asc("n.created_at"),
+            asc("n.id"),
+            asc("c.\"order\""),
+        ],
         NewCardOrder::Unblocking => vec![
             desc(unblocking),
+            asc(position_sql("n")),
             asc("n.created_at"),
             asc("n.id"),
             asc("c.\"order\""),
@@ -432,7 +441,8 @@ pub(crate) fn linked_notes_clause(
 }
 
 /// The cards [`linked_notes_clause`] holds back, as an `EXISTS` condition. `None` when both
-/// settings are off.
+/// settings are off. It reads the notes' positions, which must be current (see
+/// [`ensure_note_positions`](crate::api::note_position::ensure_note_positions)).
 pub(crate) fn waiting_on_links(
     config: &QueueConfig,
     card_due_limit: DateTime<Utc>,
@@ -460,21 +470,23 @@ pub(crate) fn waiting_on_links(
     let in_query = query_card_ids
         .map(|ids| format!(" AND lc.id IN ({ids})"))
         .unwrap_or_default();
-    // Only older notes hold newer ones back, which is a strict order, so there are no cycles. A
-    // card waits for its note's prerequisites: the notes its prerequisite links point to, and the
-    // notes whose dependent links point to it.
+    // Only notes earlier in the order of positions hold later ones back, which is a strict
+    // order, so there are no cycles. A card waits for its note's prerequisites: the notes its
+    // prerequisite links point to, and the notes whose dependent links point to it. A note not
+    // positioned yet holds nothing back and waits for nothing.
     Some(formatdoc! {"
         EXISTS (
             SELECT 1 FROM note_prerequisite nl
-            JOIN note ln ON ln.id = nl.prerequisite_id
-            JOIN card lc ON lc.note_id = ln.id
+            JOIN note_position lp ON lp.note_id = nl.prerequisite_id
+            JOIN card lc ON lc.note_id = nl.prerequisite_id
             WHERE nl.note_id = c.note_id
                 AND nl.score <= {max_score}
-                AND (ln.created_at, ln.id) < (n.created_at, n.id)
+                AND lp.position < {position}
                 AND (lc.special_state IS NULL OR lc.special_state IN ({scheduler_buried}, {buried_until_later_today}))
                 AND ({holds}){in_query}
         )",
         max_score = config.linked_note_max_score,
+        position = position_sql("n"),
         scheduler_buried = SpecialState::SchedulerBuried as u8,
         buried_until_later_today = SpecialState::BuriedUntilLaterToday as u8,
         holds = holds.join(" OR "),
@@ -483,8 +495,8 @@ pub(crate) fn waiting_on_links(
 
 /// The weight of each note for [`NewCardOrder::Unblocking`]: the most new cards along any chain
 /// of notes waiting behind it. `new[i]` is how many new cards note `i` has, and `dependents[i]`
-/// the notes with new cards that link to it, each newer than it, as notes are in order of age, so
-/// the links make no cycle.
+/// the notes with new cards that link to it, each after it, as notes are in the order of their
+/// positions (see [`crate::api::note_position`]), so the links make no cycle.
 pub(crate) fn waiting_chain_weights(new: &[u32], dependents: &[Vec<usize>]) -> Vec<u32> {
     let mut weights = vec![0_u32; new.len()];
     for note in (0..new.len()).rev() {
@@ -512,7 +524,8 @@ pub(crate) fn orders_by_unblocking(config: &QueueConfig) -> bool {
 ///
 /// The notes are those with new cards that aren't suspended, among `query_card_ids` (comma
 /// separated) if the review has a query, linked as [`waiting_on_links`] reads links: by
-/// [`QueueConfig::linked_note_max_score`], only a newer note waiting on an older one.
+/// [`QueueConfig::linked_note_max_score`], only a note waiting on one before it in the order of
+/// positions (see [`crate::api::note_position`]).
 pub(crate) async fn unblocking_sql(
     db: &SqlitePool,
     config: &QueueConfig,
@@ -521,6 +534,7 @@ pub(crate) async fn unblocking_sql(
     if !orders_by_unblocking(config) {
         return Ok("0".to_string());
     }
+    ensure_note_positions_in(db, config).await?;
     let in_query = query_card_ids
         .map(|ids| format!(" AND c.id IN ({ids})"))
         .unwrap_or_default();
@@ -531,9 +545,10 @@ pub(crate) async fn unblocking_sql(
         SpecialState::BuriedUntilLaterToday as u8,
         new = state_ids_sql(&[StateRole::New]),
     );
-    let notes: Vec<(crate::model::NoteId, i64, u32)> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT n.id, n.created_at, COUNT(*) FROM ({notes_sql}) w JOIN note n ON n.id = w.note_id \
-         GROUP BY n.id ORDER BY n.created_at, n.id"
+    let notes: Vec<(crate::model::NoteId, u32)> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT n.id, COUNT(*) FROM ({notes_sql}) w JOIN note n ON n.id = w.note_id \
+         GROUP BY n.id ORDER BY {}, n.created_at, n.id",
+        position_sql("n")
     )))
     .fetch_all(db)
     .await
@@ -541,7 +556,7 @@ pub(crate) async fn unblocking_sql(
     let index = notes
         .iter()
         .enumerate()
-        .map(|(index, (id, _, _))| (*id, index))
+        .map(|(index, (id, _))| (*id, index))
         .collect::<HashMap<_, _>>();
     let links: Vec<(crate::model::NoteId, crate::model::NoteId)> =
         sqlx::query_as(AssertSqlSafe(format!(
@@ -561,12 +576,12 @@ pub(crate) async fn unblocking_sql(
             dependents[linked].push(parent);
         }
     }
-    let new = notes.iter().map(|(_, _, count)| *count).collect::<Vec<_>>();
+    let new = notes.iter().map(|(_, count)| *count).collect::<Vec<_>>();
     let whens = waiting_chain_weights(&new, &dependents)
         .into_iter()
         .zip(&notes)
         .filter(|(weight, _)| *weight > 0)
-        .map(|(weight, (id, _, _))| format!("WHEN {} THEN {weight}", id.packed()))
+        .map(|(weight, (id, _))| format!("WHEN {} THEN {weight}", id.packed()))
         .join(" ");
     Ok(if whens.is_empty() {
         "0".to_string()
@@ -1861,6 +1876,57 @@ mod sibling_tests {
         );
     }
 
+    /// With `order_by_links`, a newer note that an older one builds on holds it back, so
+    /// `"unless_blocking"` keeps its cards together too.
+    #[sqlx::test]
+    async fn unless_blocking_keeps_a_newer_prerequisite_together(pool: SqlitePool) {
+        let now = Utc::now();
+        let notes = notes_of(&pool, &[1, 2], now).await;
+        link_cards(&pool, notes[0][0], notes[1][0]).await;
+        let mut config = SparesExternalConfig::default();
+        config.queue.bury_new_siblings = crate::config::BuryNewSiblings::UnlessBlocking;
+        config.queue.new_after_linked_notes = true;
+        rate(&pool, &config, notes[1][0], now).await;
+        assert_eq!(special_states(&pool, &[notes[1][1]]).await, [None]);
+    }
+
+    /// `"created"` and `"unblocking"` put a note's newer prerequisites before it, and every other
+    /// note in the order it was created, unless `order_by_links` is off.
+    #[sqlx::test]
+    async fn created_orders_put_newer_prerequisites_first(pool: SqlitePool) {
+        let now = Utc::now();
+        // A, B, C, D, oldest first: A builds on C
+        let notes = notes_of(&pool, &[1, 1, 1, 1], now).await;
+        let [a, b, c, d] = [notes[0][0], notes[1][0], notes[2][0], notes[3][0]];
+        link_cards(&pool, a, c).await;
+        let mut config = SparesExternalConfig::default();
+        config.queue.new_after_linked_notes = true;
+        let order = async |config: &SparesExternalConfig| {
+            let unblocking = unblocking_sql(&pool, &config.queue, None).await.unwrap();
+            ensure_note_positions_in(&pool, &config.queue)
+                .await
+                .unwrap();
+            let query = format!(
+                "SELECT c.id FROM {} c JOIN note n ON c.note_id = n.id ORDER BY {}",
+                crate::api::preset::cards_with_preset(&config.queue.presets),
+                queue_order_by(config, now, &QueueCaps::default(), &[], &unblocking)
+            );
+            sqlx::query_scalar::<_, CardId>(AssertSqlSafe(query))
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+        assert_eq!(order(&config).await, [c, a, b, d]);
+        // C is the head of a chain, so comes first anyway
+        config.queue.new_order = NewCardOrder::Unblocking;
+        assert_eq!(order(&config).await, [c, a, b, d]);
+        // Off, C is newer than A, so the link makes no chain
+        config.queue.order_by_links = false;
+        assert_eq!(order(&config).await, [a, b, c, d]);
+        config.queue.new_order = NewCardOrder::Created;
+        assert_eq!(order(&config).await, [a, b, c, d]);
+    }
+
     #[test]
     fn waiting_chains_are_weighed_by_their_new_cards() {
         // 0 <- 1 <- 2, and 0 <- 3; note 4 waits on nothing and nothing waits on it.
@@ -1925,6 +1991,7 @@ mod linked_note_tests {
     use super::tests::create_cards;
     use super::tests::set_card;
     use super::*;
+    use crate::api::note_position::ensure_note_positions_in;
     use crate::api::preset::cards_with_preset;
     use crate::api::review::ReviewFilterQuery;
     use crate::api::review::get_cards_left_by_state_and_time_estimate;
@@ -1988,6 +2055,7 @@ mod linked_note_tests {
         query_card_ids: Option<&str>,
     ) -> Vec<CardId> {
         let (_, card_due_limit) = get_start_end_local_date(&now, super::tests::zone());
+        ensure_note_positions_in(pool, config).await.unwrap();
         sqlx::query_scalar(AssertSqlSafe(format!(
             "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
             where_clause(config, now, query_card_ids)
@@ -2040,8 +2108,10 @@ mod linked_note_tests {
         assert_eq!(shown(&pool, &loose, now).await, [a, c]);
     }
 
+    /// Notes linking to each other in a loop hold back only by age, and a note linking to itself
+    /// holds nothing back.
     #[sqlx::test]
-    async fn only_older_notes_hold_newer_ones_back(pool: SqlitePool) {
+    async fn in_a_loop_only_older_notes_hold_newer_ones_back(pool: SqlitePool) {
         let now = Utc::now();
         let [a, b, c] = create_cards(&pool, 3, now - Duration::days(30)).await[..] else {
             unreachable!()
@@ -2052,8 +2122,34 @@ mod linked_note_tests {
         assert_eq!(shown(&pool, &holding(true, false), now).await, [a, c]);
     }
 
-    /// A dependent link holds back the note it links to, and a related link holds nothing back.
-    /// Only older notes hold newer ones back, whichever way the link points.
+    /// With `order_by_links`, an older note waits for a newer note it builds on. Without it, only
+    /// older notes hold newer ones back.
+    #[sqlx::test]
+    async fn notes_wait_for_newer_prerequisites_when_ordered_by_links(pool: SqlitePool) {
+        let now = Utc::now();
+        let [a, b, c] = create_cards(&pool, 3, now - Duration::days(30)).await[..] else {
+            unreachable!()
+        };
+        // `a` builds on `c`, which builds on `b`
+        link(&pool, a, Some(c), 0.0).await;
+        link(&pool, c, Some(b), 0.0).await;
+        let config = holding(true, false);
+        assert_eq!(shown(&pool, &config, now).await, [b]);
+        let by_age = QueueConfig {
+            order_by_links: false,
+            ..config.clone()
+        };
+        assert_eq!(shown(&pool, &by_age, now).await, [a, b]);
+        // A link added later counts at once
+        set_card(&pool, b, REVIEW, now + Duration::days(3), 5.0, 5.0).await;
+        assert_eq!(shown(&pool, &config, now).await, [c]);
+        link(&pool, c, Some(a), 0.0).await;
+        // Now `a` and `c` build on each other: `a`, the older, holds `c` back
+        assert_eq!(shown(&pool, &config, now).await, [a]);
+    }
+
+    /// A dependent link holds back the note it links to, and a related link holds nothing back,
+    /// whichever note is older.
     #[sqlx::test]
     async fn relations_say_which_note_waits(pool: SqlitePool) {
         let now = Utc::now();
@@ -2074,17 +2170,17 @@ mod linked_note_tests {
         // `a` is used in `b`, which is newer, so `b` waits
         link(&pool, a, Some(b), 0.0).await;
         set_relation(a, 1).await;
-        // `d` is used in `c`, which is older, so nothing waits
+        // `d` is used in `c`, which is older, so `c` waits
         link(&pool, d, Some(c), 0.0).await;
         set_relation(d, 1).await;
         let config = holding(true, false);
-        assert_eq!(shown(&pool, &config, now).await, [a, c, d]);
+        assert_eq!(shown(&pool, &config, now).await, [a, d]);
 
         set_relation(a, 2).await;
-        assert_eq!(shown(&pool, &config, now).await, [a, b, c, d]);
-        // As a prerequisite, the link would hold back `a` for the newer `b`: nothing waits
+        assert_eq!(shown(&pool, &config, now).await, [a, b, d]);
+        // As a prerequisite, the link holds back `a` for `b`
         set_relation(a, 0).await;
-        assert_eq!(shown(&pool, &config, now).await, [a, b, c, d]);
+        assert_eq!(shown(&pool, &config, now).await, [b, d]);
     }
 
     #[sqlx::test]
@@ -2237,6 +2333,7 @@ mod linked_note_tests {
         link(&pool, b, Some(a), 0.0).await;
         link(&pool, c, Some(a), 4.5).await;
         let matching = async |config: &QueueConfig, value: &str| -> Vec<CardId> {
+            ensure_note_positions_in(&pool, config).await.unwrap();
             sqlx::query_scalar(AssertSqlSafe(format!(
                 "SELECT c.id FROM card c JOIN note n ON c.note_id = n.id WHERE {} ORDER BY c.id",
                 waiting_on_links_condition(config, super::tests::zone(), value)

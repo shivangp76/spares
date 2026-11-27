@@ -30,7 +30,7 @@ These are the issues in Anki that spares was built to address, and how it does.
   - Links are fuzzy, so they match despite small differences in phrasing, and partial references (e.g., "Ransford") work
   - No title field is required
   - One note can cite several sources
-  - A new card can wait until the notes it links to are learned (`new_after_linked_notes` on `spares_core::config::QueueConfig`)
+  - A new card can wait until the notes it links to are learned (`new_after_linked_notes` on `spares_core::config::QueueConfig`), and new notes come after the notes they link to, even newer ones (`order_by_links`)
 - Scheduling is pluggable, with FSRS built in, as Anki now also has.
 - The web app can be installed on a phone, keeps a copy of the collection there and works offline. Sync goes through a server you host yourself (see [Deploying a Sync Server](deploying.md)), instead of AnkiWeb.
 

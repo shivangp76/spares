@@ -315,6 +315,10 @@ impl Default for EasyDaysConfig {
 #[serde_with::serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "settings of config.toml, each its own switch"
+)]
 pub struct QueueConfig {
     /// The order of review cards (cards that graduated from their learning steps). Defaults to
     /// [`ReviewOrder::Due`].
@@ -399,7 +403,7 @@ pub struct QueueConfig {
     /// undoing the rating unburies them. Buried siblings are listed by `c.scheduler_buried`
     /// queries and unburied with `spares card unbury`.
     ///
-    /// `"unless_blocking"` buries them except for a note that newer notes with new cards link
+    /// `"unless_blocking"` buries them except for a note that later notes with new cards link
     /// to, which [`Self::new_after_linked_notes`] holds back until it is learned. Such a note is
     /// then learned in a day and lets the notes waiting on it through, while every other note
     /// still spreads its cards over days. See [`BuryNewSiblings`].
@@ -414,7 +418,7 @@ pub struct QueueConfig {
     /// Tagging the cards you keep burying instead of rating them. On by default: a card buried on
     /// 2 days since it was last rated gets the tag `buried`. See [`TagBuriedConfig`].
     pub tag_buried: TagBuriedConfig,
-    /// Whether a new card waits until the older notes its note builds on are learned. Defaults to
+    /// Whether a new card waits until the notes its note builds on are learned. Defaults to
     /// `false`.
     ///
     /// A note on the chain rule that links to the note defining derivatives, by its keyword,
@@ -423,9 +427,9 @@ pub struct QueueConfig {
     /// they all reach review, the chain rule's cards come up on the next card fetched, in the
     /// same session.
     ///
-    /// This matters most when new cards are not shown in the order their notes were created, as
-    /// with [`NewCardOrder::Random`], [`NewCardOrder::RandomNote`], [`NewCardOrder::NewestFirst`]
-    /// or presets. With [`NewCardOrder::Created`], the derivative note already comes first, unless
+    /// This matters most when new cards are not shown in the order of their notes, as with
+    /// [`NewCardOrder::Random`], [`NewCardOrder::RandomNote`], [`NewCardOrder::NewestFirst`] or
+    /// presets. With [`NewCardOrder::Created`], the derivative note already comes first, unless
     /// its cards are still in learning.
     ///
     /// A note builds on the notes its links point to, and on the notes whose
@@ -434,8 +438,11 @@ pub struct QueueConfig {
     ///
     /// So that no card waits for good:
     ///
-    /// - Only links to older notes hold cards back. A link from an older note to a newer one
-    ///   holds nothing back, so two notes that link to each other cannot hold each other back.
+    /// - Only links to notes earlier in the order of [`Self::order_by_links`] hold cards back.
+    ///   With it on, that is every link but some of those in a loop of notes linking to each
+    ///   other, where only links to older notes count; with it off, only links to older notes
+    ///   hold cards back. Either way, two notes that link to each other cannot hold each other
+    ///   back.
     /// - Only links scoring within [`Self::linked_note_max_score`] count, and links that matched
     ///   no note never do.
     /// - Suspended and user buried cards hold nothing back. Cards buried by the scheduler, or
@@ -451,8 +458,8 @@ pub struct QueueConfig {
     /// The cards waiting are listed by `c.waiting_on_links` queries. To see what this would hold
     /// back before studying with it, turn it on and run one.
     pub new_after_linked_notes: bool,
-    /// Whether a review card waits while a card of an older note its note builds on is
-    /// relearning and due today. Defaults to `false`. See [`Self::new_after_linked_notes`],
+    /// Whether a review card waits while a card of a note its note builds on is relearning and
+    /// due today. Defaults to `false`. See [`Self::new_after_linked_notes`],
     /// whose rules apply here too.
     ///
     /// When the derivative card lapses, the chain rule's reviews due today wait until it is
@@ -474,7 +481,28 @@ pub struct QueueConfig {
     /// words that only share a long stem. The default counts every match up to one typo, and
     /// leaves out the matches on a shared stem, which are the most likely to be links to a
     /// related note rather than to the note itself.
+    ///
+    /// It also picks the links [`Self::order_by_links`] orders notes by.
     pub linked_note_max_score: f64,
+    /// Whether notes are put after the notes they build on, by their links, rather than only in
+    /// the order they were created. Defaults to `true`.
+    ///
+    /// Notes imported together, or a newer note written for an older one, are created in no
+    /// particular order: a note on warps may be created a second before the note on the thread
+    /// hierarchy it builds on. With this on, the thread hierarchy comes first: a note's
+    /// prerequisites move forward to just before the first note that needs them, and every other
+    /// note keeps its place, since notes added one after another often build on each other
+    /// without linking. Notes that link to each other in a loop keep the created order between
+    /// them. See [`crate::api::note_position`].
+    ///
+    /// The order is used by [`Self::new_after_linked_notes`] and
+    /// [`Self::reviews_after_linked_notes`] (a note waits only for notes before it),
+    /// [`NewCardOrder::Created`], [`NewCardOrder::Unblocking`], `"unless_blocking"` sibling
+    /// burying, and goals' projections.
+    /// [`NewCardOrder::NewestFirst`] and [`ReviewOrder::NoteCreated`] still go by when notes were
+    /// created. Links are matched on each machine, so the order is too, like the links that hold
+    /// cards back.
+    pub order_by_links: bool,
     /// Settings for the cards of notes with some tags, in place of the top-level ones, by name:
     /// `[queue.presets.<name>]`. Empty by default. See [`QueuePreset`].
     ///
@@ -558,6 +586,7 @@ impl Default for QueueConfig {
             new_after_linked_notes: false,
             reviews_after_linked_notes: false,
             linked_note_max_score: 1.5,
+            order_by_links: true,
             presets: IndexMap::new(),
         }
     }
@@ -819,7 +848,8 @@ pub enum ReviewOrder {
 #[serde(rename_all = "snake_case")]
 pub enum NewCardOrder {
     /// `"created"`: cards of the oldest notes first, and a note's cards in the order they appear
-    /// in it. Since newer notes may build on older ones, this learns them in that order.
+    /// in it. Since newer notes may build on older ones, this learns them in that order. With
+    /// [`QueueConfig::order_by_links`], a note's prerequisites come before it even when newer.
     #[default]
     Created,
     /// `"newest_first"`: cards of the newest notes first, and a note's cards in the order they

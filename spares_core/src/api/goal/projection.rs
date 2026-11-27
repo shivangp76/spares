@@ -13,6 +13,8 @@ use sqlx::AssertSqlSafe;
 use sqlx::SqlitePool;
 
 use crate::Error;
+use crate::api::note_position::ensure_note_positions_in;
+use crate::api::note_position::position_sql;
 use crate::api::preset::preset_index;
 use crate::api::preset::preset_sql;
 use crate::api::preset::resolve_preset_queries;
@@ -61,7 +63,11 @@ pub(crate) struct SimCard {
 pub(crate) struct SimNote {
     pub(crate) id: NoteId,
     pub(crate) created_at: i64,
-    /// The indices of the older notes of the goal it links to, which hold its new cards back
+    /// Its place in the order of notes (see [`crate::api::note_position`]), which
+    /// [`NewCardOrder::Created`] follows
+    pub(crate) position: i64,
+    /// The indices of the notes of the goal before it that it links to, which hold its new cards
+    /// back
     pub(crate) prerequisites: Vec<usize>,
 }
 
@@ -329,7 +335,7 @@ fn day_queue(
             orders.iter().position(|o| *o == order).unwrap_or(0)
         };
         let within = match order {
-            NewCardOrder::Created => (0, note.created_at, note.id.packed(), card.order),
+            NewCardOrder::Created => (0, note.position, note.id.packed(), card.order),
             NewCardOrder::NewestFirst => (0, -note.created_at, -note.id.packed(), card.order),
             NewCardOrder::Random => (0, draw(card.id, day, run), 0, 0),
             NewCardOrder::RandomNote => (
@@ -340,7 +346,7 @@ fn day_queue(
             ),
             NewCardOrder::Unblocking => (
                 -i64::from(weights[card.note]),
-                note.created_at,
+                note.position,
                 note.id.packed(),
                 card.order,
             ),
@@ -372,6 +378,7 @@ pub(crate) async fn load(
     cards_sql: &str,
     count_until: u32,
 ) -> Result<SimInput, Error> {
+    ensure_note_positions_in(db, &config.queue).await?;
     resolve_preset_queries(db, config).await?;
     let queue = &config.queue;
     let rows: Vec<CardRow> = sqlx::query_as(AssertSqlSafe(format!(
@@ -383,8 +390,9 @@ pub(crate) async fn load(
     .await
     .map_err(|e| Error::Sqlx { source: e })?;
     let note_ids = rows.iter().map(|row| row.note_id).unique().collect_vec();
-    let created: Vec<(NoteId, i64)> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT id, created_at FROM note WHERE id IN ({})",
+    let created: Vec<(NoteId, i64, i64)> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT n.id, n.created_at, COALESCE({}, -1) FROM note n WHERE n.id IN ({})",
+        position_sql("n"),
         note_ids.iter().map(|id| id.packed()).join(",")
     )))
     .fetch_all(db)
@@ -392,10 +400,11 @@ pub(crate) async fn load(
     .map_err(|e| Error::Sqlx { source: e })?;
     let mut notes = created
         .into_iter()
-        .sorted_by_key(|(id, created_at)| (*created_at, id.packed()))
-        .map(|(id, created_at)| SimNote {
+        .sorted_by_key(|(id, created_at, position)| (*position, *created_at, id.packed()))
+        .map(|(id, created_at, position)| SimNote {
             id,
             created_at,
+            position,
             prerequisites: Vec::new(),
         })
         .collect_vec();
@@ -404,8 +413,8 @@ pub(crate) async fn load(
         .enumerate()
         .map(|(index, note)| (note.id, index))
         .collect::<HashMap<_, _>>();
-    // Only links between the goal's notes hold anything back, and only an older note holds a
-    // newer one back. Notes are sorted by age, so that is a lower index.
+    // Only links between the goal's notes hold anything back, and only a note holds back the notes
+    // after it. Notes are sorted by position, so that is a lower index.
     let links: Vec<(NoteId, NoteId)> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT DISTINCT note_id, prerequisite_id FROM note_prerequisite \
          WHERE score <= ? AND note_id IN ({ids}) AND prerequisite_id IN ({ids})",
@@ -479,6 +488,7 @@ mod tests {
             .map(|index| SimNote {
                 id: NoteId::from_packed(i64::try_from(index).unwrap() + 1),
                 created_at: i64::try_from(index).unwrap(),
+                position: i64::try_from(index).unwrap(),
                 prerequisites: index.checked_sub(1).into_iter().collect(),
             })
             .collect();

@@ -376,8 +376,9 @@ async fn cards_of_filter(
         FROM {cards} c
         JOIN note n ON c.note_id = n.id
         WHERE {filter_cards} AND c.id IN ({ids})
-        ORDER BY n.created_at, n.id, c."order""#,
+        ORDER BY {position}, n.created_at, n.id, c."order""#,
         cards = review_filter.cards,
+        position = crate::api::note_position::position_sql("n"),
         filter_cards = review_filter.filter_cards_clause,
     }))
     .fetch_all(db)
@@ -708,6 +709,9 @@ mod tests {
             ..QueueConfig::default()
         };
         let (_, card_due_limit) = get_start_end_local_date(&now, crate::api::queue::tests::zone());
+        crate::api::note_position::ensure_note_positions_in(&pool, &config)
+            .await
+            .unwrap();
         let filter = ReviewFilterQuery {
             cards: cards_with_preset(&IndexMap::new()),
             where_clause: String::new(),

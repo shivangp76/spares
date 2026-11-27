@@ -7,6 +7,7 @@ pub mod goal;
 pub mod image;
 pub mod image_occlusion;
 pub mod note;
+pub(crate) mod note_position;
 pub mod parser;
 pub(crate) mod preset;
 pub(crate) mod queue;

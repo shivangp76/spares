@@ -39,6 +39,8 @@ use crate::api::goal::keep_due_for_goals;
 use crate::api::note::get_render_note_data;
 use crate::api::note::render_note_data_to_generate_files_request;
 use crate::api::note::update_notes;
+use crate::api::note_position::ensure_note_positions;
+use crate::api::note_position::ensure_note_positions_in;
 use crate::api::preset::CardConfigs;
 use crate::api::preset::PresetLimitsLeft;
 use crate::api::preset::cap_counts;
@@ -439,6 +441,7 @@ pub(crate) async fn daily_limits_left_with(
     config: &SparesExternalConfig,
     requested_date: DateTime<Utc>,
 ) -> Result<DailyLimitsLeft, Error> {
+    ensure_note_positions_in(db, &config.queue).await?;
     resolve_preset_queries(db, config).await?;
     let (lower_limit, upper_limit) = get_start_end_local_date(&requested_date, config.zone());
     // The preset is only needed for the presets' own limits
@@ -801,6 +804,7 @@ pub(crate) struct ReviewFilterQuery {
 /// Returns `Ok(None)` when a `FilteredTag` filter references a tag that does not exist.
 /// Returns `Err` when a `FilteredTag` filter references a tag that has no query.
 /// Returns `Ok(Some(…))` on success.
+#[expect(clippy::too_many_lines)]
 pub(crate) async fn build_review_filter_query(
     db: &SqlitePool,
     config: &SparesExternalConfig,
@@ -808,6 +812,7 @@ pub(crate) async fn build_review_filter_query(
     requested_date: DateTime<Utc>,
     learn_ahead: bool,
 ) -> Result<Option<ReviewFilterQuery>, Error> {
+    ensure_note_positions_in(db, &config.queue).await?;
     resolve_preset_queries(db, config).await?;
     let (_, card_due_limit) = get_start_end_local_date(&requested_date, config.zone());
     let limits_left = daily_limits_left_with(db, config, requested_date).await?;
@@ -2009,7 +2014,7 @@ pub(crate) async fn tag_leech(
     Ok(())
 }
 
-/// Whether newer notes with new cards link to note `note_id`, so that
+/// Whether later notes with new cards link to note `note_id`, so that
 /// [`QueueConfig::new_after_linked_notes`](crate::config::QueueConfig::new_after_linked_notes)
 /// holds them back while it has new cards, for
 /// [`BuryNewSiblings::UnlessBlocking`]. Always `false` with that setting off.
@@ -2021,13 +2026,14 @@ async fn holds_back_new_cards(
     if !config.queue.new_after_linked_notes {
         return Ok(false);
     }
+    ensure_note_positions(&mut *db, &config.queue).await?;
     sqlx::query_scalar(AssertSqlSafe(format!(
         "SELECT EXISTS (SELECT 1 FROM note_prerequisite nl \
-         JOIN note ln ON ln.id = nl.prerequisite_id \
-         JOIN note pn ON pn.id = nl.note_id \
-         JOIN card pc ON pc.note_id = pn.id \
+         JOIN note_position lp ON lp.note_id = nl.prerequisite_id \
+         JOIN note_position pp ON pp.note_id = nl.note_id \
+         JOIN card pc ON pc.note_id = nl.note_id \
          WHERE nl.prerequisite_id = ? AND nl.score <= ? \
-         AND (ln.created_at, ln.id) < (pn.created_at, pn.id) \
+         AND lp.position < pp.position \
          AND pc.state IN ({}) \
          AND (pc.special_state IS NULL OR pc.special_state IN ({}, {})))",
         state_ids_sql(&[StateRole::New]),

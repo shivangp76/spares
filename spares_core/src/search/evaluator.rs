@@ -145,6 +145,7 @@ impl<'de> Evaluator<'de> {
             .parse_expression()
             .map_err(search_error(query))?;
         check_references_exist(query, &token_tree, db).await?;
+        ensure_positions_if_read(&token_tree, db).await?;
         let query_str = Self::build_query_from_tree(
             &token_tree,
             EvaluatorReturnItemType::NoteIds,
@@ -179,6 +180,7 @@ impl<'de> Evaluator<'de> {
             .parse_expression()
             .map_err(search_error(query))?;
         check_references_exist(query, &token_tree, db).await?;
+        ensure_positions_if_read(&token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
             let mut cards = Vec::new();
@@ -285,6 +287,7 @@ impl<'de> Evaluator<'de> {
             .parse_expression()
             .map_err(search_error(self.query))?;
         check_references_exist(self.query, &tree, db).await?;
+        ensure_positions_if_read(&tree, db).await?;
         let output = match item {
             QueryReturnItemType::Cards if has_cloze_field(&tree) => {
                 let mut ids = Vec::new();
@@ -342,6 +345,7 @@ impl<'de> Evaluator<'de> {
             .parse_expression()
             .map_err(search_error(query))?;
         check_references_exist(query, &token_tree, db).await?;
+        ensure_positions_if_read(&token_tree, db).await?;
 
         if has_cloze_field(&token_tree) {
             let mut ids = Vec::new();
@@ -3039,6 +3043,29 @@ pub(crate) fn tree_has_limit(tree: &TokenTree) -> bool {
 }
 
 /// Returns true if the token tree contains a `c.cloze` field reference.
+/// Whether `tree` uses a field that reads notes' positions (see [`crate::api::note_position`]).
+fn reads_positions(tree: &TokenTree) -> bool {
+    match tree {
+        TokenTree::Atom(Atom::Field(f), _) => {
+            Field::from_str(f).is_ok_and(|f| matches!(f, Field::Card(CardField::WaitingOnLinks)))
+        }
+        TokenTree::Cons(_, children) => children.iter().any(reads_positions),
+        TokenTree::Atom(_, _) => false,
+    }
+}
+
+/// Works out notes' positions again if `tree` reads them and they changed.
+async fn ensure_positions_if_read(
+    tree: &TokenTree<'_>,
+    db: &SqlitePool,
+) -> Result<(), crate::Error> {
+    if !reads_positions(tree) {
+        return Ok(());
+    }
+    let config = read_external_config()?;
+    crate::api::note_position::ensure_note_positions_in(db, &config.queue).await
+}
+
 fn has_cloze_field(tree: &TokenTree) -> bool {
     match tree {
         TokenTree::Atom(Atom::Field(f), _) => {
