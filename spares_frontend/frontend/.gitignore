@@ -10,8 +10,9 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-# The demo build (bun run build-demo)
+# The demo build (bun run build-demo), and demo/run.ts's until it is complete
 dist-demo
+dist-demo.next
 *.local
 
 # TypeScript incremental build cache

@@ -141,16 +141,21 @@ The frontend's lint (react-hooks 7) rejects calling setState synchronously in an
 
 The demo is the web app built with `VITE_SPARES_DEMO=1` (`src/demo.ts`): it has no host, and loads a collection of example notes into the browser's copy (`src/local/demo.ts`, with `load_snapshot` in `spares_wasm`). `demo/build.ts` makes that collection on a scratch host of its own, from `demo/notes.ts`, with three months of made-up reviews dated from the build. `.github/workflows/demo.yml` publishes it to GitHub Pages on every push to `main`, and weekly so that cards stay due.
 
+To build it and try it, from anywhere in the repository:
+
 ```sh
-cd spares_frontend/frontend
-cargo build -p spares_cli -p spares_server   # the build runs them
-bun run build-demo                           # dist-demo/, served at /spares/
-bun demo/serve.ts dist-demo                  # http://127.0.0.1:8798/spares/
+cargo xtask demo         # builds dist-demo/ and serves it at http://127.0.0.1:8798/spares/
+cargo xtask demo --dev   # vite's dev server instead, which reloads as the app changes
+```
+
+It makes the collection again (about two minutes, most of it rendering) only when there is none, when it is over a week old, or when `demo/notes.ts`, `demo/build.ts` or the migrations changed since. Otherwise it rebuilds only the app, keeping the collection. `--fresh` makes it again anyway, `--app` keeps it, `--open` opens a browser tab and `--port` changes the port; `demo/run.ts` has the details. The demo's dev server keeps its prebundled dependencies in `node_modules/.vite-demo`, so it doesn't disturb a dev server of the app. Then, in `spares_frontend/frontend`:
+
+```sh
 bun e2e/demo.ts                              # Chromium, WebKit and Firefox, about a minute each
 bun demo/screenshots.ts                      # docs/screenshots/*.webp (needs cwebp)
 ```
 
-`build-demo` takes about two minutes, most of it rendering. After changing only the app, rebuild just it (`VITE_SPARES_DEMO=1 npx vite build --base /spares/ --outDir dist-demo --emptyOutDir`) and copy back a `dist-demo/demo/` kept from before, since `--emptyOutDir` deletes it. Markdown notes in the demo avoid characters pdflatex can't typeset, such as `α` or `²`: their PDFs are rendered too, though the demo leaves them out.
+CI runs `bun run build-demo` instead, which always builds both the app and the collection into `dist-demo/` (it needs `cargo build -p spares_cli -p spares_server` first). `bun demo/serve.ts dist-demo` serves a build as GitHub Pages does. Markdown notes in the demo avoid characters pdflatex can't typeset, such as `α` or `²`: their PDFs are rendered too, though the demo leaves them out.
 
 ### Clock-dependent tests
 

@@ -3,6 +3,9 @@
 //! - `build-wasm [out-dir]` builds `spares_wasm` for browsers into a package the web app imports:
 //!   the wasm module and its JS bindings, in `spares_frontend/frontend/src/local/pkg` by default.
 //!   `bun run build` runs it first. See CONTRIBUTING.md.
+//! - `demo [options]` builds the web app's demo as far as it needs building, and serves it at
+//!   <http://127.0.0.1:8798/spares/>: `bun demo/run.ts` in `spares_frontend/frontend`, whose top
+//!   says what it does and takes (`--fresh`, `--app`, `--dev`, `--open`, `--port`).
 //!
 //! The JS bindings come from `wasm-bindgen-cli-support`, the library the `wasm-bindgen` CLI is
 //! made of. Its version is pinned to `spares_wasm`'s `wasm-bindgen`, so they always match without
@@ -25,8 +28,24 @@ fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("build-wasm") => build_wasm(args.next().map(PathBuf::from)),
-        _ => bail!("Usage: cargo xtask build-wasm [out-dir]"),
+        Some("demo") => demo(args),
+        _ => bail!("Usage: cargo xtask build-wasm [out-dir] | cargo xtask demo [options]"),
     }
+}
+
+fn demo(args: impl Iterator<Item = String>) -> Result<()> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let status = Command::new("bun")
+        .current_dir(root.join("spares_frontend/frontend"))
+        .arg("demo/run.ts")
+        .args(args)
+        .status()
+        .context("Running bun failed: the demo needs it (https://bun.sh)")?;
+    // run.ts has said why
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
 }
 
 fn build_wasm(out: Option<PathBuf>) -> Result<()> {

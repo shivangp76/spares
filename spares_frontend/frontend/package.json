@@ -9,6 +9,7 @@
     "build": "bun run build-wasm && bun run prepare-svgedit && tsc -b && vite build",
     "build-demo": "bun run build-wasm && bun run prepare-svgedit && tsc -b && VITE_SPARES_DEMO=1 vite build --base /spares/ --outDir dist-demo --emptyOutDir && bun demo/build.ts --out dist-demo",
     "build-wasm": "cargo xtask build-wasm",
+    "demo": "bun demo/run.ts",
     "prepare-svgedit": "cd ./svgedit/ && bun install && ([ -d packages/svgcanvas/dist ] || npm run build --workspace @svgedit/svgcanvas)",
     "lint": "eslint .",
     "test": "bun test ./src",
