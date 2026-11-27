@@ -870,7 +870,7 @@ export default function NotesPage() {
               onClick={() => setImportOpen(true)}
               className="touch-target-small"
               style={{ marginLeft: "auto" }}
-              title="Import files of notes, or zips of shared notes"
+              title="Import files of notes, zips of shared notes, or a table of cards"
             >
               Import
             </button>

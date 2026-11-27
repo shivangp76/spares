@@ -598,6 +598,49 @@ export interface OptimizeResponse {
   event_id: number | null;
 }
 
+export type TableDelimiter = "tab" | "comma" | "semicolon" | "dash";
+
+/** `spares_core::adapters::impls::delimited::Columns`, counted from 0 */
+export interface TableColumns {
+  front: number;
+  back: number;
+  tags: number | null;
+}
+
+/** `spares_core::adapters::impls::delimited::ImportTableRequest` */
+export interface ImportTableRequest {
+  text: string;
+  delimiter: TableDelimiter | null;
+  has_header: boolean | null;
+  columns: TableColumns | null;
+  parser: string;
+  /** Whether the cells are plain text, whose markup characters are escaped */
+  escape: boolean;
+  tag: string | null;
+  dry_run: boolean;
+}
+
+/** `spares_core::adapters::impls::delimited::TableNote` */
+export interface TableNote {
+  record: number;
+  front: string;
+  back: string;
+  tags: string[];
+  data: string;
+}
+
+/** `spares_core::adapters::impls::delimited::ImportTableResponse` */
+export interface ImportTableResponse {
+  delimiter: TableDelimiter;
+  header: string[] | null;
+  column_count: number;
+  columns: TableColumns;
+  note_count: number;
+  preview: TableNote[];
+  skipped_records: number[];
+  event_id: number | null;
+}
+
 /** `spares_core::schema::review::OptimizeProposal`: parameters `auto_optimize` fitted, which
     predict the reviews better, waiting to be applied. */
 export interface OptimizeProposal {

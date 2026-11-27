@@ -458,6 +458,10 @@ fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route("/api/tags/{id}/rebuild", get(rebuild_tag_handler))
         // Note
         .route("/api/notes", post(create_notes_handler))
+        .route(
+            "/api/notes/import/table",
+            post(crate::handlers::note::import_table_handler),
+        )
         .route("/api/notes/{id}", get(get_note_handler))
         .route("/api/notes/{id}/render", get(get_note_render_handler))
         .route("/api/notes", patch(update_notes_handler)) // the request body contains note_ids: Vec<i64>

@@ -134,6 +134,14 @@ const vimKeybindings = booleanPreference('spares_vim_keybindings', () => !window
 export const setVimKeybindings = vimKeybindings.set;
 export const useVimKeybindings = vimKeybindings.use;
 
+export const TABLE_IMPORT_PARSERS = ['markdown', 'typst', 'latex-note'] as const;
+export type TableImportParser = typeof TABLE_IMPORT_PARSERS[number];
+/** The markup a table of cards was last imported as, which the next import starts from. Markdown
+    the first time. */
+const tableImportParser = choicePreference<TableImportParser>('spares_table_import_parser', TABLE_IMPORT_PARSERS, 'markdown');
+export const setTableImportParser = tableImportParser.set;
+export const useTableImportParser = tableImportParser.use;
+
 export const EDITOR_FONT_SIZES = ['12', '13', '14', '16', '18', '20'] as const;
 export type EditorFontSize = typeof EDITOR_FONT_SIZES[number];
 /** How large the note editors' text is, in pixels. The typed answer box keeps its own size. */

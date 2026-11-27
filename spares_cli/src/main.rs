@@ -172,6 +172,11 @@ async fn process_args(args: Cli) -> Result<(), Error> {
             Ok(())
         }
         Commands::Import(import::ImportArgs {
+            table: Some(import::ImportTableCommand::Csv(args)),
+            ..
+        }) => import::import_table(args, &base_url, &client).await,
+        Commands::Import(import::ImportArgs {
+            table: None,
             adapter: adapter_string,
             parser: parser_string_opt,
             to_parser: to_parser_string_opt,

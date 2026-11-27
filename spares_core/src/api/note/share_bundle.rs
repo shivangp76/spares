@@ -239,7 +239,11 @@ pub(crate) fn parser_of(
 }
 
 /// The id of the parser `name` in the collection, which is added if it has none
-async fn parser_id(db: &SqlitePool, name: &str, added: &mut Vec<String>) -> Result<i64, Error> {
+pub(crate) async fn parser_id(
+    db: &SqlitePool,
+    name: &str,
+    added: &mut Vec<String>,
+) -> Result<i64, Error> {
     let id: Option<i64> = sqlx::query_scalar("SELECT id FROM parser WHERE name = ?")
         .bind(name)
         .fetch_optional(db)

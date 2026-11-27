@@ -37,7 +37,11 @@ use writeback::SourceLocks;
 use writeback::WriteBack;
 
 #[derive(Args, Debug)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 pub(crate) struct ImportArgs {
+    #[command(subcommand)]
+    pub(crate) table: Option<ImportTableCommand>,
+
     // NOTE: To write note files from the database, refer to `spares note generate`
     #[arg(short, long, default_value = "spares")]
     pub(crate) adapter: String,
@@ -68,6 +72,180 @@ pub(crate) struct ImportArgs {
     /// Input file(s)
     #[arg(required = true, value_delimiter = ' ', num_args = 1..)]
     pub(crate) files: Vec<PathBuf>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub(crate) enum ImportTableCommand {
+    /// Import a table of cards as new notes, one per row: CSV, TSV, or lines like Quizlet's
+    /// export (`term - definition`), e.g. `spares import csv words.csv --front 1 --back 2 --tag
+    /// spanish`. The delimiter and a header row are detected. Each row's back is a cloze, so its
+    /// card shows the front and asks for the back. Rows with an empty front or back are left out.
+    /// See `spares_core::adapters::impls::delimited`.
+    Csv(ImportTableArgs),
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct ImportTableArgs {
+    /// The table, or `-` for standard input
+    pub(crate) file: PathBuf,
+    /// The column of the front, from 1. Defaults to the one the header calls front, term or
+    /// question, else the first.
+    #[arg(long)]
+    pub(crate) front: Option<usize>,
+    /// The column of the back, from 1. Defaults to the one the header calls back, definition or
+    /// answer, else the second.
+    #[arg(long)]
+    pub(crate) back: Option<usize>,
+    /// The column of each row's tags, from 1, split at spaces and commas. Defaults to the one the
+    /// header calls tags, if any.
+    #[arg(long)]
+    pub(crate) tags: Option<usize>,
+    /// A tag for every note imported
+    #[arg(long)]
+    pub(crate) tag: Option<String>,
+    /// The notes' parser, i.e. their markup
+    #[arg(short, long, default_value = "markdown")]
+    pub(crate) parser: String,
+    /// What separates the fields: tab, comma, semicolon or dash. Detected by default.
+    #[arg(long, value_parser = ["tab", "comma", "semicolon", "dash"])]
+    pub(crate) delimiter: Option<String>,
+    /// Whether the first row is a header: detected by default from its names (front, back,
+    /// term, definition, tags, ...)
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+    pub(crate) header: Option<bool>,
+    /// The cells are written in the parser's markup already. By default they are plain text, and
+    /// its special characters (such as `*` or `$` in Markdown) are escaped.
+    #[arg(long)]
+    pub(crate) raw: bool,
+    /// Print what would be imported without importing it
+    #[arg(short, long)]
+    pub(crate) dry_run: bool,
+}
+
+/// `spares import csv`: imports a table through the host, printing a preview first.
+#[expect(
+    clippy::too_many_lines,
+    reason = "reading, previewing and importing, in order"
+)]
+pub(crate) async fn import_table(
+    args: ImportTableArgs,
+    base_url: &str,
+    client: &reqwest::Client,
+) -> miette::Result<()> {
+    use miette::miette;
+    use spares_core::adapters::impls::delimited::Columns;
+    use spares_core::adapters::impls::delimited::Delimiter;
+    use spares_core::adapters::impls::delimited::ImportTableRequest;
+    use spares_core::adapters::impls::delimited::ImportTableResponse;
+
+    let text = if args.file.as_os_str() == "-" {
+        std::io::read_to_string(std::io::stdin()).map_err(|e| miette!("{e}"))?
+    } else {
+        std::fs::read_to_string(&args.file)
+            .map_err(|e| miette!("Failed to read {}: {e}", args.file.display()))?
+    };
+    let column = |n: Option<usize>, name: &str| match n {
+        Some(0) => Err(miette!("--{name} counts columns from 1")),
+        n => Ok(n.map(|n| n - 1)),
+    };
+    let (front, back, tags) = (
+        column(args.front, "front")?,
+        column(args.back, "back")?,
+        column(args.tags, "tags")?,
+    );
+    let delimiter = args.delimiter.as_deref().map(|d| match d {
+        "tab" => Delimiter::Tab,
+        "comma" => Delimiter::Comma,
+        "semicolon" => Delimiter::Semicolon,
+        _ => Delimiter::Dash,
+    });
+    let request = |columns: Option<Columns>, dry_run| ImportTableRequest {
+        text: text.clone(),
+        delimiter,
+        has_header: args.header,
+        columns,
+        parser: args.parser.clone(),
+        escape: !args.raw,
+        tag: args.tag.clone(),
+        dry_run,
+    };
+    let send = |request: ImportTableRequest| async move {
+        let response = client
+            .post(format!("{base_url}/api/notes/import/table"))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| miette!("{e}"))?;
+        let response = crate::utils::ensure_ok(response)
+            .await
+            .map_err(|e| miette!("{e:?}"))?;
+        response
+            .json::<ImportTableResponse>()
+            .await
+            .map_err(|e| miette!("{e}"))
+    };
+    // The columns the header names, with those given in their place
+    let preview = send(request(None, true)).await?;
+    let columns = Columns {
+        front: front.unwrap_or(preview.columns.front),
+        back: back.unwrap_or(preview.columns.back),
+        tags: tags.or(preview.columns.tags),
+    };
+    let preview = send(request(Some(columns), true)).await?;
+    let name = |column: usize| {
+        preview
+            .header
+            .as_ref()
+            .and_then(|header| header.get(column))
+            .map_or_else(
+                || format!("column {}", column + 1),
+                |name| format!("{name:?}"),
+            )
+    };
+    println!(
+        "{:?}-separated, {}: front from {}, back from {}{}.",
+        preview.delimiter,
+        if preview.header.is_some() {
+            "with a header"
+        } else {
+            "without a header"
+        },
+        name(columns.front),
+        name(columns.back),
+        columns
+            .tags
+            .map(|c| format!(", tags from {}", name(c)))
+            .unwrap_or_default(),
+    );
+    for note in &preview.preview {
+        println!(
+            "{:>5}  {}  →  {}",
+            note.record,
+            note.front.replace('\n', " "),
+            note.back.replace('\n', " ")
+        );
+    }
+    if !preview.skipped_records.is_empty() {
+        println!(
+            "Leaving out row(s) {} for an empty front or back.",
+            preview
+                .skipped_records
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    if args.dry_run {
+        println!("Would import {} note(s).", preview.note_count);
+        return Ok(());
+    }
+    let imported = send(request(Some(columns), false)).await?;
+    println!("Imported {} note(s).", imported.note_count);
+    if let Some(id) = imported.event_id {
+        println!("`spares event undo {id}` deletes them.");
+    }
+    Ok(())
 }
 
 fn print_notes(import: &ParserImport, quiet: bool, dry_run: bool) {

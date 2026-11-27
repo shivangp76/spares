@@ -64,6 +64,22 @@ pub(crate) async fn create_notes_handler(
     Ok(Json(result))
 }
 
+/// Imports a table of cards (CSV, TSV, or pasted from a spreadsheet) as new notes, or previews it
+/// (`spares_core::adapters::impls::delimited`).
+pub(crate) async fn import_table_handler(
+    Coll(data): Coll,
+    Json(body): Json<spares_core::adapters::impls::delimited::ImportTableRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let db = data.db.clone();
+    // Boxed, as creating many notes is a large future
+    let result = run_shared(Box::pin(async move {
+        spares_core::adapters::impls::delimited::import_table(&db, body, Utc::now()).await
+    }))
+    .await
+    .map_err(error_to_response)?;
+    Ok(Json(result))
+}
+
 pub(crate) async fn get_note_handler(
     Path(id): Path<NoteId>,
     Coll(data): Coll,

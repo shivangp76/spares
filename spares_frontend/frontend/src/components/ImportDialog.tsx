@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { getKnownParserNames, importFiles, importShared } from "../api/client";
+import {
+  getKnownParserNames,
+  importFiles,
+  importShared,
+  importTable,
+} from "../api/client";
 import { runOnServer } from "../local/copy";
 import type {
+  ImportTableRequest,
   ImportRequestOptions,
   ImportResponse,
   ImportSharedResponse,
@@ -9,6 +15,14 @@ import type {
 } from "../types/spares";
 import { downloadBlob, errorMessage, tagList, td, th } from "../utils";
 import type { ActionOutcome } from "./ActionResult";
+import TableImport from "./TableImport";
+
+/** Where the notes come from: files of notes, or a table of cards pasted or read from a CSV */
+type Source = "files" | "table";
+const SOURCES: { source: Source; label: string }[] = [
+  { source: "files", label: "Files" },
+  { source: "table", label: "Paste a Table" },
+];
 
 /**
  * - `shared`: notes someone shared, added as new notes (`spares_core::api::note::share_bundle`)
@@ -172,6 +186,7 @@ export default function ImportDialog({
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const [source, setSource] = useState<Source>("files");
   const [files, setFiles] = useState<File[]>([]);
   const [mode, setMode] = useState<Mode>("collection");
   const [parser, setParser] = useState("");
@@ -272,6 +287,16 @@ export default function ImportDialog({
       if (result.rewritten_files.length === 0) dialogRef.current?.close();
     });
 
+  const runTableImport = (request: ImportTableRequest) =>
+    run("import", async () => {
+      const result = await importTable(request);
+      onImported({
+        message: `Imported ${result.note_count} note(s) from the table.`,
+        eventIds: result.event_id === null ? [] : [result.event_id],
+      });
+      dialogRef.current?.close();
+    });
+
   const shown = done ?? preview;
   return (
     <dialog
@@ -287,219 +312,252 @@ export default function ImportDialog({
         <h3 id="import-dialog-title" style={{ margin: "0 0 12px" }}>
           Import notes
         </h3>
-        <input
-          type="file"
-          multiple
-          accept=".zip,.md,.typ,.tex"
-          aria-label="Files to import"
-          disabled={busy !== null}
-          onChange={(e) => pickFiles([...(e.target.files ?? [])])}
-        />
-        <fieldset
-          style={{
-            border: "none",
-            padding: 0,
-            margin: "12px 0 0",
-            fontSize: 14,
-          }}
-          disabled={busy !== null}
-        >
-          <label style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-            <input
-              type="radio"
-              name="import-mode"
-              checked={mode === "collection"}
-              onChange={() => change(() => setMode("collection"))}
-            />
-            <span>
-              Import into this collection
-              <span style={hint}>
-                Adds, updates and deletes notes as the files say, as{" "}
-                <code>spares import</code> does: an export to edit notes, or
-                live notes.
-              </span>
-            </span>
-          </label>
-          <label
-            style={{
-              display: "flex",
-              gap: 6,
-              alignItems: "baseline",
-              marginTop: 6,
-            }}
-          >
-            <input
-              type="radio"
-              name="import-mode"
-              checked={mode === "shared"}
-              onChange={() => change(() => setMode("shared"))}
-            />
-            <span>
-              Add as new notes
-              <span style={hint}>
-                Shared notes, from a zip exported to share or a file of notes,
-                with the parsers they need.
-              </span>
-            </span>
-          </label>
-        </fieldset>
-        {mode === "collection" && (
-          <fieldset
-            style={{
-              border: "none",
-              padding: 0,
-              margin: "12px 0 0",
-              display: "grid",
-              gap: 8,
-              fontSize: 14,
-            }}
-            disabled={busy !== null}
-          >
-            <label>
-              Parser{" "}
-              <select
-                value={parser}
-                onChange={(e) => change(() => setParser(e.target.value))}
-              >
-                <option value="">Guess from each file</option>
-                {parsers.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Convert to{" "}
-              <select
-                value={toParser}
-                onChange={(e) => change(() => setToParser(e.target.value))}
-              >
-                <option value="">Keep the files' parser</option>
-                {parsers.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-              <input
-                type="checkbox"
-                checked={stripLiveness}
-                onChange={(e) =>
-                  change(() => setStripLiveness(e.target.checked))
-                }
-              />
-              <span>
-                Strip liveness
-                <span style={hint}>
-                  Turns the files' live notes, already imported, into ordinary
-                  notes, once they are stable.
-                </span>
-              </span>
-            </label>
-          </fieldset>
+        <div role="tablist" className="tab-row import-sources">
+          {SOURCES.map((s) => (
+            <button
+              key={s.source}
+              role="tab"
+              aria-selected={source === s.source}
+              disabled={busy !== null}
+              onClick={() => setSource(s.source)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        {source === "table" && (
+          <TableImport
+            busy={busy !== null}
+            onImport={runTableImport}
+            onCancel={() => dialogRef.current?.close()}
+          />
         )}
-        {shown && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 14 }}>
-              {done ? collectionSummary(done) : previewSummary(shown)}
-            </div>
-            <Notices imported={shown} />
-            {!done && <NotesTable imported={shown} />}
-            {shown.rewritten_files.length > 0 && (
-              <div style={{ marginTop: 8, fontSize: 13 }}>
-                {done
-                  ? "The import rewrote these files (their clozes' id: keys). Replace yours with them before editing further:"
-                  : "The import will rewrite these files, and offer them to download in place of yours:"}
-                {done && (
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      flexWrap: "wrap",
-                      marginTop: 6,
-                    }}
-                  >
-                    {done.rewritten_files.map((file) => (
-                      <button
-                        key={file.file}
-                        onClick={() => download(file)}
-                        className="touch-target-small"
-                      >
-                        Download {file.name.split("/").pop()}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {!done && (
-                  <ul style={{ margin: "4px 0 0", paddingLeft: 20 }}>
-                    {shown.rewritten_files.map((file) => (
-                      <li key={file.file}>{file.name}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-        {error && (
-          <p
-            role="alert"
-            style={{
-              fontSize: 13,
-              color: "var(--error)",
-              margin: "12px 0 0",
-              whiteSpace: "pre-wrap",
-            }}
-          >
+        {source === "table" && error && (
+          <p role="alert" className="error-text" style={{ fontSize: 13 }}>
             {error}
           </p>
         )}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8,
-            marginTop: 16,
-          }}
-        >
-          <button
-            onClick={() => dialogRef.current?.close()}
-            disabled={busy !== null}
-            className="touch-target-small"
-          >
-            {done ? "Close" : "Cancel"}
-          </button>
-          {mode === "collection" && !done && (
-            <button
-              onClick={() => void runPreview()}
-              disabled={busy !== null || files.length === 0}
-              className="touch-target-small"
+        {source === "files" && (
+          <>
+            <input
+              type="file"
+              multiple
+              accept=".zip,.md,.typ,.tex"
+              aria-label="Files to import"
+              disabled={busy !== null}
+              onChange={(e) => pickFiles([...(e.target.files ?? [])])}
+            />
+            <fieldset
+              style={{
+                border: "none",
+                padding: 0,
+                margin: "12px 0 0",
+                fontSize: 14,
+              }}
+              disabled={busy !== null}
             >
-              {busy === "preview" ? "Checking…" : "Preview"}
-            </button>
-          )}
-          {!done && (
-            <button
-              onClick={() => void runImport()}
-              disabled={
-                busy !== null ||
-                files.length === 0 ||
-                (mode === "collection" && !preview)
-              }
-              title={
-                mode === "collection" && !preview
-                  ? "Preview first, to see what the import does"
-                  : undefined
-              }
-              className="touch-target-small"
+              <label
+                style={{ display: "flex", gap: 6, alignItems: "baseline" }}
+              >
+                <input
+                  type="radio"
+                  name="import-mode"
+                  checked={mode === "collection"}
+                  onChange={() => change(() => setMode("collection"))}
+                />
+                <span>
+                  Import into this collection
+                  <span style={hint}>
+                    Adds, updates and deletes notes as the files say, as{" "}
+                    <code>spares import</code> does: an export to edit notes, or
+                    live notes.
+                  </span>
+                </span>
+              </label>
+              <label
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  alignItems: "baseline",
+                  marginTop: 6,
+                }}
+              >
+                <input
+                  type="radio"
+                  name="import-mode"
+                  checked={mode === "shared"}
+                  onChange={() => change(() => setMode("shared"))}
+                />
+                <span>
+                  Add as new notes
+                  <span style={hint}>
+                    Shared notes, from a zip exported to share or a file of
+                    notes, with the parsers they need.
+                  </span>
+                </span>
+              </label>
+            </fieldset>
+            {mode === "collection" && (
+              <fieldset
+                style={{
+                  border: "none",
+                  padding: 0,
+                  margin: "12px 0 0",
+                  display: "grid",
+                  gap: 8,
+                  fontSize: 14,
+                }}
+                disabled={busy !== null}
+              >
+                <label>
+                  Parser{" "}
+                  <select
+                    value={parser}
+                    onChange={(e) => change(() => setParser(e.target.value))}
+                  >
+                    <option value="">Guess from each file</option>
+                    {parsers.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Convert to{" "}
+                  <select
+                    value={toParser}
+                    onChange={(e) => change(() => setToParser(e.target.value))}
+                  >
+                    <option value="">Keep the files' parser</option>
+                    {parsers.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label
+                  style={{ display: "flex", gap: 6, alignItems: "baseline" }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={stripLiveness}
+                    onChange={(e) =>
+                      change(() => setStripLiveness(e.target.checked))
+                    }
+                  />
+                  <span>
+                    Strip liveness
+                    <span style={hint}>
+                      Turns the files' live notes, already imported, into
+                      ordinary notes, once they are stable.
+                    </span>
+                  </span>
+                </label>
+              </fieldset>
+            )}
+            {shown && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 14 }}>
+                  {done ? collectionSummary(done) : previewSummary(shown)}
+                </div>
+                <Notices imported={shown} />
+                {!done && <NotesTable imported={shown} />}
+                {shown.rewritten_files.length > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 13 }}>
+                    {done
+                      ? "The import rewrote these files (their clozes' id: keys). Replace yours with them before editing further:"
+                      : "The import will rewrite these files, and offer them to download in place of yours:"}
+                    {done && (
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          flexWrap: "wrap",
+                          marginTop: 6,
+                        }}
+                      >
+                        {done.rewritten_files.map((file) => (
+                          <button
+                            key={file.file}
+                            onClick={() => download(file)}
+                            className="touch-target-small"
+                          >
+                            Download {file.name.split("/").pop()}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {!done && (
+                      <ul style={{ margin: "4px 0 0", paddingLeft: 20 }}>
+                        {shown.rewritten_files.map((file) => (
+                          <li key={file.file}>{file.name}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {error && (
+              <p
+                role="alert"
+                style={{
+                  fontSize: 13,
+                  color: "var(--error)",
+                  margin: "12px 0 0",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {error}
+              </p>
+            )}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 8,
+                marginTop: 16,
+              }}
             >
-              {busy === "import" ? "Importing…" : "Import"}
-            </button>
-          )}
-        </div>
+              <button
+                onClick={() => dialogRef.current?.close()}
+                disabled={busy !== null}
+                className="touch-target-small"
+              >
+                {done ? "Close" : "Cancel"}
+              </button>
+              {mode === "collection" && !done && (
+                <button
+                  onClick={() => void runPreview()}
+                  disabled={busy !== null || files.length === 0}
+                  className="touch-target-small"
+                >
+                  {busy === "preview" ? "Checking…" : "Preview"}
+                </button>
+              )}
+              {!done && (
+                <button
+                  onClick={() => void runImport()}
+                  disabled={
+                    busy !== null ||
+                    files.length === 0 ||
+                    (mode === "collection" && !preview)
+                  }
+                  title={
+                    mode === "collection" && !preview
+                      ? "Preview first, to see what the import does"
+                      : undefined
+                  }
+                  className="touch-target-small"
+                >
+                  {busy === "import" ? "Importing…" : "Import"}
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </dialog>
   );

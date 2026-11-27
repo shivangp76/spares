@@ -26,6 +26,8 @@ import type {
   NotesSelector,
   OptimizeResponse,
   OptimizeStatusResponse,
+  ImportTableRequest,
+  ImportTableResponse,
   ParserResponse,
   QueryExample,
   QueuePositionRequest,
@@ -1407,6 +1409,18 @@ export async function importFiles(
       method: "POST",
       body: form,
     },
+  );
+}
+
+/** Imports a table of cards (CSV, TSV, or pasted from a spreadsheet) as new notes, one per row,
+    or, with `dry_run`, previews it. A device's copy imports it itself. */
+export async function importTable(
+  request: ImportTableRequest,
+): Promise<ImportTableResponse> {
+  return apiFetch(
+    request.dry_run ? "Import preview" : "Import",
+    "/api/notes/import/table",
+    { method: "POST", body: JSON.stringify(request) },
   );
 }
 
