@@ -52,6 +52,7 @@ use crate::LibraryError;
 use crate::config::get_config_dir;
 use crate::config::read_external_config;
 use crate::helpers::get_or_compile_regex;
+use crate::model::NoteId;
 use crate::parsers::ClozeHiddenReplacement;
 use crate::parsers::ClozeMatch;
 use crate::parsers::ClozeReplacement;
@@ -544,7 +545,7 @@ pub(crate) fn construct_file_data(
             let card_file_data = without_cloze_delimiters(&construct_card_data(
                 parser, card_order, card_data, side, *note_id,
             ));
-            card_file_data
+            link_card_links(parser, &card_file_data, linked_notes.as_ref())
         }
     }
 }
@@ -906,6 +907,45 @@ fn get_linked_notes_regex() -> Arc<fancy_regex::Regex> {
     get_or_compile_regex(r"(?m)\[([^\]]*)\]\[li([^\]]*)?\]").unwrap()
 }
 
+/// The file a link to `linked_note_id` points at, which the web app opens the note for.
+fn linked_note_path(parser: &dyn Parseable, linked_note_id: NoteId) -> PathBuf {
+    let mut path = get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
+    path.push(parser.get_output_filename(RenderOutputType::Note, linked_note_id));
+    path.set_extension(parser.file_extension());
+    path
+}
+
+/// A card's file with its links to other notes made inline links, as `[text](<path> "title")`,
+/// or plain text for a link to a keyword no note has.
+///
+/// A note's file defines its links once, after the note (see [`get_linked_notes_string`]), and
+/// numbers them in order. A card has no such definitions, and a hidden cloze can take a link out
+/// of it, so its links are found by their text instead, which is the keyword they searched for.
+/// Without this, pandoc would show a card's links as written, brackets and all.
+fn link_card_links(
+    parser: &dyn Parseable,
+    card_data: &str,
+    linked_notes: Option<&Vec<LinkedNote>>,
+) -> String {
+    get_linked_notes_regex()
+        .replace_all(card_data, |caps: &Captures<'_, str>| {
+            let text = &caps[1];
+            let target = linked_notes
+                .into_iter()
+                .flatten()
+                .find(|link| link.searched_keyword == text)
+                .and_then(|link| Some((link.linked_note_id?, link.matched_keyword.as_ref()?)));
+            match target {
+                Some((id, matched)) => format!(
+                    "[{text}](<{}> \"{text} -> {matched}\")",
+                    linked_note_path(parser, id).display()
+                ),
+                None => text.to_string(),
+            }
+        })
+        .into_owned()
+}
+
 fn get_linked_notes_string(
     parser: &dyn Parseable,
     note_data: &str,
@@ -934,24 +974,13 @@ fn get_linked_notes_string(
                 assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
                 match (linked_note_id, matched_keyword) {
                     (None, None) => format!("[li{}]: -", i + 1),
-                    (Some(linked_note_id), Some(matched_keyword)) => {
-                        let mut note_raw_path = get_output_raw_dir(
-                            parser.get_parser_name(),
-                            RenderOutputType::Note,
-                            None,
-                        );
-                        note_raw_path.push(
-                            parser.get_output_filename(RenderOutputType::Note, *linked_note_id),
-                        );
-                        note_raw_path.set_extension(parser.file_extension());
-                        format!(
-                            "[li{}]: {} \"{} -> {}\"",
-                            i + 1,
-                            note_raw_path.display(),
-                            searched_keyword,
-                            matched_keyword,
-                        )
-                    }
+                    (Some(linked_note_id), Some(matched_keyword)) => format!(
+                        "[li{}]: {} \"{} -> {}\"",
+                        i + 1,
+                        linked_note_path(parser, *linked_note_id).display(),
+                        searched_keyword,
+                        matched_keyword,
+                    ),
                     (None, Some(_)) | (Some(_), None) => unreachable!(),
                 }
             })
@@ -1044,6 +1073,38 @@ pub mod tests {
         assert_eq!(new_note_data, expected_new_note_data);
         let expected_linked_notes_string = "[li1]: /tmp/spares/data/notes/markdown/aaa.md \"keyword 1 -> keyword 1\"\n[li2]: /tmp/spares/data/notes/markdown/aaa.md \"keyword 1.5 -> keyword 1\"\n[li3]: /tmp/spares/data/notes/markdown/aab.md \"keyword 2 -> keyword 2\"";
         assert_eq!(linked_notes_string, expected_linked_notes_string);
+    }
+
+    /// A card's links point at their notes inline, found by their text, since a card has no link
+    /// definitions and a hidden cloze can take some of its links out. A link to a keyword no note
+    /// has is plain text.
+    #[test]
+    fn test_markdown_card_links() {
+        let parser = MarkdownParser::new();
+        let linked_notes = vec![
+            LinkedNote {
+                searched_keyword: "keyword 1".to_string(),
+                linked_note_id: Some("aaa".parse().unwrap()),
+                matched_keyword: Some("Keyword 1".to_string()),
+                relation: crate::model::LinkRelation::Prerequisite,
+            },
+            LinkedNote {
+                searched_keyword: "keyword 2".to_string(),
+                linked_note_id: None,
+                matched_keyword: None,
+                relation: crate::model::LinkRelation::Prerequisite,
+            },
+        ];
+        // The first link was in a cloze this card hides
+        let card = "[_____]{.mark}, then [keyword 2][li] and [keyword 1][li].";
+        assert_eq!(
+            super::link_card_links(&parser, card, Some(&linked_notes)),
+            "[_____]{.mark}, then keyword 2 and [keyword 1](</tmp/spares/data/notes/markdown/aaa.md> \"keyword 1 -> Keyword 1\")."
+        );
+        assert_eq!(
+            super::link_card_links(&parser, card, None),
+            "[_____]{.mark}, then keyword 2 and keyword 1."
+        );
     }
 
     #[test]
