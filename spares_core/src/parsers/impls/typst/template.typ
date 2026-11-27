@@ -55,14 +55,13 @@
   }
   none
 }
-// Whether the content being laid out is in display math, for `cloze-reveal`.
-#let _in-display = state("spares-in-display", false)
-#show math.equation.where(block: true): it => {
-  _in-display.update(true)
-  it
-  _in-display.update(false)
-}
 #let _reveal-box = box.with(fill: aqua, outset: (y: .2em))
+// A cloze that is all math (see `cloze-reveal`) in display style in display math. A show rule,
+// unlike a `state`, costs no extra layout pass.
+#show math.equation.where(block: true): it => {
+  show <spares-math-cloze>: b => _reveal-box(math.equation(math.display(b.body.body)))
+  it
+}
 // A revealed cloze is highlighted inline when it fits in a line of text, so the clozes of a group
 // stay in their sentence. A block holds what can't sit in a paragraph (display math, lists,
 // paragraphs, environments).
@@ -82,11 +81,7 @@
   } else {
     if id != none { box(width: 0pt, id-mark) }
     let equation = _only-equation(markup)
-    if equation != none {
-      context _reveal-box(
-        if _in-display.get() { math.equation(math.display(equation.body)) } else { equation },
-      )
-    } else {
+    if equation != none [#_reveal-box(equation)<spares-math-cloze>] else {
       show math.equation: _reveal-box
       highlight(fill: aqua, markup)
     }
