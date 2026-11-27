@@ -111,6 +111,12 @@ pub(crate) enum Commands {
     /// it is the host's admin.
     #[command(arg_required_else_help = true)]
     Host(spares_server::host::admin::HostArgs),
+    /// Dictionaries for looking words up from the cards of the `markdown-language-tools` parser
+    ///
+    /// Each user imports their own on their host, as Yomitan dictionary zips.
+    #[cfg(feature = "language-tools")]
+    #[command(arg_required_else_help = true)]
+    LanguageTools(crate::language_tools::LanguageToolsArgs),
     /// Log in to a host, keeping a device token for it (see `spares logout`)
     Login(crate::login::LoginArgs),
     /// Forget and revoke this machine's token for a host
