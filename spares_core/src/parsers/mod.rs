@@ -605,6 +605,8 @@ pub fn get_all_parsers() -> Vec<fn() -> Box<dyn Parseable>> {
         || Box::new(impls::latex::LatexParserNote::new()),
         || Box::new(impls::markdown::MarkdownParser::new()),
         || Box::new(impls::typst::TypstParser::new()),
+        #[cfg(feature = "language-tools")]
+        || Box::new(impls::markdown_language_tools::MarkdownLanguageToolsParser::new()),
     ];
     all_parsers
 }

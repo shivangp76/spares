@@ -45,10 +45,13 @@ walkdir = "2.5.0"
 workspace = true
 
 [features]
-default = ["typst-render"]
+default = ["typst-render", "language-tools"]
 # See spares_core's `typst-render`. Build with `--no-default-features` to leave Typst out: Typst
 # notes then render with the `typst` CLI.
 typst-render = ["spares_core/typst-render", "spares_server/typst-render"]
+# The `markdown-language-tools` parser and `spares language-tools`. `--no-default-features` leaves
+# it out.
+language-tools = ["spares_core/language-tools", "spares_server/language-tools"]
 
 [dev-dependencies]
 axum = "0.8.9"

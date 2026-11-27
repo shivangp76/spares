@@ -81,6 +81,10 @@ libc = "0.2.191"
 # `parsers::impls::typst::worker`). Off here so that the browser's build, and a host that renders
 # no Typst, don't build Typst. The server and CLI turn it on by default.
 typst-render = ["dep:typst", "dep:typst-kit", "dep:typst-layout", "dep:typst-pdf", "dep:typst-svg"]
+# The `markdown-language-tools` parser: readings such as `漢字[かんじ]` and dictionary lookup (see
+# `parsers::impls::markdown_language_tools`). Off here like `typst-render`; the server, the CLI and
+# the browser's build turn it on.
+language-tools = []
 
 [dev-dependencies]
 env_logger = "0.11.11"

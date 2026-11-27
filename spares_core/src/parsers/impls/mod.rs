@@ -1,4 +1,5 @@
-//! The parsers spares ships with: [`markdown`], [`typst`] and [`latex`] (`latex-note`).
+//! The parsers spares ships with: [`markdown`], [`typst`] and [`latex`] (`latex-note`), and with
+//! the `language-tools` feature, `markdown_language_tools`.
 //!
 //! Parsers allow notes to be created in different markup languages. They are meant to be modified
 //! by the user. A markup language can have multiple parsers. For example, you may have a parser
@@ -18,4 +19,6 @@
 
 pub mod latex;
 pub mod markdown;
+#[cfg(feature = "language-tools")]
+pub mod markdown_language_tools;
 pub mod typst;

@@ -49,7 +49,10 @@ tower = { version = "0.5.3", features = ["util"] }
 workspace = true
 
 [features]
-default = ["typst-render"]
+default = ["typst-render", "language-tools"]
 # See spares_core's `typst-render`. Build with `--no-default-features` to leave Typst out: Typst
 # notes then render with the `typst` CLI.
 typst-render = ["spares_core/typst-render"]
+# The `markdown-language-tools` parser and its `/api/language-tools` routes. `--no-default-features`
+# leaves it out.
+language-tools = ["spares_core/language-tools"]

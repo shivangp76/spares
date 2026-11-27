@@ -25,7 +25,8 @@ js-sys = "0.3.106"
 rsqlite-vfs = "0.2.0"
 serde = "1.0"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
-spares_core = { path = "../spares_core" }
+# With the `markdown-language-tools` parser, so a copy of a collection that has it parses its notes
+spares_core = { path = "../spares_core", features = ["language-tools"] }
 spares_server = { path = "../spares_server", default-features = false }
 sqlite-wasm-rs = { version = "0.6.2", features = ["wasm-bindgen"] }
 sqlite-wasm-vfs = { version = "0.3.0", features = ["sahpool"] }
