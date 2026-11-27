@@ -28,6 +28,7 @@ import type {
   OptimizeStatusResponse,
   ImportTableRequest,
   TagRetention,
+  YearRecap,
   ExportCardsRequest,
   ExportCardsResponse,
   IntervalPreviewRequest,
@@ -1438,6 +1439,14 @@ export async function exportCards(
     method: "POST",
     body: JSON.stringify(request),
   });
+}
+
+/** A year in review, of `year` or else the latest with reviews. */
+export async function getYearRecap(year: number | null): Promise<YearRecap> {
+  return apiFetch(
+    "Year in review",
+    `/api/statistics/recap${year === null ? "" : `?year=${year}`}`,
+  );
 }
 
 /** Imports a table of cards (CSV, TSV, or pasted from a spreadsheet) as new notes, one per row,

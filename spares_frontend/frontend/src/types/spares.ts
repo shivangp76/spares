@@ -646,6 +646,22 @@ export interface ExportCardsResponse {
   links_left_out: number;
 }
 
+/** `spares_core::api::statistics::recap::YearRecap`: a year in review */
+export interface YearRecap {
+  year: number;
+  /** Years with reviews, newest first */
+  years: number[];
+  reviews: number;
+  minutes: number;
+  cards_learned: number;
+  days_studied: number;
+  longest_streak: number;
+  longest_streak_start: string | null;
+  retention: number | null;
+  /** [tag, reviews], most first */
+  top_tags: [string, number][];
+}
+
 export type TableDelimiter = "tab" | "comma" | "semicolon" | "dash";
 
 /** `spares_core::adapters::impls::delimited::Columns`, counted from 0 */

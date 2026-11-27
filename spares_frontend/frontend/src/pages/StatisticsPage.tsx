@@ -14,6 +14,7 @@ import {
   optimizeScheduler,
   postponeCards,
   rescheduleCards,
+  getYearRecap,
 } from "../api/client";
 import { useServerReachable } from "../api/reachability";
 import ActionResult, { type ActionOutcome } from "../components/ActionResult";
@@ -44,6 +45,7 @@ import {
   type PassFail,
   type StatisticsGraphsResponse,
   type StatisticsResponse,
+  type YearRecap,
   type StepsGroupKind,
   type StepsStatsResponse,
 } from "../types/spares";
@@ -1448,6 +1450,88 @@ function StepsSection({
   );
 }
 
+/** A year in review: reviews, time, cards learned, the longest streak, the retention reached and
+    the tags studied most, from the review history (`spares_core::api::statistics::recap`). */
+function RecapSection({ revision }: { revision: number }) {
+  const [year, setYear] = useState<number | null>(null);
+  const [recap, setRecap] = useState<YearRecap | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    getYearRecap(year).then(
+      (r) => {
+        if (current) {
+          setRecap(r);
+          setError(null);
+        }
+      },
+      (e) => {
+        if (current) setError(errorMessage(e));
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [year, revision]);
+
+  if (error) return <p style={note}>{error}</p>;
+  if (!recap) return null;
+  if (recap.years.length === 0)
+    return <p style={note}>Nothing reviewed yet.</p>;
+  return (
+    <>
+      <label style={{ fontSize: 14, display: "block", marginBottom: 12 }}>
+        Year{" "}
+        <select
+          value={recap.year}
+          onChange={(e) => setYear(Number(e.target.value))}
+        >
+          {recap.years.map((y) => (
+            <option key={y} value={y}>
+              {y}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div style={tiles}>
+        <Tile value={recap.reviews.toLocaleString()} label="Reviews" />
+        <Tile value={formatMinutes(recap.minutes)} label="Time answering" />
+        <Tile
+          value={recap.cards_learned.toLocaleString()}
+          label="Cards learned"
+        />
+        <Tile value={recap.days_studied} label="Days studied" />
+        <Tile
+          value={`${recap.longest_streak} ${recap.longest_streak === 1 ? "day" : "days"}`}
+          label="Longest streak"
+        />
+        <Tile
+          value={
+            recap.retention === null
+              ? "—"
+              : `${(recap.retention * 100).toFixed(1)}%`
+          }
+          label="Retention"
+        />
+      </div>
+      {recap.top_tags.length > 0 && (
+        <p style={{ fontSize: 14, margin: "12px 0 0" }}>
+          Studied most:{" "}
+          {recap.top_tags
+            .map(([tag, n]) => `${tag} (${n.toLocaleString()})`)
+            .join(", ")}
+        </p>
+      )}
+      <p style={note}>
+        {recap.longest_streak_start &&
+          `The longest streak started on ${recap.longest_streak_start}. `}
+        Retention is the share of reviews of cards past their steps not rated
+        Again. Days are days of study. Not affected by the search query.
+      </p>
+    </>
+  );
+}
+
 const SCHEDULER_OFFLINE_HINT =
   "The server cannot be reached, and optimizing and rescheduling run on it.";
 
@@ -1964,6 +2048,7 @@ export default function StatisticsPage() {
           graphs && "Reviews",
           graphs && "True retention",
           history && "Calendar",
+          history && "Year in review",
           graphs && "Card counts",
           graphs && "Answer buttons",
           graphs && "Hourly breakdown",
@@ -2021,6 +2106,8 @@ export default function StatisticsPage() {
                 cramCounts={history.cram_count_by_date}
                 today={history.today}
               />
+              <SectionTitle>Year in review</SectionTitle>
+              <RecapSection revision={revision} />
             </>
           )}
 

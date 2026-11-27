@@ -17,6 +17,7 @@ import {
   cachedReviewHistory,
   cachedTodayStatistics,
   countNotes,
+  createNotes,
   createParser,
   listParsers,
   createReviewSnapshot,
@@ -40,6 +41,7 @@ import {
   tagNote,
   undoEvent,
   updateCards,
+  renderNote,
 } from "../api/client";
 import { usePendingRender } from "../local/copy";
 import { convertAhead } from "../local/pandoc";
@@ -124,6 +126,8 @@ import { askNotesBefore } from "../notesBefore";
 import type { NotePaneHandle } from "../components/NoteDetail";
 import PageTitle from "../components/PageTitle";
 import OptimizeNudge from "../components/OptimizeNudge";
+import Onboarding from "../components/Onboarding";
+import { SAMPLE_TAG, STARTERS, type StarterParser } from "../onboarding";
 import { useCaptureTags } from "../quickCapture";
 import Skeleton from "../components/Skeleton";
 import LinkRelationMark from "../components/LinkRelationMark";
@@ -611,6 +615,37 @@ export default function ReviewPage() {
   } | null>(null);
   const [emptyCollection, setEmptyCollection] = useState(false);
   const [openingFirst, setOpeningFirst] = useState(false);
+  /** Adds a sample note in each markup, tagged `sample`, and reviews them. */
+  async function addSampleNotes() {
+    setOpeningFirst(true);
+    try {
+      for (const starter of STARTERS) {
+        const parser = await ensureParser(starter.parser);
+        const [note] = await createNotes(parser.id, [
+          {
+            data: starter.sample,
+            keywords: [],
+            tags: [SAMPLE_TAG],
+            is_suspended: false,
+            custom_data: {},
+          },
+        ]);
+        await renderNote(note.id);
+      }
+      setEmptyCollection(false);
+      setStatus(
+        `Added ${STARTERS.length} sample notes, tagged ${SAMPLE_TAG}: delete them from the Notes page with tag=${SAMPLE_TAG}.`,
+      );
+      void refreshStatistics();
+      void startReview("query", `tag=${SAMPLE_TAG}`);
+    } catch (error) {
+      setError(errorMessage(error));
+      setPhase("error");
+    } finally {
+      setOpeningFirst(false);
+    }
+  }
+
   const nextDueDate = Object.keys(
     statistics?.due_count_by_date ?? {},
   ).sort()[0];
@@ -632,30 +667,32 @@ export default function ReviewPage() {
     };
   }, [statistics]);
 
-  async function openFirstNote() {
+  /** The collection's parser `name`, which is added if it has none, as a new one has none. */
+  async function ensureParser(name: string) {
+    const find = async () =>
+      (await listParsers(1, 1000)).find((parser) => parser.name === name);
+    const parser = await find();
+    if (parser) return parser;
+    try {
+      return await createParser(name);
+    } catch (error) {
+      // Added meanwhile, e.g. by another tab
+      const added = await find();
+      if (!added) throw error;
+      return added;
+    }
+  }
+
+  async function openFirstNote(parserName: StarterParser = "markdown") {
     setOpeningFirst(true);
     try {
-      const findMarkdown = async () =>
-        (await listParsers(1, 1000)).find(
-          (parser) => parser.name === "markdown",
-        );
-      let parser = await findMarkdown();
-      if (!parser) {
-        try {
-          parser = await createParser("markdown");
-        } catch (error) {
-          parser = await findMarkdown();
-          if (!parser) throw error;
-        }
-      }
+      const parser = await ensureParser(parserName);
+      const starter = STARTERS.find((s) => s.parser === parserName);
       setNewNotePanel({
         firstReview: true,
         start: newNoteDraft.load()
           ? undefined
-          : {
-              parserId: parser.id,
-              data: "The capital of France is {{ Paris }}.",
-            },
+          : { parserId: parser.id, data: starter?.first ?? "" },
       });
     } catch (error) {
       setError(errorMessage(error));
@@ -2412,21 +2449,21 @@ export default function ReviewPage() {
                   {emptyCollection &&
                   Object.values(statistics.card_count_by_state).every(
                     (count) => count === 0,
-                  ) ? (
-                    <button
-                      disabled={openingFirst || !!newNotePanel}
-                      onClick={openFirstNote}
-                    >
-                      Create your first note
-                    </button>
-                  ) : nextDueDate ? (
-                    `Next cards due on ${nextDueDate}.`
-                  ) : (
-                    "Nothing due to review."
-                  )}
+                  )
+                    ? "No cards yet."
+                    : nextDueDate
+                      ? `Next cards due on ${nextDueDate}.`
+                      : "Nothing due to review."}
                 </p>
               )}
           </div>
+          {emptyCollection && !newNotePanel && (
+            <Onboarding
+              busy={openingFirst}
+              onWrite={(parser) => void openFirstNote(parser)}
+              onSamples={() => void addSampleNotes()}
+            />
+          )}
           <div
             style={{ display: "flex", gap: 16, marginBottom: 8, fontSize: 14 }}
           >
