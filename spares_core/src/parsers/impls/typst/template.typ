@@ -1,3 +1,12 @@
+// One page as tall as the note. The web app passes its width in CSS px; 1pt = 4/3 CSS px, so text
+// shows at its true size. Capped so wide screens, and PDFs rendered without the width, keep lines
+// a readable length. The web app already pads around the page, so the margin is small.
+#let _spares-width = sys.inputs.at("spares-width", default: none)
+#set page(
+  width: if _spares-width == none { 8in } else { calc.min(8in, float(_spares-width) * 0.75pt) },
+  height: auto,
+  margin: if _spares-width == none { 10pt } else { 5pt },
+)
 #let se(..f) = [[#text(fill: olive, ..f)]] // settings
 // `rel` says which way the link points: "prerequisite" (the default), "dependent" or "related"
 #let lin(keyword, note_link: none, rel: "prerequisite") = if (
