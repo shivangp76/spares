@@ -384,6 +384,16 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             "/api/scheduler/{name}/optimize",
             post(optimize_scheduler_handler),
         )
+        // Fits the parameters in the background, on a host with `auto_optimize`.
+        .route(
+            "/api/scheduler/{name}/optimize/status",
+            get(crate::handlers::scheduler::optimize_status_handler),
+        )
+        .route(
+            "/api/scheduler/{name}/optimize/proposal",
+            post(crate::handlers::scheduler::apply_optimize_proposal_handler)
+                .delete(crate::handlers::scheduler::discard_optimize_proposal_handler),
+        )
         .route(
             "/api/scheduler/{name}/reschedule",
             get(reschedule_preview_handler).post(reschedule_scheduler_handler),
@@ -657,6 +667,11 @@ pub fn create_local_router(collection: Arc<spares_core::collection::Collection>)
         .route("/api/sync/devices", get(needs_server))
         .route("/api/sync/unenroll", post(needs_server))
         .route("/api/scheduler/{name}/optimize", post(needs_server))
+        .route("/api/scheduler/{name}/optimize/status", get(needs_server))
+        .route(
+            "/api/scheduler/{name}/optimize/proposal",
+            post(needs_server).delete(needs_server),
+        )
         .route(
             "/api/scheduler/{name}/reschedule",
             get(needs_server).post(needs_server),
@@ -823,6 +838,9 @@ mod tests {
             ("GET", "/api/sync/devices"),
             ("POST", "/api/sync/unenroll"),
             ("POST", "/api/scheduler/fsrs/optimize"),
+            ("GET", "/api/scheduler/fsrs/optimize/status"),
+            ("POST", "/api/scheduler/fsrs/optimize/proposal"),
+            ("DELETE", "/api/scheduler/fsrs/optimize/proposal"),
             ("POST", "/api/scheduler/fsrs/reschedule"),
         ] {
             let (status, body) = call(&router, method, uri).await;

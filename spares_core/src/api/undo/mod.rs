@@ -36,6 +36,7 @@ use crate::api::undo::payloads::DeleteNotesPayload;
 use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::ForgetCardPayload;
+use crate::api::undo::payloads::OptimizeSchedulerPayload;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnmoveCardsPayload;
@@ -688,6 +689,14 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
                 serde_json::from_value(event.payload.clone()).unwrap();
             // Undo payload already has .after = value to restore (create_undo_event swapped it)
             crate::api::card_tags::update_card_tags_event(db, payload).await?;
+        }
+        EventType::OptimizeScheduler => {
+            let payload: OptimizeSchedulerPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // The swapped payload's `after`, as for the card kinds
+            let parameters = &payload.parameters.after;
+            crate::config::write_fsrs_parameters(&parameters.fsrs_parameters, parameters.fitted)?;
+            update_card_event(db, payload.cards, false).await?;
         }
         // For every card kind, the payload already has .after = value to restore
         // (create_undo_event swapped it). Their `review_log` rows were handled while inverting.

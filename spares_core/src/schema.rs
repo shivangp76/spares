@@ -1172,10 +1172,58 @@ pub mod review {
         pub optimized: ParametersEvaluation,
         /// Whether the optimized parameters were saved and every card rescheduled.
         pub applied: bool,
-        /// The reschedule's event, if it changed any card: undoing it restores the cards, but not
-        /// the parameters it saved. See [`RescheduleResponse`].
+        /// The event of saving the parameters and the reschedule, when they were applied
+        /// ([`EventType::OptimizeScheduler`](crate::model::EventType::OptimizeScheduler)): undoing
+        /// it puts back both the cards and the old parameters.
         #[serde(default)]
         pub event_id: Option<i64>,
+    }
+
+    /// Whether optimizing the scheduler's parameters again is worth it, from
+    /// `GET /api/scheduler/{name}/optimize/status` (see
+    /// [`optimize_status`](crate::api::scheduler::optimize_status)).
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct OptimizeStatusResponse {
+        /// Whether the scheduler has parameters to optimize. Without, the rest is empty.
+        pub optimizable: bool,
+        /// The reviews the parameters would be fitted to now.
+        pub review_count: usize,
+        /// The day of study the parameters were last fitted, if they were fitted here.
+        pub fitted_at: Option<NaiveDate>,
+        /// The reviews since then: every review, for parameters never fitted here.
+        pub reviews_since: usize,
+        /// Days of study since then.
+        pub days_since: Option<i64>,
+        /// Whether to suggest optimizing: after
+        /// [`OPTIMIZE_AFTER_REVIEWS`](crate::api::scheduler::OPTIMIZE_AFTER_REVIEWS) reviews or
+        /// [`OPTIMIZE_AFTER_DAYS`](crate::api::scheduler::OPTIMIZE_AFTER_DAYS) days, whichever
+        /// comes first.
+        pub suggested: bool,
+        pub after_reviews: usize,
+        pub after_days: i64,
+        /// Whether this host optimizes by itself: `auto_optimize` is on and it is the root of its
+        /// sync chain.
+        pub auto_optimize: bool,
+        /// Whether it is optimizing by itself now.
+        pub optimizing: bool,
+        /// Parameters it fitted by itself, waiting to be applied or discarded.
+        pub proposal: Option<OptimizeProposal>,
+    }
+
+    /// Parameters fitted by `auto_optimize`, which predict the review history better than the
+    /// current ones. Nothing changes until they are applied.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct OptimizeProposal {
+        pub parameters: Vec<f32>,
+        /// The parameters they were scored against. If `config.toml` no longer has these, the
+        /// proposal is out of date and dropped.
+        pub current_parameters: Vec<f32>,
+        pub current: ParametersEvaluation,
+        pub optimized: ParametersEvaluation,
+        pub review_count: usize,
+        pub card_count: usize,
+        /// The day of study they were fitted.
+        pub fitted_at: NaiveDate,
     }
 
     /// What `POST /api/scheduler/{name}/reschedule` did.

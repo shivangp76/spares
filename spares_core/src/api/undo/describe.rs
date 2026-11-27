@@ -13,6 +13,7 @@ use crate::api::undo::payloads::DeleteNotesPayload;
 use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::ForgetCardPayload;
+use crate::api::undo::payloads::OptimizeSchedulerPayload;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnreviewPayload;
@@ -134,6 +135,20 @@ async fn describe(
             let p: UpdateNotesPayload = serde_json::from_value(payload).unwrap();
             let ids: Vec<String> = p.notes.iter().map(|n| n.id.letters()).collect();
             format!("Edit {}", count_ids("note", &ids))
+        }
+        EventType::OptimizeScheduler => {
+            let p: OptimizeSchedulerPayload = serde_json::from_value(payload).unwrap();
+            let ids: Vec<i64> = p.cards.iter().map(|c| c.card_id).collect();
+            let verb = if p.parameters.after.fitted.is_some() {
+                "Optimize the scheduler's parameters"
+            } else {
+                "Restore the scheduler's parameters"
+            };
+            if ids.is_empty() {
+                verb.to_string()
+            } else {
+                format!("{verb}, rescheduling {}", count_ids("card", &ids))
+            }
         }
         EventType::UpdateCardTags => {
             let p: UpdateCardTagsPayload = serde_json::from_value(payload).unwrap();

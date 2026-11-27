@@ -24,6 +24,7 @@ use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::DeletedTag;
 use crate::api::undo::payloads::FilteredTagExit;
 use crate::api::undo::payloads::ForgetCardPayload;
+use crate::api::undo::payloads::OptimizeSchedulerPayload;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnmoveCardsPayload;
@@ -133,6 +134,9 @@ fn changed_rows(event: &Event) -> BTreeSet<(&'static str, i64)> {
             }
             rows.deleted_tags(&payload.deleted_tags);
             rows.deleted_tags(&payload.restored_tags);
+        }
+        EventType::OptimizeScheduler => {
+            rows.card_changes(&payload::<OptimizeSchedulerPayload>(event).cards);
         }
         EventType::UpdateCardTags => {
             let payload: UpdateCardTagsPayload = payload(event);

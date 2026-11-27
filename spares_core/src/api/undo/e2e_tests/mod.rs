@@ -4,6 +4,7 @@ mod history;
 mod ids;
 mod move_cards;
 mod note;
+mod optimize;
 mod parser;
 mod redo;
 mod tag;

@@ -52,6 +52,13 @@ pub struct TrainingSet {
     scored_by_days: Vec<FSRSItem>,
 }
 
+impl TrainingSet {
+    /// The reviews the parameters are fitted to, which [`optimize`] reports as its `review_count`.
+    pub fn review_count(&self) -> usize {
+        self.items.len()
+    }
+}
+
 /// One card's part of a [`TrainingSet`].
 #[derive(Debug, Default, PartialEq)]
 struct CardItems {

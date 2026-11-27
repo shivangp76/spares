@@ -383,6 +383,16 @@ pub trait SrsScheduler: Send + Sync {
         )))
     }
 
+    /// How many reviews [`Self::optimize`] would fit the parameters to now (its `review_count`),
+    /// without fitting them, or `None` for a scheduler without parameters.
+    async fn optimizable_review_count(
+        &self,
+        _db: &SqlitePool,
+        _config: &SparesExternalConfig,
+    ) -> Result<Option<usize>, Error> {
+        Ok(None)
+    }
+
     /// Fits the scheduler's parameters to the review history, and scores them against the ones in
     /// `config`. Does not save them.
     async fn optimize(

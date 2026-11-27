@@ -1201,6 +1201,25 @@ pub struct SparesExternalConfig {
     /// as FSRS-7's. Run `spares card reschedule` after changing them by hand, or after moving from
     /// FSRS-6 to FSRS-7, so that every card's memory is worked out again by the new model.
     pub fsrs_parameters: Vec<f32>,
+    /// The day of study `fsrs_parameters` were last fitted to the review history, which
+    /// `spares card optimize --apply` (or applying them in the web app) writes. Unset for
+    /// parameters set by hand or copied from Anki, which count as never optimized. With
+    /// [`Self::fsrs_parameters_review_count`], it tells when optimizing again is worth it (see
+    /// [`crate::api::scheduler::optimize_status`]). It syncs with the parameters, so every device
+    /// agrees on it.
+    pub fsrs_parameters_fitted_at: Option<NaiveDate>,
+    /// How many reviews `fsrs_parameters` were fitted to, written with
+    /// [`Self::fsrs_parameters_fitted_at`]. The reviews since are today's count less this.
+    pub fsrs_parameters_review_count: Option<usize>,
+    /// Fit the parameters again by itself once 500 reviews or 30 days have passed since they were
+    /// last fitted, and offer them in the web app if they predict the review history clearly
+    /// better (see [`crate::api::scheduler::AUTO_OPTIMIZE_MIN_IMPROVEMENT`]). Nothing is saved or
+    /// rescheduled until you apply them there. Off by default.
+    ///
+    /// Only the root of the sync chain optimizes by itself, the host with no `[sync] url`, so that
+    /// two hosts never optimize at once, and the parameters reach the others through this file as
+    /// usual. Elsewhere it is ignored, and the web app only suggests optimizing.
+    pub auto_optimize: bool,
     /// The first day of study whose reviews `spares card optimize` learns from, as `"2026-01-31"`,
     /// like Anki's "Ignore reviews before". Unset by default, to learn from every review.
     ///
@@ -1431,6 +1450,9 @@ impl Default for SparesExternalConfig {
             fsrs_minimum_interval: Duration::minutes(1),
             fsrs_maximum_same_day_reviews: 5,
             fsrs_parameters: Vec::new(),
+            fsrs_parameters_fitted_at: None,
+            fsrs_parameters_review_count: None,
+            auto_optimize: false,
             fsrs_optimizer_ignore_reviews_before: None,
             load_balance: true,
             disperse_siblings: true,
@@ -1785,9 +1807,20 @@ pub fn get_external_config_file() -> PathBuf {
     collection::paths().config_file()
 }
 
-/// Sets `fsrs_parameters` in the config file, leaving the rest of the file, comments included, as
-/// it is.
-pub(crate) fn write_fsrs_parameters(parameters: &[f32]) -> Result<(), Error> {
+/// When and to how many reviews FSRS parameters were fitted: `fsrs_parameters_fitted_at` and
+/// `fsrs_parameters_review_count`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct FittedAt {
+    pub date: NaiveDate,
+    pub review_count: usize,
+}
+
+/// Sets `fsrs_parameters` in the config file, with when they were fitted (or, for `None`, without
+/// it, as parameters not fitted here), leaving the rest of the file, comments included, as it is.
+pub(crate) fn write_fsrs_parameters(
+    parameters: &[f32],
+    fitted: Option<FittedAt>,
+) -> Result<(), Error> {
     let config_file_path = get_external_config_file();
     if !is_file(&config_file_path) {
         write_external_config(&SparesExternalConfig::default())?;
@@ -1796,7 +1829,7 @@ pub(crate) fn write_fsrs_parameters(parameters: &[f32]) -> Result<(), Error> {
         description: format!("Failed to read {}.", config_file_path.display()),
         source: e,
     })?;
-    let new_contents = set_fsrs_parameters(&file_contents, parameters)?;
+    let new_contents = set_fsrs_parameters(&file_contents, parameters, fitted)?;
     write(&config_file_path, new_contents).map_err(|e| Error::Io {
         description: "Failed to write config".to_string(),
         source: e,
@@ -1804,7 +1837,11 @@ pub(crate) fn write_fsrs_parameters(parameters: &[f32]) -> Result<(), Error> {
     Ok(())
 }
 
-fn set_fsrs_parameters(file_contents: &str, parameters: &[f32]) -> Result<String, Error> {
+fn set_fsrs_parameters(
+    file_contents: &str,
+    parameters: &[f32],
+    fitted: Option<FittedAt>,
+) -> Result<String, Error> {
     let mut doc = file_contents
         .parse::<DocumentMut>()
         .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
@@ -1816,6 +1853,20 @@ fn set_fsrs_parameters(file_contents: &str, parameters: &[f32]) -> Result<String
         .collect::<toml_edit::Array>();
     // Top-level keys must come before the first table, which `insert` takes care of.
     doc.insert("fsrs_parameters", toml_edit::value(array));
+    if let Some(fitted) = fitted {
+        // A string, like `fsrs_optimizer_ignore_reviews_before`
+        doc.insert(
+            "fsrs_parameters_fitted_at",
+            toml_edit::value(fitted.date.to_string()),
+        );
+        doc.insert(
+            "fsrs_parameters_review_count",
+            toml_edit::value(i64::try_from(fitted.review_count).unwrap_or(i64::MAX)),
+        );
+    } else {
+        doc.remove("fsrs_parameters_fitted_at");
+        doc.remove("fsrs_parameters_review_count");
+    }
     Ok(doc.to_string())
 }
 
@@ -2219,7 +2270,7 @@ mod tests {
             lapses_threshold = 4
         "};
         let parameters = fsrs_rs::FSRS6_DEFAULT_PARAMETERS.to_vec();
-        let written = set_fsrs_parameters(original, &parameters).unwrap();
+        let written = set_fsrs_parameters(original, &parameters, None).unwrap();
         assert!(written.contains("# My settings"), "{written}");
         assert!(written.contains("# keep this"), "{written}");
         let config = parse(&written);
@@ -2228,8 +2279,29 @@ mod tests {
         assert_eq!(config.fsrs_parameters, parameters);
 
         // Setting them again replaces them rather than adding a second key.
-        let rewritten = set_fsrs_parameters(&written, &parameters[..19]).unwrap();
+        let rewritten = set_fsrs_parameters(&written, &parameters[..19], None).unwrap();
         assert_eq!(parse(&rewritten).fsrs_parameters, parameters[..19]);
+    }
+
+    #[test]
+    fn fitted_parameters_say_when_and_to_how_many_reviews() {
+        let parameters = fsrs_rs::FSRS6_DEFAULT_PARAMETERS.to_vec();
+        let fitted = FittedAt {
+            date: NaiveDate::from_ymd_opt(2026, 11, 26).unwrap(),
+            review_count: 16_682,
+        };
+        let written =
+            set_fsrs_parameters("load_balance = false\n", &parameters, Some(fitted)).unwrap();
+        let config = parse(&written);
+        assert_eq!(config.fsrs_parameters_fitted_at, Some(fitted.date));
+        assert_eq!(config.fsrs_parameters_review_count, Some(16_682));
+        assert!(!config.load_balance);
+
+        // Parameters not fitted here, as an undo back to hand-set ones writes, have neither
+        let rewritten = set_fsrs_parameters(&written, &parameters, None).unwrap();
+        let config = parse(&rewritten);
+        assert_eq!(config.fsrs_parameters_fitted_at, None);
+        assert_eq!(config.fsrs_parameters_review_count, None);
     }
 
     #[test]

@@ -309,6 +309,37 @@ impl UpdateCardTagsPayload {
     }
 }
 
+/// The scheduler parameters `config.toml` has: `fsrs_parameters`, with when they were fitted
+/// (`fsrs_parameters_fitted_at` and `fsrs_parameters_review_count`), if they were fitted here.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SchedulerParameters {
+    pub fsrs_parameters: Vec<f32>,
+    #[serde(default)]
+    pub fitted: Option<crate::config::FittedAt>,
+}
+
+/// Payload for `OptimizeScheduler`: the parameters `config.toml` had and was given, and the cards
+/// the reschedule after it changed. Undo restores both. It is its own undo, with everything
+/// swapped, like `UpdateNotes`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OptimizeSchedulerPayload {
+    pub parameters: Transition<SchedulerParameters>,
+    pub cards: Vec<UpdateCardPayload>,
+}
+
+impl OptimizeSchedulerPayload {
+    pub fn swap(self) -> Self {
+        Self {
+            parameters: self.parameters.swap(),
+            cards: self
+                .cards
+                .into_iter()
+                .map(UpdateCardPayload::swap)
+                .collect(),
+        }
+    }
+}
+
 /// Payload for `RelocateCards`, applied in this order: `deleted_cards` are deleted, `moved` cards
 /// are moved, then `restored_cards` are inserted. Its undo swaps each move and the two lists.
 #[derive(Clone, Debug, Deserialize, Serialize)]

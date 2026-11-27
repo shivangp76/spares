@@ -2621,6 +2621,28 @@ pub(crate) async fn reschedule_all_cards(
     config: &SparesExternalConfig,
     at: DateTime<Utc>,
 ) -> Result<Option<i64>, Error> {
+    let changes = reschedule_all_cards_unlogged(db, scheduler, config, at).await?;
+    if changes.is_empty() {
+        return Ok(None);
+    }
+    let event_ids = insert_events(
+        db,
+        &[(EventType::RescheduleCards, to_value(&changes).unwrap())],
+        at,
+        None,
+    )
+    .await?;
+    Ok(event_ids.first().copied())
+}
+
+/// [`reschedule_all_cards`] without logging it, returning the cards it changed for an event of
+/// the caller's, such as optimizing's.
+pub(crate) async fn reschedule_all_cards_unlogged(
+    db: &SqlitePool,
+    scheduler: &dyn SrsScheduler,
+    config: &SparesExternalConfig,
+    at: DateTime<Utc>,
+) -> Result<Vec<UpdateCardPayload>, Error> {
     // Suspended and buried cards are included: they keep their special state, but should come
     // back with a memory state and due date that match their history.
     let cards: Vec<Card> = sqlx::query_as(r"SELECT * FROM card")
@@ -2676,17 +2698,7 @@ pub(crate) async fn reschedule_all_cards(
             Some(build_update_card_payload(old.id, old, new)).filter(UpdateCardPayload::has_changes)
         })
         .collect();
-    if changes.is_empty() {
-        return Ok(None);
-    }
-    let event_ids = insert_events(
-        db,
-        &[(EventType::RescheduleCards, to_value(&changes).unwrap())],
-        at,
-        None,
-    )
-    .await?;
-    Ok(event_ids.first().copied())
+    Ok(changes)
 }
 
 #[cfg(test)]

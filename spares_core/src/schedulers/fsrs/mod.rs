@@ -130,6 +130,27 @@ const SCHEDULER_NAME: &str = "fsrs";
 #[derive(Debug, Default)]
 pub struct Fsrs;
 
+/// The training set [`SrsScheduler::optimize`] fits the parameters to, from every card's review
+/// log.
+async fn training_set(
+    db: &SqlitePool,
+    config: &SparesExternalConfig,
+) -> Result<optimize::TrainingSet, Error> {
+    // Forget markers are kept: the training set starts each card's history after its last one.
+    let review_logs: Vec<ReviewLog> = sqlx::query_as(
+        r"SELECT * FROM review_log WHERE card_id IS NOT NULL
+          ORDER BY card_id, reviewed_at ASC, id ASC",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(optimize::training_set(
+        &review_logs,
+        config.zone(),
+        config.fsrs_optimizer_ignore_reviews_before,
+    ))
+}
+
 // NOTE: Make sure to pass time data as a `Duration` instead of an integer representing days.
 #[async_trait]
 impl SrsScheduler for Fsrs {
@@ -540,24 +561,20 @@ impl SrsScheduler for Fsrs {
         reposition::schedule_break(db, config, plan, at, dry_run).await
     }
 
+    async fn optimizable_review_count(
+        &self,
+        db: &SqlitePool,
+        config: &SparesExternalConfig,
+    ) -> Result<Option<usize>, Error> {
+        Ok(Some(training_set(db, config).await?.review_count()))
+    }
+
     async fn optimize(
         &self,
         db: &SqlitePool,
         config: &SparesExternalConfig,
     ) -> Result<OptimizeResponse, Error> {
-        // Forget markers are kept: the training set starts each card's history after its last one.
-        let review_logs: Vec<ReviewLog> = sqlx::query_as(
-            r"SELECT * FROM review_log WHERE card_id IS NOT NULL
-              ORDER BY card_id, reviewed_at ASC, id ASC",
-        )
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-        let training_set = optimize::training_set(
-            &review_logs,
-            config.zone(),
-            config.fsrs_optimizer_ignore_reviews_before,
-        );
+        let training_set = training_set(db, config).await?;
         let current_parameters = config.fsrs_parameters.clone();
         let num_relearning_steps = config.relearning_steps.len();
         // Training is CPU-bound, so it runs on the rayon pool rather than blocking the executor.

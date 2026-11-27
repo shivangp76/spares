@@ -1,16 +1,30 @@
 use chrono::DateTime;
+use chrono::NaiveDate;
 use chrono::Utc;
 use sqlx::SqlitePool;
 
 use crate::Error;
+use crate::LibraryError;
 use crate::api::review::pinned_card_ids;
 use crate::api::review::reschedule_all_cards;
+use crate::api::review::reschedule_all_cards_unlogged;
+use crate::api::undo::insert_events;
+use crate::api::undo::payloads::OptimizeSchedulerPayload;
+use crate::api::undo::payloads::SchedulerParameters;
+use crate::api::undo::payloads::Transition;
+use crate::config::FittedAt;
+use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::config::write_fsrs_parameters;
+use crate::helpers::study_date;
+use crate::model::EventType;
+use crate::schedulers::SrsScheduler;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schema::review::CardState;
+use crate::schema::review::OptimizeProposal;
 use crate::schema::review::OptimizeRequest;
 use crate::schema::review::OptimizeResponse;
+use crate::schema::review::OptimizeStatusResponse;
 use crate::schema::review::Rating;
 use crate::schema::review::ReschedulePreviewResponse;
 use crate::schema::review::RescheduleResponse;
@@ -67,7 +81,9 @@ pub async fn reschedule_preview(
 }
 
 /// Fits the scheduler's parameters to the review history. With `apply`, saves them if they
-/// predict it better than the current ones and reschedules every card with them.
+/// predict it better than the current ones, with the day and the number of reviews they were fitted
+/// to, and reschedules every card with them, as one
+/// [`OptimizeScheduler`](EventType::OptimizeScheduler) event that undo reverts.
 pub async fn optimize_scheduler(
     db: &SqlitePool,
     scheduler_name: &str,
@@ -78,25 +94,325 @@ pub async fn optimize_scheduler(
     let config = read_external_config()?;
     let mut response = scheduler.optimize(db, &config).await?;
     if apply && response.optimized.log_loss < response.current.log_loss {
-        write_fsrs_parameters(&response.optimized_parameters)?;
-        // Read back rather than patched in memory, so the reschedule sees exactly what was saved.
-        let config = read_external_config()?;
-        response.event_id = reschedule_all_cards(db, scheduler.as_ref(), &config, at).await?;
+        let fitted = FittedAt {
+            date: study_date(at, config.zone()),
+            review_count: response.review_count,
+        };
+        response.event_id = Some(
+            apply_parameters(
+                db,
+                scheduler.as_ref(),
+                SchedulerParameters {
+                    fsrs_parameters: response.optimized_parameters.clone(),
+                    fitted: Some(fitted),
+                },
+                at,
+            )
+            .await?,
+        );
         response.applied = true;
     }
     Ok(response)
 }
 
+/// Suggest optimizing again after this many reviews since the parameters were fitted, ...
+pub const OPTIMIZE_AFTER_REVIEWS: usize = 500;
+/// ... or this many days of study, whichever comes first.
+pub const OPTIMIZE_AFTER_DAYS: i64 = 30;
+/// How much lower, as a fraction of the current one, the log loss of parameters fitted by
+/// `auto_optimize` must be for them to be offered, so that a tiny gain changes nothing.
+pub const AUTO_OPTIMIZE_MIN_IMPROVEMENT: f32 = 0.01;
+/// `app_state` key of the [`OptimizeProposal`] `auto_optimize` fitted, as JSON.
+const PROPOSAL_KEY: &str = "fsrs_parameters_proposal";
+/// `app_state` key of when `auto_optimize` last fitted parameters, as a [`FittedAt`] in JSON, so
+/// that parameters it found no better are not fitted again until as many reviews or days have
+/// passed since.
+const AUTO_OPTIMIZED_KEY: &str = "fsrs_auto_optimized";
+
+/// The parameters in `config.toml`, and when they were fitted.
+pub(crate) fn current_parameters() -> Result<SchedulerParameters, Error> {
+    Ok(parameters_of(&read_external_config()?))
+}
+
+fn parameters_of(config: &SparesExternalConfig) -> SchedulerParameters {
+    SchedulerParameters {
+        fsrs_parameters: config.fsrs_parameters.clone(),
+        fitted: fitted_of(config),
+    }
+}
+
+fn fitted_of(config: &SparesExternalConfig) -> Option<FittedAt> {
+    Some(FittedAt {
+        date: config.fsrs_parameters_fitted_at?,
+        review_count: config.fsrs_parameters_review_count?,
+    })
+}
+
+/// Saves `parameters` to `config.toml` and reschedules every card with them, logged as one
+/// [`OptimizeScheduler`](EventType::OptimizeScheduler) event, whose id it returns. Any proposal is
+/// dropped, as it was scored against the parameters replaced.
+async fn apply_parameters(
+    db: &SqlitePool,
+    scheduler: &dyn SrsScheduler,
+    parameters: SchedulerParameters,
+    at: DateTime<Utc>,
+) -> Result<i64, Error> {
+    let before = current_parameters()?;
+    write_fsrs_parameters(&parameters.fsrs_parameters, parameters.fitted)?;
+    // Read back rather than patched in memory, so the reschedule sees exactly what was saved.
+    let config = read_external_config()?;
+    let cards = reschedule_all_cards_unlogged(db, scheduler, &config, at).await?;
+    let payload = OptimizeSchedulerPayload {
+        parameters: Transition {
+            before,
+            after: parameters,
+        },
+        cards,
+    };
+    let event_ids = insert_events(
+        db,
+        &[(
+            EventType::OptimizeScheduler,
+            serde_json::to_value(&payload).unwrap(),
+        )],
+        at,
+        None,
+    )
+    .await?;
+    delete_app_state(db, PROPOSAL_KEY).await?;
+    Ok(event_ids[0])
+}
+
+/// Whether as many reviews or days have passed since `since` as call for optimizing again. Never
+/// optimized, it is once there are as many reviews as optimizing again would wait for.
+fn optimize_due(since: Option<FittedAt>, review_count: usize, today: NaiveDate) -> bool {
+    match since {
+        None => review_count >= OPTIMIZE_AFTER_REVIEWS,
+        Some(since) => {
+            let reviews = review_count.saturating_sub(since.review_count);
+            // Days alone don't call for it when nothing was reviewed since
+            reviews >= OPTIMIZE_AFTER_REVIEWS
+                || (reviews > 0 && (today - since.date).num_days() >= OPTIMIZE_AFTER_DAYS)
+        }
+    }
+}
+
+/// Whether this host optimizes by itself: `auto_optimize` is on, and it is the root of its sync
+/// chain, so that two hosts never do at once.
+fn optimizes_by_itself(config: &SparesExternalConfig) -> bool {
+    config.auto_optimize && config.sync.url.is_none()
+}
+
+/// How many reviews and days have passed since the parameters were last fitted, whether that
+/// calls for optimizing again, and any parameters `auto_optimize` fitted and is waiting to have
+/// applied. Ask [`auto_optimize_due`] whether to fit them by itself now.
+pub async fn optimize_status(
+    db: &SqlitePool,
+    scheduler_name: &str,
+    at: DateTime<Utc>,
+) -> Result<OptimizeStatusResponse, Error> {
+    let scheduler = get_scheduler_from_string(scheduler_name)?;
+    let config = read_external_config()?;
+    let mut status = OptimizeStatusResponse {
+        after_reviews: OPTIMIZE_AFTER_REVIEWS,
+        after_days: OPTIMIZE_AFTER_DAYS,
+        ..OptimizeStatusResponse::default()
+    };
+    let Some(review_count) = scheduler.optimizable_review_count(db, &config).await? else {
+        return Ok(status);
+    };
+    let today = study_date(at, config.zone());
+    let fitted = fitted_of(&config);
+    status.optimizable = true;
+    status.review_count = review_count;
+    status.fitted_at = fitted.map(|f| f.date);
+    status.reviews_since = review_count.saturating_sub(fitted.map_or(0, |f| f.review_count));
+    status.days_since = fitted.map(|f| (today - f.date).num_days());
+    status.auto_optimize = optimizes_by_itself(&config);
+    status.proposal = proposal(db, &config).await?;
+    // Optimizing by itself, it suggests nothing it already found no better
+    let since = if status.auto_optimize {
+        later(fitted, auto_optimized(db).await?)
+    } else {
+        fitted
+    };
+    status.suggested = status.proposal.is_none() && optimize_due(since, review_count, today);
+    Ok(status)
+}
+
+fn later(a: Option<FittedAt>, b: Option<FittedAt>) -> Option<FittedAt> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if b.date > a.date { b } else { a }),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Whether `auto_optimize` should fit the parameters now: this host optimizes by itself, nothing
+/// is waiting to be applied, and enough reviews or days have passed since they were last fitted,
+/// here or by itself.
+pub async fn auto_optimize_due(
+    db: &SqlitePool,
+    scheduler_name: &str,
+    at: DateTime<Utc>,
+) -> Result<bool, Error> {
+    let config = read_external_config()?;
+    if !optimizes_by_itself(&config) {
+        return Ok(false);
+    }
+    let status = optimize_status(db, scheduler_name, at).await?;
+    Ok(status.optimizable && status.suggested)
+}
+
+/// Fits the parameters by itself, for `auto_optimize`, and keeps them as a proposal if they predict
+/// the review history at least [`AUTO_OPTIMIZE_MIN_IMPROVEMENT`] better. Nothing in `config.toml`
+/// or the cards changes until the proposal is applied ([`apply_optimize_proposal`]). Returns it.
+pub async fn auto_optimize(
+    db: &SqlitePool,
+    scheduler_name: &str,
+    at: DateTime<Utc>,
+) -> Result<Option<OptimizeProposal>, Error> {
+    let scheduler = get_scheduler_from_string(scheduler_name)?;
+    let config = read_external_config()?;
+    let response = scheduler.optimize(db, &config).await?;
+    let fitted_at = study_date(at, config.zone());
+    set_app_state(
+        db,
+        AUTO_OPTIMIZED_KEY,
+        &serde_json::to_string(&FittedAt {
+            date: fitted_at,
+            review_count: response.review_count,
+        })
+        .unwrap(),
+    )
+    .await?;
+    let gain = response.current.log_loss - response.optimized.log_loss;
+    if gain < AUTO_OPTIMIZE_MIN_IMPROVEMENT * response.current.log_loss {
+        return Ok(None);
+    }
+    let proposal = OptimizeProposal {
+        parameters: response.optimized_parameters,
+        current_parameters: config.fsrs_parameters.clone(),
+        current: response.current,
+        optimized: response.optimized,
+        review_count: response.review_count,
+        card_count: response.card_count,
+        fitted_at,
+    };
+    set_app_state(db, PROPOSAL_KEY, &serde_json::to_string(&proposal).unwrap()).await?;
+    Ok(Some(proposal))
+}
+
+/// Saves the parameters `auto_optimize` proposed and reschedules every card with them, as
+/// `optimize --apply` would have.
+pub async fn apply_optimize_proposal(
+    db: &SqlitePool,
+    scheduler_name: &str,
+    at: DateTime<Utc>,
+) -> Result<OptimizeResponse, Error> {
+    let scheduler = get_scheduler_from_string(scheduler_name)?;
+    let config = read_external_config()?;
+    let Some(proposal) = proposal(db, &config).await? else {
+        return Err(Error::Library(LibraryError::InvalidConfig(
+            "There are no proposed parameters to apply: they were applied or discarded, or \
+             `fsrs_parameters` changed since they were fitted."
+                .to_string(),
+        )));
+    };
+    let event_id = apply_parameters(
+        db,
+        scheduler.as_ref(),
+        SchedulerParameters {
+            fsrs_parameters: proposal.parameters.clone(),
+            fitted: Some(FittedAt {
+                date: proposal.fitted_at,
+                review_count: proposal.review_count,
+            }),
+        },
+        at,
+    )
+    .await?;
+    Ok(OptimizeResponse {
+        card_count: proposal.card_count,
+        review_count: proposal.review_count,
+        current_parameters: proposal.current_parameters,
+        current: proposal.current,
+        optimized_parameters: proposal.parameters,
+        optimized: proposal.optimized,
+        applied: true,
+        event_id: Some(event_id),
+    })
+}
+
+/// Discards the parameters `auto_optimize` proposed. It fits them again only once as many reviews
+/// or days have passed again.
+pub async fn discard_optimize_proposal(db: &SqlitePool) -> Result<(), Error> {
+    delete_app_state(db, PROPOSAL_KEY).await
+}
+
+/// The proposal waiting to be applied, if it was scored against the parameters `config` has.
+async fn proposal(
+    db: &SqlitePool,
+    config: &SparesExternalConfig,
+) -> Result<Option<OptimizeProposal>, Error> {
+    let Some(value) = app_state(db, PROPOSAL_KEY).await? else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_str::<OptimizeProposal>(&value)
+        .ok()
+        .filter(|p| p.current_parameters == config.fsrs_parameters))
+}
+
+async fn auto_optimized(db: &SqlitePool) -> Result<Option<FittedAt>, Error> {
+    Ok(app_state(db, AUTO_OPTIMIZED_KEY)
+        .await?
+        .and_then(|value| serde_json::from_str(&value).ok()))
+}
+
+async fn app_state(db: &SqlitePool, key: &str) -> Result<Option<String>, Error> {
+    sqlx::query_scalar("SELECT value FROM app_state WHERE key = ?")
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })
+}
+
+async fn set_app_state(db: &SqlitePool, key: &str, value: &str) -> Result<(), Error> {
+    sqlx::query(
+        "INSERT INTO app_state (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(())
+}
+
+async fn delete_app_state(db: &SqlitePool, key: &str) -> Result<(), Error> {
+    sqlx::query("DELETE FROM app_state WHERE key = ?")
+        .bind(key)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+    Ok(())
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use chrono::Duration;
 
     use super::*;
 
     /// `card_count` cards, each reviewed on days 0, 1, 3, 7, 15 and 30, and forgotten far more
     /// often than the default parameters expect.
-    async fn seed_review_history(pool: &SqlitePool, card_count: i64, start: DateTime<Utc>) {
-        sqlx::query("INSERT INTO parser (name, usn) VALUES ('markdown', -1)")
+    pub(crate) async fn seed_review_history(
+        pool: &SqlitePool,
+        card_count: i64,
+        start: DateTime<Utc>,
+    ) {
+        // Seeding more cards later reuses the parser
+        sqlx::query("INSERT OR IGNORE INTO parser (name, usn) VALUES ('markdown', -1)")
             .execute(pool)
             .await
             .unwrap();
@@ -156,6 +472,28 @@ mod tests {
             response.optimized.log_loss < response.current.log_loss,
             "parameters fitted to a history this forgetful predict it better: {response:?}"
         );
+    }
+
+    #[test]
+    fn optimizing_again_is_due_after_500_reviews_or_30_days() {
+        let day = |d: u32| NaiveDate::from_ymd_opt(2026, 11, d).unwrap();
+        let fitted = Some(FittedAt {
+            date: day(1),
+            review_count: 1000,
+        });
+        // Never optimized: once there are as many reviews as it would wait for
+        assert!(!optimize_due(None, 499, day(1)));
+        assert!(optimize_due(None, 500, day(1)));
+        // 500 reviews since, whichever day
+        assert!(!optimize_due(fitted, 1499, day(2)));
+        assert!(optimize_due(fitted, 1500, day(2)));
+        // 30 days since, with a review since
+        assert!(!optimize_due(fitted, 1001, day(30)));
+        assert!(optimize_due(fitted, 1001, day(1) + chrono::Days::new(30)));
+        // ... but not without one
+        assert!(!optimize_due(fitted, 1000, day(1) + chrono::Days::new(90)));
+        // Fewer reviews than then, e.g. after deleting cards, is none since
+        assert!(!optimize_due(fitted, 10, day(2)));
     }
 
     #[sqlx::test]

@@ -527,8 +527,12 @@ fn print_optimize_response(response: &OptimizeResponse, apply: bool) {
     println!("\nfsrs_parameters = [{}]\n", parameters);
     let better = response.optimized.log_loss < response.current.log_loss;
     if response.applied {
-        println!("Saved the optimized parameters to the config.");
-        print_rescheduled(response.event_id);
+        println!("Saved the optimized parameters to the config, and rescheduled all cards.");
+        if let Some(id) = response.event_id {
+            println!(
+                "`spares event undo {id}` puts back the previous parameters and the cards' schedule."
+            );
+        }
     } else if !better {
         println!(
             "Kept the current parameters: the optimized ones do not predict your reviews better."

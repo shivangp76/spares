@@ -12,6 +12,7 @@ use crate::api::undo::payloads::DeleteNotesPayload;
 use crate::api::undo::payloads::DeleteParserPayload;
 use crate::api::undo::payloads::DeleteTagPayload;
 use crate::api::undo::payloads::ForgetCardPayload;
+use crate::api::undo::payloads::OptimizeSchedulerPayload;
 use crate::api::undo::payloads::RateCardPayload;
 use crate::api::undo::payloads::RelocateCardsPayload;
 use crate::api::undo::payloads::UnmoveCardsPayload;
@@ -63,6 +64,7 @@ pub async fn create_undo_event(
         EventType::ScheduleBreak => EventType::UnscheduleBreak,
         EventType::UnscheduleBreak => EventType::ScheduleBreak,
         EventType::UpdateCardTags => EventType::UpdateCardTags,
+        EventType::OptimizeScheduler => EventType::OptimizeScheduler,
         EventType::UpdateCards
         | EventType::BuryCards
         | EventType::UnburyCards
@@ -332,6 +334,20 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
         EventType::UpdateCardTags => {
             let payload: UpdateCardTagsPayload =
                 serde_json::from_value(event.payload.clone()).unwrap();
+            Ok(serde_json::to_value(payload.swap()).unwrap())
+        }
+        EventType::OptimizeScheduler => {
+            let payload: OptimizeSchedulerPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // Parameters changed since, by hand or by a later optimize, would be lost
+            let current = crate::api::scheduler::current_parameters()?;
+            if current.fsrs_parameters != payload.parameters.after.fsrs_parameters {
+                return Err(Error::Library(LibraryError::InvalidConfig(format!(
+                    "Event {} can't be undone: `fsrs_parameters` in config.toml changed since. \
+                     Undo the later change first, or set them by hand.",
+                    event.id
+                ))));
+            }
             Ok(serde_json::to_value(payload.swap()).unwrap())
         }
         EventType::DeleteNotes => {
