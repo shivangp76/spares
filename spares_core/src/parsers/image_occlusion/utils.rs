@@ -26,12 +26,17 @@ pub fn get_image_occlusion_directory() -> PathBuf {
     image_occlusions_dir
 }
 
-/// Rendered image occlusions, in the files directory, which serves them.
+/// Rendered image occlusions, in the files directory, which serves them. Made if it isn't there,
+/// for writing to: to only look in it, use [`image_occlusion_rendered_path`].
 pub fn get_image_occlusion_rendered_directory() -> PathBuf {
-    let mut image_occlusions_dir = get_files_dir();
-    image_occlusions_dir.push("image_occlusions");
+    let image_occlusions_dir = image_occlusion_rendered_path();
     crate::platform::create_dir_all(&image_occlusions_dir).unwrap();
     image_occlusions_dir
+}
+
+/// Where [`get_image_occlusion_rendered_directory`] is, without making it.
+pub fn image_occlusion_rendered_path() -> PathBuf {
+    get_files_dir().join("image_occlusions")
 }
 
 /// The image a card shows for its `image_occlusion_order_in_card`th image occlusion: a PNG of the

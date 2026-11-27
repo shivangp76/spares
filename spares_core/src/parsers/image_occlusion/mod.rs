@@ -83,6 +83,7 @@ pub use utils::append_to_stem;
 pub use utils::get_image_occlusion_card_filepath;
 pub use utils::get_image_occlusion_directory;
 pub use utils::get_image_occlusion_rendered_directory;
+pub use utils::image_occlusion_rendered_path;
 
 #[cfg(test)]
 mod test;

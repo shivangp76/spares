@@ -24,7 +24,7 @@ use crate::parsers::generate_files::CardSide;
 use crate::parsers::generate_files::RenderOutputType;
 use crate::parsers::get_all_parsers;
 use crate::parsers::get_output_raw_dir;
-use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
+use crate::parsers::image_occlusion::image_occlusion_rendered_path;
 
 /// The note and, for a card's file, the card order that a file of the cache was made for, from
 /// its name: `<note>[-<order>-<front|back>[-io-<n>]].<extension>` (see
@@ -183,7 +183,8 @@ fn remove_stale_files(
         dirs.insert(parser.get_output_rendered_dir(RenderOutputDirectoryType::Note));
         extensions.insert(parser.file_extension());
     }
-    dirs.insert(get_image_occlusion_rendered_directory());
+    // Only looked in, so not made: a collection with no image occlusions has no such directory
+    dirs.insert(image_occlusion_rendered_path());
     let mut removed = 0;
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -245,6 +246,7 @@ mod tests {
     use crate::api::note::create_notes;
     use crate::collection::Collection;
     use crate::collection::CollectionPaths;
+    use crate::parsers::image_occlusion::get_image_occlusion_rendered_directory;
     use crate::schema::note::CreateNoteRequest;
     use crate::schema::note::CreateNotesRequest;
 
