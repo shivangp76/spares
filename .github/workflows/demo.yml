@@ -13,12 +13,12 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   build:
+    # A newer run cancels the build of an older one, so two runs in a row publish once.
+    concurrency:
+      group: demo-build
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -52,6 +52,10 @@ jobs:
 
   deploy:
     needs: build
+    # A deploy that has started always finishes; a newer one waits for it.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       pages: write
