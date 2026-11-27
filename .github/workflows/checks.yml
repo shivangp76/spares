@@ -78,7 +78,7 @@ jobs:
           version=$(sed -n 's/^PANDOC_VERSION="\(.*\)"/\1/p' ../../scripts/setup_vps.sh)
           curl -fsSL "https://github.com/jgm/pandoc/releases/download/$version/pandoc-$version-1-amd64.deb" -o "$RUNNER_TEMP/pandoc.deb"
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "$RUNNER_TEMP/pandoc.deb" bubblewrap libasound2-dev latexmk texlive-latex-extra texlive-fonts-recommended texlive-xetex texlive-fonts-extra lmodern inkscape llvm
+          sudo apt-get install -y --no-install-recommends "$RUNNER_TEMP/pandoc.deb" bubblewrap libasound2-dev latexmk texlive-latex-extra texlive-plain-generic texlive-fonts-recommended texlive-xetex texlive-fonts-extra lmodern inkscape llvm
       - run: bun install --frozen-lockfile
       - run: bunx playwright-core install --with-deps ${{ matrix.browser == 'chromium' && 'chromium-headless-shell' || matrix.browser }}
       - run: bun run build
