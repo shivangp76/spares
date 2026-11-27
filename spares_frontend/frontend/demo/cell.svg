@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="500" viewBox="0 0 600 500" font-family="Helvetica, Arial, sans-serif">
+  <!-- A plant cell, drawn for the demo collection's image occlusion note (see notes.ts). The
+       labels on the right are what its masks hide. cell.png is this, made with
+       `rsvg-convert cell.svg -o cell.png`. -->
+  <rect width="600" height="500" fill="#ffffff"/>
+  <!-- Cell wall and membrane -->
+  <rect x="30" y="40" width="360" height="420" rx="28" fill="#d9f2c4" stroke="#4d7c0f" stroke-width="10"/>
+  <rect x="44" y="54" width="332" height="392" rx="20" fill="#ecfccb" stroke="#65a30d" stroke-width="2"/>
+  <!-- Vacuole -->
+  <rect x="150" y="190" width="170" height="200" rx="60" fill="#bae6fd" stroke="#0284c7" stroke-width="3"/>
+  <!-- Nucleus -->
+  <circle cx="120" cy="120" r="48" fill="#ddd6fe" stroke="#6d28d9" stroke-width="3"/>
+  <circle cx="128" cy="112" r="14" fill="#7c3aed"/>
+  <!-- Mitochondrion -->
+  <ellipse cx="270" cy="150" rx="52" ry="24" fill="#fed7aa" stroke="#c2410c" stroke-width="3"/>
+  <path d="M228 150 q10 -16 20 0 t20 0 t20 0 t20 0" fill="none" stroke="#c2410c" stroke-width="2"/>
+  <!-- Chloroplasts -->
+  <ellipse cx="95" cy="300" rx="40" ry="20" fill="#86efac" stroke="#15803d" stroke-width="3"/>
+  <line x1="68" y1="300" x2="122" y2="300" stroke="#15803d" stroke-width="2"/>
+  <ellipse cx="100" cy="390" rx="34" ry="17" fill="#86efac" stroke="#15803d" stroke-width="3"/>
+  <!-- Leader lines -->
+  <g stroke="#334155" stroke-width="2">
+    <line x1="168" y1="110" x2="452" y2="78"/>
+    <line x1="322" y1="152" x2="452" y2="168"/>
+    <line x1="135" y1="300" x2="452" y2="258"/>
+    <line x1="320" y1="300" x2="452" y2="348"/>
+    <line x1="390" y1="430" x2="452" y2="438"/>
+  </g>
+  <g font-size="22" fill="#0f172a">
+    <text x="458" y="86">Nucleus</text>
+    <text x="458" y="176">Mitochondrion</text>
+    <text x="458" y="266">Chloroplast</text>
+    <text x="458" y="356">Vacuole</text>
+    <text x="458" y="446">Cell wall</text>
+  </g>
+</svg>

@@ -1,0 +1,65 @@
+name: Demo
+# Builds the demo (the web app with example notes, in the browser, with no host; see
+# spares_frontend/frontend/demo/build.ts), tests it, and publishes it to GitHub Pages. Weekly too,
+# since its made-up reviews are dated from the build, so that it keeps cards due.
+#
+# Needs Settings → Pages → Source: GitHub Actions in the repository.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spares_frontend/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: oven-sh/setup-bun@v2
+      - name: Install render tools
+        run: |
+          version=$(sed -n 's/^PANDOC_VERSION="\(.*\)"/\1/p' ../../scripts/setup_vps.sh)
+          curl -fsSL "https://github.com/jgm/pandoc/releases/download/$version/pandoc-$version-1-amd64.deb" -o "$RUNNER_TEMP/pandoc.deb"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "$RUNNER_TEMP/pandoc.deb" bubblewrap libasound2-dev latexmk texlive-latex-extra texlive-fonts-recommended lmodern
+      - run: cargo build --locked -p spares_cli -p spares_server
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright-core install --with-deps chromium-headless-shell
+      - run: bun run build-demo
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+      - name: Test the demo in a browser
+        run: bun e2e/demo.ts chromium
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: spares_frontend/frontend/dist-demo
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

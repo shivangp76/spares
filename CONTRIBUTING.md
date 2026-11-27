@@ -139,6 +139,21 @@ With Playwright (`playwright-core`, pointing `executablePath` at the headless sh
 
 The frontend's lint (react-hooks 7) rejects calling setState synchronously in an effect, even through `useEffectEvent`, and reading refs while computing a memoized value. Defer the call with `queueMicrotask`, or dispatch a DOM event (as `useSubmitKeys` does).
 
+### The demo and the README's screenshots
+
+The demo is the web app built with `VITE_SPARES_DEMO=1` (`src/demo.ts`): it has no host, and loads a collection of example notes into the browser's copy (`src/local/demo.ts`, with `load_snapshot` in `spares_wasm`). `demo/build.ts` makes that collection on a scratch host of its own, from `demo/notes.ts`, with three months of made-up reviews dated from the build. `.github/workflows/demo.yml` publishes it to GitHub Pages on every push to `main`, and weekly so that cards stay due.
+
+```sh
+cd spares_frontend/frontend
+cargo build -p spares_cli -p spares_server   # the build runs them
+bun run build-demo                           # dist-demo/, served at /spares/
+bun demo/serve.ts dist-demo                  # http://127.0.0.1:8798/spares/
+bun e2e/demo.ts                              # Chromium, WebKit and Firefox, about a minute each
+bun demo/screenshots.ts                      # docs/screenshots/*.webp (needs cwebp)
+```
+
+`build-demo` takes about two minutes, most of it rendering. After changing only the app, rebuild just it (`VITE_SPARES_DEMO=1 npx vite build --base /spares/ --outDir dist-demo --emptyOutDir`) and copy back a `dist-demo/demo/` kept from before, since `--emptyOutDir` deletes it. Markdown notes in the demo avoid characters pdflatex can't typeset, such as `α` or `²`: their PDFs are rendered too, though the demo leaves them out.
+
 ### Clock-dependent tests
 
 A study day ends at `day_starts_at` (4 AM by default), not at midnight. Tests take the hour from `queue::tests::day_starts_at()` and dates from `helpers::study_date`, and a test that needs a time later the same day uses `queue::tests::local_midday()`.
