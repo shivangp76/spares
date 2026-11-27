@@ -104,12 +104,10 @@ Before blaming a change for an e2e failure, run the suite on `main` too: WebKit 
 
 #### In a jj workspace
 
-A new jj workspace has no `svgedit` submodule checkout, `node_modules` or `src/local/pkg`. Clone them from your main checkout (`cp -cR` is an instant copy on APFS), and `target/debug` too, so the first build is incremental:
+A new jj workspace has no `svgedit` submodule checkout (jj leaves an empty directory there), `node_modules` or `src/local/pkg`. `scripts/setup_workspace.sh` clones them from your main checkout, and `target/debug` too, so the first build is incremental:
 
 ```sh
-MAIN=<your main checkout>
-for d in node_modules svgedit src/local/pkg; do cp -cR $MAIN/spares_frontend/frontend/$d spares_frontend/frontend/$d; done
-mkdir -p target && cp -cR $MAIN/target/debug target/debug
+scripts/setup_workspace.sh <your main checkout>
 cargo build -p spares_server
 cd spares_frontend/frontend && bun run build && SPARES_SERVER_BIN=$PWD/../../target/debug/spares_server bun run e2e
 ```

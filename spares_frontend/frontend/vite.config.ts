@@ -97,6 +97,16 @@ function copySvgeditAssets(): Plugin {
   return {
     name: "copy-svgedit-assets",
     apply: "build",
+    // Before the build starts: a build without svgedit fails, but the error it shows is from a
+    // `closeBundle` hook that runs after the failure, such as the copy below
+    config() {
+      if (!existsSync(SVGEDIT_EDITOR_DIR))
+        throw new Error(
+          "svgedit is missing. Check out the submodule with `git submodule update --init`, or in " +
+            "a jj workspace, where it is an empty directory, run " +
+            "`scripts/setup_workspace.sh <main checkout>`.",
+        );
+    },
     configResolved(config) {
       outDir = outDirOf(config);
     },
