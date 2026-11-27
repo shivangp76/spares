@@ -1,10 +1,11 @@
 // The demo collection's notes (see build.ts). Written for the demo, on general topics, so that it
 // shows each feature the README lists: the three parsers, clozes and their settings, links
-// between notes, keywords, a tag hierarchy, card tags, text to speech, typed answers and an image
-// occlusion. Each note's `ago` is how many days before the build it was created, which its review
+// between notes, keywords, a tag hierarchy, card tags, text to speech, typed answers, an image
+// occlusion, and the markdown-language-tools parser's readings (dictionary lookup needs a host,
+// which the demo hasn't). Each note's `ago` is how many days before the build it was created, which its review
 // history starts from.
 
-export type ParserName = "markdown" | "typst" | "latex-note";
+export type ParserName = "markdown" | "typst" | "latex-note" | "markdown-language-tools";
 
 export interface DemoNote {
   parser: ParserName;
@@ -16,6 +17,8 @@ export interface DemoNote {
   /** How well its cards are known, from 0 (often forgotten) to 1 (never), for the made-up reviews */
   ease?: number;
   suspended?: boolean;
+  /** The note's custom data, such as `{"language": "ja"}` for markdown-language-tools */
+  customData?: Record<string, unknown>;
 }
 
 const rust = (data: string, keywords: string[], ago: number, ease = 0.8): DemoNote => ({
@@ -52,6 +55,21 @@ const calculus = (
   ago: number,
   ease = 0.75,
 ): DemoNote => ({ parser, data, tags: ["math:calculus"], keywords, ago, ease });
+
+/** A note with readings (`漢字[かんじ]`), in `language` */
+const withReadings =
+  (tag: string, language: string, tts: string) =>
+  (data: string, keywords: string[], ago: number, ease = 0.75, customData: Record<string, unknown> = {}): DemoNote => ({
+    parser: "markdown-language-tools",
+    data,
+    tags: [tag],
+    keywords,
+    ago,
+    ease,
+    customData: { language, tts, ...customData },
+  });
+const japanese = withReadings("languages:japanese", "ja", "ja_JP");
+const chinese = withReadings("languages:chinese", "zh", "zh_CN");
 
 const spanish = (data: string, keywords: string[], ago: number, ease = 0.85): DemoNote => ({
   parser: "markdown",
@@ -494,6 +512,54 @@ $ integral e^(a x) dif x = #cl[$1/a e^(a x) + C$] $
 Integration undoes #lin[differentiation]: see the #lin(rel: "related")[fundamental theorem of calculus].`,
     ["Integration", "Antiderivative"],
     10,
+  ),
+
+  // Japanese and Chinese, with readings over the words (the markdown-language-tools parser)
+  japanese(
+    `# Studying every day
+
+私は 毎日[まいにち] 日本語[にほんご]を 勉強[べんきょう]しています。
+
+昨日[きのう]は {{[h:ate sushi] 寿司[すし]を 食[た]べました}}。
+
+*I study Japanese every day. Yesterday I ate sushi.*`,
+    ["毎日", "Studying every day"],
+    64,
+  ),
+  japanese(
+    `勉強[べんきょう]: {{[h:a noun, and a verb with する] study}}`,
+    ["勉強"],
+    58,
+    0.8,
+    // The usual vocabulary card: the word on the front, its reading only on the back
+    { readings: "back" },
+  ),
+  japanese(
+    `"To eat", in its dictionary form: {{[t] 食[た]べる}}
+
+Typed as 食べる or as its reading, たべる.`,
+    ["食べる"],
+    40,
+    0.65,
+  ),
+  japanese(
+    `- water: {{[r] 水[みず]}}
+- tea: {{[r] お 茶[ちゃ]}}
+- coffee: {{[r] コーヒー}}`,
+    ["Drinks", "飲み物"],
+    21,
+  ),
+  chinese(
+    `# Greetings
+
+我在学习 中文[zhōngwén]。
+
+- Hello: {{[r] 你好[nǐ hǎo]}}
+- Thank you: {{[r] 谢谢[xièxie]}}
+- Goodbye: {{[r] 再见[zàijiàn]}}`,
+    ["你好", "Chinese greetings"],
+    30,
+    0.8,
   ),
 
   // Spanish

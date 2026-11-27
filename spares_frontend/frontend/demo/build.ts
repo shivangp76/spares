@@ -17,7 +17,8 @@
 // Reviews are dated from when it runs, so the demo is rebuilt now and then (see
 // .github/workflows/demo.yml) to keep cards due. It needs `spares` and `spares_server` (by
 // default from ../../target/debug, else `SPARES_BIN` and `SPARES_SERVER_BIN`), and pandoc and
-// LaTeX (latexmk) to render Markdown and LaTeX notes.
+// LaTeX (latexmk, and lualatex with luatexja for the Japanese and Chinese notes) to render
+// Markdown and LaTeX notes.
 import { Database } from "bun:sqlite";
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -178,12 +179,18 @@ interface CreatedNote {
 
 async function createNotes(): Promise<CreatedNote[]> {
   const parsers: Record<ParserName, number> = {} as Record<ParserName, number>;
-  for (const name of ["markdown", "typst", "latex-note"] as ParserName[])
+  for (const name of ["markdown", "typst", "latex-note", "markdown-language-tools"] as ParserName[])
     parsers[name] = (await api<{ id: number }>("POST", "/api/parsers", { name })).id;
   const created: CreatedNote[] = [];
   const create = async (
     parser: ParserName,
-    note: { data: string; tags: string[]; keywords?: string[]; suspended?: boolean },
+    note: {
+      data: string;
+      tags: string[];
+      keywords?: string[];
+      suspended?: boolean;
+      customData?: Record<string, unknown>;
+    },
   ) => {
     const { notes } = await api<{ notes: { id: number; card_count: number }[] }>("POST", "/api/notes", {
       parser_id: parsers[parser],
@@ -193,7 +200,7 @@ async function createNotes(): Promise<CreatedNote[]> {
           keywords: note.keywords ?? [],
           tags: note.tags,
           is_suspended: note.suspended ?? false,
-          custom_data: {},
+          custom_data: note.customData ?? {},
         },
       ],
     }).catch((e: Error) => {
