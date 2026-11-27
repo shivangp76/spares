@@ -37,6 +37,25 @@ jobs:
           curl -fsSL "https://github.com/jgm/pandoc/releases/download/$version/pandoc-$version-1-amd64.deb" -o "$RUNNER_TEMP/pandoc.deb"
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends "$RUNNER_TEMP/pandoc.deb" bubblewrap libasound2-dev latexmk texlive-latex-extra texlive-plain-generic texlive-fonts-recommended lmodern texlive-luatex texlive-lang-japanese texlive-lang-chinese llvm
+      # LuaTeX's first run builds its font caches, which took the first Japanese render past the
+      # 60 seconds a render gets. Renders have a TEXMFVAR of their own (spares_core/src/render.rs)
+      # but read the system's, so this builds them there, with the packages and CJK fonts of
+      # markdown-language-tools' PDFs.
+      - name: Build LuaTeX's font caches
+        working-directory: ${{ runner.temp }}
+        run: |
+          cat > warmup.tex <<'EOF'
+          \documentclass{article}
+          \usepackage{unicode-math}
+          \usepackage{luatexja-fontspec}
+          \usepackage{luatexja-ruby}
+          \setmainjfont[BoldFont=HaranoAjiGothic-Medium.otf]{HaranoAjiMincho-Regular.otf}
+          \newjfontfamily\warmzh[BoldFont=FandolSong-Bold.otf]{FandolSong-Regular.otf}
+          \begin{document}
+          日本語\ruby{漢字}{かんじ}\textbf{太字} {\warmzh 中文\textbf{粗体}} $x^2$
+          \end{document}
+          EOF
+          sudo env TEXMFVAR="$(kpsewhich -var-value TEXMFSYSVAR)" lualatex -interaction=nonstopmode -halt-on-error warmup.tex
       - run: cargo build --locked -p spares_cli -p spares_server
       - run: bun install --frozen-lockfile
       - run: bunx playwright-core install --with-deps chromium-headless-shell
