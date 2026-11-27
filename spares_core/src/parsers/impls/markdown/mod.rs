@@ -30,6 +30,7 @@
 //!   and leaves out what it names files with, such as `css` and `filters`, since it doesn't have
 //!   them.
 
+use std::ffi::OsString;
 use std::fs::read_to_string;
 use std::fs::remove_file;
 use std::fs::write;
@@ -195,8 +196,6 @@ impl Parseable for MarkdownParser {
             .map_or(data, |x| x.trim())
     }
 
-    #[allow(clippy::let_and_return, reason = "Make note vs card data explicit")]
-    #[allow(clippy::too_many_lines, reason = "File data is long")]
     fn construct_file_data(
         &self,
         output_type: ConstructFileDataType,
@@ -204,104 +203,13 @@ impl Parseable for MarkdownParser {
         note_import_action: &NoteImportAction,
         include_separator: bool,
     ) -> String {
-        let GenerateNoteFilesRequest {
-            note_id,
-            note_data,
-            keywords,
-            linked_notes,
-            custom_data,
-            tags,
-            // Already in `note_data` (see `construct_note_file_contents`)
-            card_tags: _,
-        } = request;
-        let keywords_str = keywords.join(", ");
-        let tags_str = tags.join(", ");
-        let NoteSettingsKeys {
-            action: action_key,
-            action_add: action_add_key,
-            settings_key_value_delim,
-            custom_data: custom_data_key,
-            note_id: note_id_key,
-            ..
-        } = self.note_settings_keys();
-        match output_type {
-            ConstructFileDataType::Note => {
-                let (note_data, mut linked_notes_string) =
-                    get_linked_notes_string(self, note_data.as_str(), linked_notes.as_ref());
-                if !linked_notes_string.is_empty() {
-                    // The blank line lets pandoc read the link definitions, which cannot interrupt
-                    // a paragraph.
-                    linked_notes_string = format!("\nLinked Notes:\n\n{}", linked_notes_string);
-                }
-                let custom_data_str = if custom_data.is_empty() {
-                    String::new()
-                } else {
-                    let custom_data_str_content = serde_json::to_string(custom_data).unwrap();
-                    let custom_data_string = format!(
-                        "{}{} {}",
-                        custom_data_key.get_write(),
-                        settings_key_value_delim,
-                        custom_data_str_content.as_str(),
-                    );
-                    self.construct_setting(custom_data_string.as_str())
-                };
-                let action_string = if matches!(note_import_action, NoteImportAction::Update(_)) {
-                    String::new()
-                } else {
-                    let action_value = match note_import_action {
-                        NoteImportAction::Add => action_add_key,
-                        NoteImportAction::Update(_) | NoteImportAction::Delete(_) => unreachable!(),
-                    };
-                    self.construct_setting(&format!(
-                        "{}{} {}",
-                        action_key.get_write(),
-                        settings_key_value_delim,
-                        action_value.get_write(),
-                    ))
-                };
-                let note_id_string = format!(
-                    "{}{} {}",
-                    note_id_key.get_write(),
-                    settings_key_value_delim,
-                    note_id.letters()
-                );
-                let keywords_string =
-                    format!("keywords{} {}", settings_key_value_delim, keywords_str);
-                let tags_string = format!("tags{} {}", settings_key_value_delim, tags_str);
-                let mut lines = vec![
-                    "\n".to_string(),
-                    action_string,
-                    // A note to add has no id yet: importing one with an id is an error.
-                    if matches!(note_import_action, NoteImportAction::Add) {
-                        String::new()
-                    } else {
-                        self.construct_setting(&note_id_string)
-                    },
-                    self.construct_setting(&keywords_string),
-                    self.construct_setting(&tags_string),
-                    custom_data_str,
-                    self.construct_comment("spares: note start"),
-                    note_data,
-                    "\n".to_string(),
-                    self.construct_comment("spares: note end"),
-                    linked_notes_string,
-                    "\n".to_string(),
-                ];
-                if include_separator {
-                    lines.push("---".to_string());
-                }
-                let note_file_data = lines.into_iter().collect::<String>();
-                note_file_data
-            }
-            ConstructFileDataType::Card(card_order, card_data, side) => {
-                // The note's id, keywords and tags are shown beside the card instead of in it, so
-                // changing them leaves the card's render up to date.
-                let card_file_data = without_cloze_delimiters(&construct_card_data(
-                    self, card_order, card_data, side, *note_id,
-                ));
-                card_file_data
-            }
-        }
+        construct_file_data(
+            self,
+            output_type,
+            request,
+            note_import_action,
+            include_separator,
+        )
     }
 
     fn construct_cloze_replacement(
@@ -380,54 +288,19 @@ impl Parseable for MarkdownParser {
         _output_rendered_dir: &Path,
         output_rendered_filepath: &Path,
     ) -> Result<RenderedFile, Error> {
-        // Output is rendered as a pdf. This is because some formats, like png, do not support text selection. Other formats, such as svg, do not have popular viewers on all platforms.
-        // Pandoc logs the resources it loads, which are the dependencies besides the defaults file.
-        let log_filepath = output_rendered_filepath.with_extension("pandoc-log.json");
-        let input = PandocInput::new(
+        let config = read_external_config().unwrap();
+        render_pdf(
             self,
             output_text_filepath,
-            output_rendered_filepath.with_extension("pandoc-input.md"),
+            output_rendered_filepath,
+            config
+                .parser
+                .markdown
+                .defaults_file
+                .as_deref()
+                .map(Path::new),
+            &[],
         )
-        .map_err(|source| Error::Io {
-            description: format!("Failed to read {}", output_text_filepath.display()),
-            source,
-        })?;
-        let mut base_command = pandoc_command();
-        let mut command = base_command
-            .arg("-o")
-            .arg(output_rendered_filepath)
-            .arg(input.path())
-            .arg("--log")
-            .arg(&log_filepath);
-        let config = read_external_config().unwrap();
-        if let Some(defaults_file) = &config.parser.markdown.defaults_file {
-            check_defaults_file(Path::new(defaults_file))?;
-            command = command.arg("--defaults").arg(defaults_file);
-        }
-        let output = render_command_output(command, "pandoc");
-        let dependencies = output.as_ref().ok().map(|_| {
-            record_dependencies(
-                &log_filepath,
-                config
-                    .parser
-                    .markdown
-                    .defaults_file
-                    .as_deref()
-                    .map(Path::new),
-            )
-            .unwrap_or_else(|e| {
-                warn!(
-                    "Failed to record dependencies of {}: {e}",
-                    output_text_filepath.display()
-                );
-                RenderDependencies::default()
-            })
-        });
-        let _ = remove_file(&log_filepath);
-        Ok(RenderedFile {
-            output: output?,
-            dependencies: dependencies.unwrap_or_default(),
-        })
     }
 
     fn has_web_render(&self) -> bool {
@@ -442,47 +315,237 @@ impl Parseable for MarkdownParser {
         mode: WebRenderMode,
         dependencies: &mut RenderDependencies,
     ) -> Result<(), String> {
-        let log_filepath = output_rendered_filepath.with_extension("pandoc-web-log.json");
-        let input = PandocInput::new(
+        render_html(
             self,
             output_text_filepath,
-            output_rendered_filepath.with_extension("pandoc-web-input.md"),
-        )
-        .map_err(|e| format!("Failed to read {}: {e}", output_text_filepath.display()))?;
-        let web_defaults_file = Some(web_defaults_filepath()).filter(|path| path.is_file());
-        if let Some(path) = &web_defaults_file {
-            check_defaults_file(path).map_err(|e| e.to_string())?;
-        }
-        let page_title = output_rendered_filepath
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let mut command = pandoc_command();
-        command
-            .arg(input.path())
-            .arg("-o")
-            .arg(output_web_filepath)
-            .args(["-t", "html5", "--standalone", "--embed-resources"])
-            .arg("--math-method=mathml")
-            // Web clients style it like the app. The web defaults file can turn these back on.
-            .arg("--metadata=document-css=false")
-            .arg("--metadata")
-            .arg(format!("pagetitle={page_title}"))
-            .arg("--log")
-            .arg(&log_filepath);
-        // The PDF defaults file is never passed, since its options may not apply to HTML.
-        if let Some(web_defaults_file) = &web_defaults_file {
-            command.arg("--defaults").arg(web_defaults_file);
-        }
-        let result = render_web_command(
-            &mut command,
-            &log_filepath,
-            web_defaults_file.as_deref(),
-            dependencies,
+            output_rendered_filepath,
+            output_web_filepath,
             mode,
-        );
-        let _ = remove_file(&log_filepath);
-        result
+            dependencies,
+            Some(web_defaults_filepath().as_path()).filter(|path| path.is_file()),
+            &[],
+        )
+    }
+}
+
+/// Renders `output_text_filepath`, as `parser` reads it ([`Parseable::note_render_source`]), to
+/// the PDF `output_rendered_filepath` with pandoc, the `defaults_file` if any, and `extra_args`,
+/// such as `--pdf-engine=lualatex`, before the defaults file so that it can override them.
+pub(crate) fn render_pdf(
+    parser: &dyn Parseable,
+    output_text_filepath: &Path,
+    output_rendered_filepath: &Path,
+    defaults_file: Option<&Path>,
+    extra_args: &[OsString],
+) -> Result<RenderedFile, Error> {
+    // Output is rendered as a pdf. This is because some formats, like png, do not support text selection. Other formats, such as svg, do not have popular viewers on all platforms.
+    // Pandoc logs the resources it loads, which are the dependencies besides the defaults file.
+    let log_filepath = output_rendered_filepath.with_extension("pandoc-log.json");
+    let input = PandocInput::new(
+        parser,
+        output_text_filepath,
+        output_rendered_filepath.with_extension("pandoc-input.md"),
+    )
+    .map_err(|source| Error::Io {
+        description: format!("Failed to read {}", output_text_filepath.display()),
+        source,
+    })?;
+    let mut command = pandoc_command();
+    command
+        .arg("-o")
+        .arg(output_rendered_filepath)
+        .arg(input.path())
+        .arg("--log")
+        .arg(&log_filepath)
+        .args(extra_args);
+    if let Some(defaults_file) = defaults_file {
+        check_defaults_file(defaults_file)?;
+        command.arg("--defaults").arg(defaults_file);
+    }
+    let output = render_command_output(&mut command, "pandoc");
+    let dependencies = output.as_ref().ok().map(|_| {
+        record_dependencies(&log_filepath, defaults_file).unwrap_or_else(|e| {
+            warn!(
+                "Failed to record dependencies of {}: {e}",
+                output_text_filepath.display()
+            );
+            RenderDependencies::default()
+        })
+    });
+    let _ = remove_file(&log_filepath);
+    Ok(RenderedFile {
+        output: output?,
+        dependencies: dependencies.unwrap_or_default(),
+    })
+}
+
+/// Writes the HTML for web clients of `output_text_filepath` (see
+/// [`Parseable::render_web_file`]) with pandoc, `web_defaults_file` if any, and `extra_args`,
+/// before the defaults file so that it can override them.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "those of `render_web_file`, and the options"
+)]
+pub(crate) fn render_html(
+    parser: &dyn Parseable,
+    output_text_filepath: &Path,
+    output_rendered_filepath: &Path,
+    output_web_filepath: &Path,
+    mode: WebRenderMode,
+    dependencies: &mut RenderDependencies,
+    web_defaults_file: Option<&Path>,
+    extra_args: &[OsString],
+) -> Result<(), String> {
+    let log_filepath = output_rendered_filepath.with_extension("pandoc-web-log.json");
+    let input = PandocInput::new(
+        parser,
+        output_text_filepath,
+        output_rendered_filepath.with_extension("pandoc-web-input.md"),
+    )
+    .map_err(|e| format!("Failed to read {}: {e}", output_text_filepath.display()))?;
+    if let Some(path) = web_defaults_file {
+        check_defaults_file(path).map_err(|e| e.to_string())?;
+    }
+    let page_title = output_rendered_filepath
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut command = pandoc_command();
+    command
+        .arg(input.path())
+        .arg("-o")
+        .arg(output_web_filepath)
+        .args(["-t", "html5", "--standalone", "--embed-resources"])
+        .arg("--math-method=mathml")
+        // Web clients style it like the app. The web defaults file can turn these back on.
+        .arg("--metadata=document-css=false")
+        .arg("--metadata")
+        .arg(format!("pagetitle={page_title}"))
+        .arg("--log")
+        .arg(&log_filepath)
+        .args(extra_args);
+    // The PDF defaults file is never passed, since its options may not apply to HTML.
+    if let Some(web_defaults_file) = web_defaults_file {
+        command.arg("--defaults").arg(web_defaults_file);
+    }
+    let result = render_web_command(
+        &mut command,
+        &log_filepath,
+        web_defaults_file,
+        dependencies,
+        mode,
+    );
+    let _ = remove_file(&log_filepath);
+    result
+}
+
+/// A note's or card's file for `parser`, which writes Markdown as this parser does (see
+/// [`Parseable::construct_file_data`]).
+#[allow(clippy::let_and_return, reason = "Make note vs card data explicit")]
+#[allow(clippy::too_many_lines, reason = "File data is long")]
+pub(crate) fn construct_file_data(
+    parser: &dyn Parseable,
+    output_type: ConstructFileDataType,
+    request: &GenerateNoteFilesRequest,
+    note_import_action: &NoteImportAction,
+    include_separator: bool,
+) -> String {
+    let GenerateNoteFilesRequest {
+        note_id,
+        note_data,
+        keywords,
+        linked_notes,
+        custom_data,
+        tags,
+        // Already in `note_data` (see `construct_note_file_contents`)
+        card_tags: _,
+    } = request;
+    let keywords_str = keywords.join(", ");
+    let tags_str = tags.join(", ");
+    let NoteSettingsKeys {
+        action: action_key,
+        action_add: action_add_key,
+        settings_key_value_delim,
+        custom_data: custom_data_key,
+        note_id: note_id_key,
+        ..
+    } = parser.note_settings_keys();
+    match output_type {
+        ConstructFileDataType::Note => {
+            let (note_data, mut linked_notes_string) =
+                get_linked_notes_string(parser, note_data.as_str(), linked_notes.as_ref());
+            if !linked_notes_string.is_empty() {
+                // The blank line lets pandoc read the link definitions, which cannot interrupt
+                // a paragraph.
+                linked_notes_string = format!("\nLinked Notes:\n\n{}", linked_notes_string);
+            }
+            let custom_data_str = if custom_data.is_empty() {
+                String::new()
+            } else {
+                let custom_data_str_content = serde_json::to_string(custom_data).unwrap();
+                let custom_data_string = format!(
+                    "{}{} {}",
+                    custom_data_key.get_write(),
+                    settings_key_value_delim,
+                    custom_data_str_content.as_str(),
+                );
+                parser.construct_setting(custom_data_string.as_str())
+            };
+            let action_string = if matches!(note_import_action, NoteImportAction::Update(_)) {
+                String::new()
+            } else {
+                let action_value = match note_import_action {
+                    NoteImportAction::Add => action_add_key,
+                    NoteImportAction::Update(_) | NoteImportAction::Delete(_) => unreachable!(),
+                };
+                parser.construct_setting(&format!(
+                    "{}{} {}",
+                    action_key.get_write(),
+                    settings_key_value_delim,
+                    action_value.get_write(),
+                ))
+            };
+            let note_id_string = format!(
+                "{}{} {}",
+                note_id_key.get_write(),
+                settings_key_value_delim,
+                note_id.letters()
+            );
+            let keywords_string = format!("keywords{} {}", settings_key_value_delim, keywords_str);
+            let tags_string = format!("tags{} {}", settings_key_value_delim, tags_str);
+            let mut lines = vec![
+                "\n".to_string(),
+                action_string,
+                // A note to add has no id yet: importing one with an id is an error.
+                if matches!(note_import_action, NoteImportAction::Add) {
+                    String::new()
+                } else {
+                    parser.construct_setting(&note_id_string)
+                },
+                parser.construct_setting(&keywords_string),
+                parser.construct_setting(&tags_string),
+                custom_data_str,
+                parser.construct_comment("spares: note start"),
+                note_data,
+                "\n".to_string(),
+                parser.construct_comment("spares: note end"),
+                linked_notes_string,
+                "\n".to_string(),
+            ];
+            if include_separator {
+                lines.push("---".to_string());
+            }
+            let note_file_data = lines.into_iter().collect::<String>();
+            note_file_data
+        }
+        ConstructFileDataType::Card(card_order, card_data, side) => {
+            // The note's id, keywords and tags are shown beside the card instead of in it, so
+            // changing them leaves the card's render up to date.
+            let card_file_data = without_cloze_delimiters(&construct_card_data(
+                parser, card_order, card_data, side, *note_id,
+            ));
+            card_file_data
+        }
     }
 }
 
@@ -791,7 +854,7 @@ fn find_defaults_file(defaults_file: &Path) -> Option<PathBuf> {
 
 /// Refuses a defaults file that would have pandoc run other programs (see
 /// [`crate::render::check_pandoc_defaults`]).
-fn check_defaults_file(defaults_file: &Path) -> Result<(), Error> {
+pub(crate) fn check_defaults_file(defaults_file: &Path) -> Result<(), Error> {
     let Some(path) = find_defaults_file(defaults_file) else {
         return Ok(());
     };
@@ -811,7 +874,7 @@ pub fn pandoc_user_data_dir() -> PathBuf {
 
 /// `pandoc`, run in the collection's config directory with its own user data directory, so a
 /// relative defaults file is the collection's.
-fn pandoc_command() -> Command {
+pub(crate) fn pandoc_command() -> Command {
     let mut command = Command::new("pandoc");
     command
         .arg("--data-dir")
