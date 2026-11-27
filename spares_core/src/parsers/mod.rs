@@ -49,6 +49,10 @@ pub use helpers::*;
 pub use image_occlusion::get_image_occlusion_rendered_directory;
 #[cfg(target_family = "wasm")]
 pub use image_occlusion::read_device_card;
+/// The `markdown-language-tools` parser's readings, languages and dictionaries, for the server's
+/// `/api/language-tools` and `spares language-tools`.
+#[cfg(feature = "language-tools")]
+pub use impls::markdown_language_tools as language_tools;
 pub use notes::*;
 pub use settings::*;
 

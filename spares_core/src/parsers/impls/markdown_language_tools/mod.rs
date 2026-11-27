@@ -64,6 +64,8 @@ use crate::parsers::audio::AudioRef;
 use crate::parsers::generate_files::CardSide;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 
+#[cfg(not(target_family = "wasm"))]
+pub mod dictionary;
 pub mod language;
 pub mod readings;
 
