@@ -4,6 +4,13 @@
 
 Spares was built to address the numerous drawbacks of Anki. See [this](spares_frontend/frontend/src/manual/comparison.md) for a more detailed comparison with Anki.
 
+**[Try the demo](https://shivangp76.github.io/spares/)**: the web app with example notes and three months of made-up reviews, running entirely in your browser. Nothing to install, and nothing you do leaves your browser.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/review-dark.webp">
+  <img alt="Reviewing a card in the web app: a calculus note in Typst with its cloze revealed, and the rating buttons" src="docs/screenshots/review-light.webp">
+</picture>
+
 > [!WARNING]
 > Spares is in alpha: commands, settings and the web app may still change. Collections, note files and config files made since 2026-11-26 keep working across updates, which migrate them themselves.
 
@@ -66,6 +73,17 @@ Spares was built to address the numerous drawbacks of Anki. See [this](spares_fr
 ## Quick Start
 
 See our [Getting Started Guide](spares_frontend/frontend/src/manual/getting_started.md).
+
+## Screenshots
+
+Taken from the [demo](https://shivangp76.github.io/spares/) (`bun demo/screenshots.ts` in `spares_frontend/frontend` takes them again).
+
+| | |
+|---|---|
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/notes-dark.webp"><img alt="The Notes page: a Typst note on linear algebra in the editor, beside its rendered cards" src="docs/screenshots/notes-light.webp"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/image-occlusion-dark.webp"><img alt="An image occlusion card: labels of a plant cell diagram hidden" src="docs/screenshots/image-occlusion-light.webp"></picture> |
+| Notes in Markdown, Typst or LaTeX, with clozes, links and keywords | Image occlusion, drawn in the note editor |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/statistics-dark.webp"><img alt="The Statistics page: reviews per day, retention, and a goal's progress" src="docs/screenshots/statistics-light.webp"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/graph-dark.webp"><img alt="The note graph: notes linked by the keywords they refer to" src="docs/screenshots/graph-light.webp"></picture> |
+| Statistics, FSRS's forecasts and goals | The graph of links between notes |
 
 ## Documentation
 
