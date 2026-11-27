@@ -228,6 +228,48 @@ pub(crate) async fn handle(
             )
             .await?;
         }
+        NoteCommands::Export(export_args) if export_args.format.is_some() => {
+            use spares_core::api::note::export_cards::CardExportFormat;
+            use spares_core::api::note::export_cards::ExportCardsRequest;
+            use spares_core::api::note::export_cards::ExportCardsResponse;
+            let request = ExportCardsRequest {
+                query: export_args.query,
+                format: if export_args.format.as_deref() == Some("apkg") {
+                    CardExportFormat::Apkg
+                } else {
+                    CardExportFormat::Csv
+                },
+                with_history: export_args.with_history,
+            };
+            let url = format!("{}/api/notes/export/cards", base_url);
+            let result: ExportCardsResponse = with_spinner("Exporting cards", async {
+                let response = client
+                    .post(url)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| miette!("{}", e))?;
+                let response = ensure_ok(response).await?;
+                response.json().await.map_err(|e| miette!("{}", e))
+            })
+            .await?;
+            let bytes = result.bytes().map_err(|e| miette!("{e}"))?;
+            tokio::fs::write(&export_args.output_dir, bytes)
+                .await
+                .into_diagnostic()?;
+            println!(
+                "Wrote {} with {} card(s) of {} note(s).",
+                export_args.output_dir.display(),
+                result.card_count,
+                result.note_count
+            );
+            if result.links_left_out > 0 {
+                println!(
+                    "{} link(s) left out: links between notes only work in spares, so they stay as text.",
+                    result.links_left_out
+                );
+            }
+        }
         NoteCommands::Export(export_args) => {
             let request = ExportNotesRequest {
                 query: export_args.query,

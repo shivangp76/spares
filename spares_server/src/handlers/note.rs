@@ -302,6 +302,18 @@ pub(crate) async fn export_notes_handler(
     Ok(Json(result))
 }
 
+/// The cards of a query's notes as a CSV or an Anki package
+/// (`spares_core::api::note::export_cards`).
+pub(crate) async fn export_cards_handler(
+    Coll(data): Coll,
+    Json(body): Json<spares_core::api::note::export_cards::ExportCardsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let result = spares_core::api::note::export_cards::export_cards(&data.db, body, Utc::now())
+        .await
+        .map_err(error_to_response)?;
+    Ok(Json(result))
+}
+
 pub(crate) async fn get_duplicate_keywords_handler(
     Coll(data): Coll,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {

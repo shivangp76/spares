@@ -686,6 +686,16 @@ pub(crate) struct ExportArgs {
     /// app import it.
     #[arg(long, requires = "share")]
     pub(crate) zip: bool,
+    /// Export the cards for another program instead: `csv` for each card's front, back, tags, due
+    /// date and interval, or `apkg` for an Anki package with a Cloze note per card. `--output-dir`
+    /// names the file, such as `-o cards.apkg`. Links between notes stay as text, and the export
+    /// says how many. See `spares_core::api::note::export_cards`.
+    #[arg(long, value_parser = ["csv", "apkg"], conflicts_with_all = ["share", "zip"])]
+    pub(crate) format: Option<String>,
+    /// With `--format apkg`, keep each card's schedule and reviews, so Anki carries them on.
+    /// Without it, every card is new in Anki.
+    #[arg(long, requires = "format")]
+    pub(crate) with_history: bool,
 }
 
 #[derive(Debug, Parser)]

@@ -370,6 +370,11 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             "/api/notes/generate_files",
             post(generate_note_files_handler),
         )
+        // An Anki package is a SQLite file, written on the server
+        .route(
+            "/api/notes/export/cards",
+            post(crate::handlers::note::export_cards_handler),
+        )
         // Live notes are files on the laptop.
         .route("/api/notes/live", post(find_live_note_handler))
         .route("/api/notes/live/list", post(list_live_notes_handler))
@@ -679,6 +684,7 @@ pub fn create_local_router(collection: Arc<spares_core::collection::Collection>)
         .route("/api/sync/devices", get(needs_server))
         .route("/api/sync/unenroll", post(needs_server))
         .route("/api/scheduler/{name}/optimize", post(needs_server))
+        .route("/api/notes/export/cards", post(needs_server))
         .route("/api/scheduler/{name}/optimize/status", get(needs_server))
         .route(
             "/api/scheduler/{name}/optimize/proposal",

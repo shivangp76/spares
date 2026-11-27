@@ -4,6 +4,7 @@ mod basic;
 mod create;
 mod delete;
 pub mod export;
+pub mod export_cards;
 pub mod import;
 mod keyword_distance;
 mod live;
