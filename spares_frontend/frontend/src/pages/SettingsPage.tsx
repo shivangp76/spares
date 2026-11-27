@@ -27,6 +27,7 @@ import {
   setPagesPerRow,
   setReadAloud,
   setShowReviewTimer,
+  setSwipeToRate,
   setVimKeybindings,
   useCardZoom,
   useCloseBrackets,
@@ -38,6 +39,7 @@ import {
   usePagesPerRow,
   useReadAloud,
   useShowReviewTimer,
+  useSwipeToRate,
   useVimKeybindings,
   type CardZoom,
   type EditorFontSize,
@@ -85,6 +87,7 @@ export default function SettingsPage() {
   const typstTheme = useTypstThemePreference();
   const showReviewTimer = useShowReviewTimer();
   const readAloud = useReadAloud();
+  const swipeToRate = useSwipeToRate();
   const voices = useSpeechVoices();
   const vimKeybindings = useVimKeybindings();
   const editorFontSize = useEditorFontSize();
@@ -219,6 +222,18 @@ export default function SettingsPage() {
         </label>
         <p className="field-hint">
           Both durations are still recorded, and shown after each card is rated.
+        </p>
+        <label className="checkbox-label settings-row">
+          <input
+            type="checkbox"
+            checked={swipeToRate}
+            onChange={(e) => setSwipeToRate(e.target.checked)}
+          />
+          Swipe to rate
+        </label>
+        <p className="field-hint">
+          On a touchscreen, once the answer is shown: left for Again, right for
+          Good, and up for Easy on a card that fits on the screen.
         </p>
         <label className="checkbox-label settings-row">
           <input

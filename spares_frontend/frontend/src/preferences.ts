@@ -117,6 +117,12 @@ const readAloud = booleanPreference('spares_read_aloud', () => true);
 export const setReadAloud = readAloud.set;
 export const useReadAloud = readAloud.use;
 
+/** Whether a card can be rated by swiping it once flipped: left for Again, right for Good, up for
+    Easy (see `swipe.ts`). On by default on touchscreens, where it is a phone's quickest way. */
+const swipeToRate = booleanPreference('spares_swipe_to_rate', () => window.matchMedia('(pointer: coarse)').matches);
+export const setSwipeToRate = swipeToRate.set;
+export const useSwipeToRate = swipeToRate.use;
+
 /** Whether a note's local graph, of the notes it links to and that link to it, is shown open. */
 const localGraphOpen = booleanPreference('spares_local_graph_open', () => false);
 export const setLocalGraphOpen = localGraphOpen.set;

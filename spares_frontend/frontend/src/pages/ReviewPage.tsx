@@ -88,8 +88,14 @@ import {
   usePagesPerRow,
   useReadAloud,
   useShowReviewTimer,
+  useSwipeToRate,
   useVimKeybindings,
 } from "../preferences";
+import {
+  swipeRating,
+  useSwipeToRate as useCardSwipe,
+  type SwipeOffset,
+} from "../swipe";
 import { rememberReviewWidth } from "../typst/width";
 import {
   type GetReviewCardResponse,
@@ -287,6 +293,80 @@ const hiddenSide: React.CSSProperties = {
   overflow: "hidden",
   visibility: "hidden",
 };
+
+/** The flipped card while swipes rate it: following the finger, and its `touch-action` leaving the
+    browser only the gestures that don't rate (vertical scrolling, unless swiping up rates). */
+function swipeStyle(
+  enabled: boolean,
+  canSwipeUp: boolean,
+  offset: SwipeOffset,
+): React.CSSProperties | undefined {
+  if (!enabled) return undefined;
+  const moving = offset.x !== 0 || offset.y !== 0;
+  return {
+    position: "relative",
+    touchAction: canSwipeUp ? "pinch-zoom" : "pan-y pinch-zoom",
+    transform: moving
+      ? `translate(${offset.x}px, ${offset.y}px) rotate(${offset.x / 40}deg)`
+      : undefined,
+    // Snaps back when let go, but follows the finger without lag
+    transition: moving ? "none" : "transform 150ms ease-out",
+  };
+}
+
+/** The colour a card being swiped takes on, of the rating letting go would give, strongest once
+    past the threshold. */
+function SwipeTint({
+  tone,
+  label,
+  progress,
+}: {
+  tone: Tone;
+  label: string;
+  progress: number;
+}) {
+  const past = progress >= 1;
+  return (
+    <>
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 1,
+          pointerEvents: "none",
+          borderRadius: 4,
+          background: tone.bg,
+          border: `2px solid ${tone.border}`,
+          opacity: past ? 0.7 : progress * 0.45,
+        }}
+      />
+      {/* Its own layer, so it is readable over the card once letting go would rate */}
+      <span
+        aria-hidden
+        style={{
+          position: "absolute",
+          top: 12,
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 2,
+          pointerEvents: "none",
+          color: tone.fg,
+          fontWeight: 600,
+          fontSize: 16,
+          padding: "4px 12px",
+          borderRadius: 4,
+          background: "var(--bg)",
+          border: `1px solid ${tone.border}`,
+          boxShadow: "0 1px 4px rgb(0 0 0 / 0.15)",
+          opacity: past ? 1 : Math.max(0, progress - 0.3),
+        }}
+      >
+        {label}
+      </span>
+    </>
+  );
+}
 
 function msToSeconds(ms: number): number {
   return Math.max(0, Math.floor(ms / 1000));
@@ -586,6 +666,9 @@ export default function ReviewPage() {
   const notePanelRef = useRef<HTMLDivElement>(null);
   const newNotePane = useRef<NotePaneHandle>(null);
   const answerBarRef = useRef<HTMLDivElement>(null);
+  // The flipped card, which swiping rates on touchscreens
+  const backSideRef = useRef<HTMLDivElement>(null);
+  const swipeEnabled = useSwipeToRate();
   const [keywordResults, setKeywordResults] = useState<{
     keyword: string;
     notes: NoteResponse[];
@@ -993,6 +1076,20 @@ export default function ReviewPage() {
       setRatingsDone((n) => n + 1);
     }
   }
+
+  const { offset: swipeOffset, canSwipeUp } = useCardSwipe(
+    backSideRef,
+    swipeEnabled && phase === "back" && !!card && !card.cli,
+    (direction) => {
+      const rating = swipeRating(ratings, direction);
+      if (rating) void rate(rating.id);
+    },
+  );
+  const swipedRating =
+    swipeOffset.direction && swipeRating(ratings, swipeOffset.direction);
+  const swipeTone =
+    swipedRating &&
+    ratingTone(swipedRating, ratings.indexOf(swipedRating), ratings.length);
 
   async function rateNow(ratingId: number) {
     if (!card || !credentials || recallDuration.current === null) return;
@@ -2834,9 +2931,25 @@ export default function ReviewPage() {
 
           {(phase === "back" || (frontRendered && !card.cli)) && (
             <div
-              style={phase === "back" ? undefined : hiddenSide}
+              ref={backSideRef}
+              style={
+                phase === "back"
+                  ? swipeStyle(
+                      swipeEnabled && !card.cli,
+                      canSwipeUp,
+                      swipeOffset,
+                    )
+                  : hiddenSide
+              }
               aria-hidden={phase !== "back"}
             >
+              {swipeTone && swipedRating && (
+                <SwipeTint
+                  tone={swipeTone}
+                  label={swipedRating.description}
+                  progress={swipeOffset.progress}
+                />
+              )}
               {phase === "back" && cardAudio && (
                 <AudioBar audio={cardAudio} flipped player={audioPlayer} />
               )}
