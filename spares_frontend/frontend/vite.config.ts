@@ -7,10 +7,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { basename, extname, join, relative, sep } from "node:path";
+import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
@@ -85,6 +86,58 @@ function imageOcclusionEditorConfig(): Plugin {
             res.end();
           })
           .pipe(res);
+      });
+    },
+  };
+}
+
+/** Whether this is the demo build or dev server (see src/demo.ts) */
+const DEMO = process.env.VITE_SPARES_DEMO === "1";
+
+const DEMO_TYPES: Record<string, string> = {
+  ...IMAGE_TYPES,
+  ".html": "text/html",
+  ".json": "application/json",
+  ".sqlite": "application/vnd.sqlite3",
+  ".pdf": "application/pdf",
+};
+
+/** In the demo's dev server (`bun demo/run.ts --dev`), serves a collection that demo/build.ts
+    made at `<base>demo/`, where src/local/demo.ts fetches it, as the demo build has it.
+    `SPARES_DEMO_COLLECTION` is its directory, by default the one in dist-demo. */
+function demoCollection(): Plugin {
+  const dir = resolve(
+    process.env.SPARES_DEMO_COLLECTION ??
+      fileURLToPath(new URL("./dist-demo/demo", import.meta.url)),
+  );
+  return {
+    name: "demo-collection",
+    apply: (_config, { command }) => DEMO && command === "serve",
+    configureServer(server) {
+      if (!existsSync(join(dir, "manifest.json")))
+        throw new Error(
+          `${dir} has no demo collection: run \`bun demo/run.ts --dev\`, which builds one`,
+        );
+      const prefix = `${server.config.base}demo/`;
+      server.middlewares.use((req, res, next) => {
+        const pathname = (req.url ?? "").split("?")[0];
+        if (!pathname.startsWith(prefix)) return next();
+        const path = resolve(dir, decodeURIComponent(pathname.slice(prefix.length)));
+        if (
+          !path.startsWith(dir + sep) ||
+          !existsSync(path) ||
+          !statSync(path).isFile()
+        ) {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
+        res.setHeader(
+          "Content-Type",
+          DEMO_TYPES[extname(path).toLowerCase()] ?? "application/octet-stream",
+        );
+        res.setHeader("Cache-Control", "no-store");
+        createReadStream(path).pipe(res);
       });
     },
   };
@@ -270,6 +323,9 @@ function precompress(): Plugin {
 }
 
 export default defineConfig({
+  // The demo's dev server keeps its own prebundled dependencies, so that it doesn't rebuild those
+  // of a dev server of the app running beside it
+  cacheDir: DEMO ? "node_modules/.vite-demo" : undefined,
   optimizeDeps: {
     exclude: ["@myriaddreamin/typst.ts", "@myriaddreamin/typst-ts-renderer"],
   },
@@ -295,11 +351,12 @@ export default defineConfig({
     format: "es",
   },
   server: {
-    open: process.env.SPARES_OPEN ?? "/",
+    // The demo's dev server opens a page only when asked (`bun demo/run.ts --dev --open`)
+    open: process.env.SPARES_OPEN ?? (DEMO ? false : "/"),
     port: 5173,
     // The host's API and files, from this page's origin, so its session cookie works here too.
-    // `SPARES_HOST` is the host to use, by default the one on this machine.
-    proxy: Object.fromEntries(
+    // `SPARES_HOST` is the host to use, by default the one on this machine. The demo has no host.
+    proxy: DEMO ? undefined : Object.fromEntries(
       ["/api", "/files"].map((path) => [
         path,
         {
@@ -318,6 +375,7 @@ export default defineConfig({
     serviceWorker(),
     precompress(),
     imageOcclusionEditorConfig(),
+    demoCollection(),
     {
       name: "html-import-transformer",
       transform(code, id) {
