@@ -39,6 +39,6 @@ These are the issues in Anki that spares was built to address, and how it does.
 
 ## Current Limitations of spares
 
-- Spares is in alpha, so expect breaking changes.
+- Spares is in alpha, so commands, settings and the web app may still change. Collections, note files and config files keep working across updates.
 - Flagging while reviewing tags the whole note (`flagged_tag_name` on `spares_core::config::SparesExternalConfig`), not the card, and there are no colored flags. To mark one card, give it a tag of its own instead, such as `spares card edit --tags-to-add flagged --ids <id>` (see [Tags](concepts.md#tags)).
 - There are no add-ons, and no site for finding shared decks. Notes can still be shared as files: export them to share from the Notes page of the web app, or with `spares note export --share` (`--zip` for one file), and import them in another collection with **Import** on its Notes page or `spares import`. Their images, audio and image occlusions go with them, and **Import** also adds the parsers the collection doesn't have (see [Sharing notes](workflows.md#sharing-notes)). Anki decks can be imported with `spares migrate`.

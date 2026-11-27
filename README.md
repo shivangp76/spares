@@ -5,7 +5,7 @@
 Spares was built to address the numerous drawbacks of Anki. See [this](spares_frontend/frontend/src/manual/comparison.md) for a more detailed comparison with Anki.
 
 > [!WARNING]
-> Spares is in alpha. Expect frequent breaking changes.
+> Spares is in alpha: commands, settings and the web app may still change. Collections, note files and config files made since 2026-11-26 keep working across updates, which migrate them themselves.
 
 ## Features
 

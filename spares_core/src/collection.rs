@@ -71,13 +71,11 @@ pub const NOTES_REPO_DIR_NAME: &str = "notes.git";
 /// foreign keys off, or the drop cascades, so that migration is `-- no-transaction` with its own
 /// `BEGIN`/`COMMIT`.
 ///
-/// sqlx checksums an applied migration, comments included, so one can never be edited and
-/// squashing them always makes a new version. Before squashing:
-///
-/// - list `_sqlx_migrations` in every host's databases and on devices, to know what they ran;
-/// - compare a fresh database's normalised `sqlite_master` from the old migrations and the new;
-/// - run this migrator (and `spares_server::host::accounts::open`) on copies of the real
-///   databases, from a throwaway test: sqlx-cli can't run `-- no-transaction` files.
+/// sqlx checksums an applied migration, comments included, so a migration can never be edited.
+/// The baseline is the oldest schema supported. Migrations after it are only ever added, never
+/// edited, squashed or deleted, so every database made since the baseline migrates (see
+/// Compatibility in CONTRIBUTING.md). Test a new migration on copies of real databases, from a
+/// throwaway test: sqlx-cli can't run `-- no-transaction` files.
 ///
 /// A device's copy migrates only when its web app opens it.
 pub fn migrator() -> sqlx::migrate::Migrator {

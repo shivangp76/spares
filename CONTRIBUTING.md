@@ -29,7 +29,15 @@ cargo clippy
 
 `rustfmt.toml` uses options only nightly rustfmt has (`imports_granularity`, `group_imports`): stable `cargo fmt` ignores them and reformats whole crates. `skip_children` keeps rustfmt from following `mod` into other files. It still formats all of each file you give it, so check what it changed besides your edits (with jj: `jj diff --from 'at_operation(<op before>, @)' --to @`).
 
-Spares keeps no code for data that older versions wrote. When a format or schema changes, convert the existing data once, by hand or in a migration, then delete the conversion code.
+### Compatibility
+
+What an older version of spares wrote keeps working in newer ones, so updating never needs a conversion by hand. The oldest version supported is the collection baseline of 2026-11-26 (see `spares_core::collection::migrator`):
+
+- **Databases.** A change to the schema or to stored data is a new migration in `spares_core/migrations` (or `spares_server/accounts_migrations`) that converts existing rows. Never edit, squash or delete a migration that is on `main`: sqlx checksums applied migrations, and every database since the baseline has to migrate up from wherever it is.
+- **Note files and syntax.** A note that parsed keeps parsing to the same cards, with the same card ids. To change a syntax, accept the old spelling alongside the new one.
+- **Config files.** `config.toml` and `host.toml` reject unknown keys, so a renamed key keeps its old name as a `#[serde(alias)]`, and a removed key stays in the struct, accepted and ignored, with a doc comment saying so.
+- **Sync.** A host and its devices check each other's sync protocol and schema versions (`spares_core::sync::protocol`), and refuse a mismatch with an error that says which side to update, rather than misreading each other. Bump the protocol version only for a change that can't be made compatibly. The web app is served by its host, so the two always match.
+- **Code for old data stays.** A fallback that reads what older versions wrote is kept, with a comment naming the version that wrote it. Don't remove it once your own data has been converted.
 
 `spares_core` and `spares_server`'s router also build for the browser, where the web app can keep a copy of the collection. Check that they still do:
 
