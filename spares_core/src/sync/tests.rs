@@ -1348,6 +1348,32 @@ impl Replicas {
     }
 }
 
+/// A new device's full download keeps the cards buried today buried: the day the server last
+/// unburied cards comes with them, so the device's first look at the queue doesn't unbury them
+/// again (and sync that back).
+#[tokio::test]
+async fn a_full_download_keeps_the_cards_buried_today() {
+    use crate::api::review::unbury_cards_and_update_config;
+    use crate::config::SparesExternalConfig;
+    let (replicas, _) = Replicas::synced(&["A {{ one }}"]).await;
+    on_server(async {
+        unbury_cards_and_update_config(&replicas.server, &SparesExternalConfig::default())
+            .await
+            .unwrap();
+    })
+    .await;
+    exec(&replicas.server, "UPDATE card SET special_state = 2").await;
+    let device = replicas.device().await;
+    on_device(unbury_cards_and_update_config(&device, &SparesExternalConfig::default()))
+        .await
+        .unwrap();
+    let states: Vec<Option<i64>> = sqlx::query_scalar("SELECT special_state FROM card")
+        .fetch_all(&device)
+        .await
+        .unwrap();
+    assert_eq!(states, [Some(2)]);
+}
+
 /// Each `render_asset` row as `(path, hash)`, and each `render_package` spec.
 async fn render_assets(pool: &SqlitePool) -> (Vec<(String, String)>, Vec<String>) {
     let assets = sqlx::query_as("SELECT path, hash FROM render_asset ORDER BY path")

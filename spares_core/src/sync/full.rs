@@ -95,6 +95,25 @@ pub async fn restore(db: &SqlitePool, path: &Path) -> Result<RestoredState, Erro
     Ok(state)
 }
 
+/// Takes the day cards were last unburied from the incoming database. The cards buried today come
+/// with its data, so that day must come with it too: keeping this database's own, which a new
+/// device doesn't have, would unbury them the first time it looks at the queue, and that
+/// unburying would sync back.
+async fn keep_incoming_last_unburied(conn: &mut sqlx::SqliteConnection) -> Result<(), Error> {
+    sqlx::query("DELETE FROM main.app_state WHERE key = 'last_unburied'")
+        .execute(&mut *conn)
+        .await
+        .map_err(sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO main.app_state (key, value)
+         SELECT key, value FROM incoming.app_state WHERE key = 'last_unburied'",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(sqlx_error)?;
+    Ok(())
+}
+
 async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredState, Error> {
     let check: Vec<String> = sqlx::query_scalar("PRAGMA incoming.integrity_check")
         .fetch_all(&mut *conn)
@@ -197,6 +216,7 @@ async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredS
             .map_err(sqlx_error)?;
     }
     set_state(&mut tx, "linked_notes_generated", "false").await?;
+    keep_incoming_last_unburied(&mut tx).await?;
     set_applying(&mut tx, false).await?;
     tx.commit().await.map_err(sqlx_error)?;
     Ok(RestoredState {
