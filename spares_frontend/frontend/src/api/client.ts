@@ -25,6 +25,7 @@ import type {
   NoteResponse,
   NotesSelector,
   OptimizeResponse,
+  OptimizeStatusResponse,
   ParserResponse,
   QueryExample,
   QueuePositionRequest,
@@ -1031,6 +1032,39 @@ export async function optimizeScheduler(
     "Optimize",
     `/api/scheduler/${encodeURIComponent(schedulerName)}/optimize`,
     { method: "POST", body: JSON.stringify({ apply }) },
+  );
+}
+
+/** Whether optimizing again is worth it, and parameters the host fitted by itself. On the server,
+    which may start fitting them as it answers (`auto_optimize`). */
+export async function getOptimizeStatus(
+  schedulerName: string,
+): Promise<OptimizeStatusResponse> {
+  return apiFetch(
+    "Optimize status",
+    `/api/scheduler/${encodeURIComponent(schedulerName)}/optimize/status`,
+  );
+}
+
+/** Saves the parameters the host proposed and reschedules every card with them. */
+export async function applyOptimizeProposal(
+  schedulerName: string,
+): Promise<OptimizeResponse> {
+  return apiFetch(
+    "Apply parameters",
+    `/api/scheduler/${encodeURIComponent(schedulerName)}/optimize/proposal`,
+    { method: "POST" },
+  );
+}
+
+/** Discards the parameters the host proposed. */
+export async function discardOptimizeProposal(
+  schedulerName: string,
+): Promise<void> {
+  await apiSend(
+    "Discard parameters",
+    `/api/scheduler/${encodeURIComponent(schedulerName)}/optimize/proposal`,
+    { method: "DELETE" },
   );
 }
 

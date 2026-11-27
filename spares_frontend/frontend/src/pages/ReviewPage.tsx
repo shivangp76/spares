@@ -123,6 +123,7 @@ import { useDraftStore } from "../noteDrafts";
 import { askNotesBefore } from "../notesBefore";
 import type { NotePaneHandle } from "../components/NoteDetail";
 import PageTitle from "../components/PageTitle";
+import OptimizeNudge from "../components/OptimizeNudge";
 import Skeleton from "../components/Skeleton";
 import LinkRelationMark from "../components/LinkRelationMark";
 
@@ -2570,6 +2571,8 @@ export default function ReviewPage() {
           )}
           {noteLoading && <Skeleton lines={4} style={{ marginTop: 12 }} />}
           {notePanel}
+          {/* Below the controls, so its arriving late moves none of them */}
+          {!emptyCollection && <OptimizeNudge onChanged={refreshStatistics} />}
           {history && (
             <div style={{ marginTop: 40 }}>
               <ReviewHeatmap

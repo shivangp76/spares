@@ -49,6 +49,7 @@ import {
 } from "../types/spares";
 import { errorMessage, formatDuration, td, th } from "../utils";
 import PageTitle from "../components/PageTitle";
+import OptimizeNudge from "../components/OptimizeNudge";
 import { askConfirm } from "../ask";
 
 /** The id of the section titled `title`, which the section bar links to. */
@@ -1530,7 +1531,7 @@ function SchedulerSection({
       !(await askConfirm({
         title: "Apply optimized parameters?",
         message:
-          "Optimize again, and if the parameters still predict your reviews better, save them to config.toml and recompute the memory state and due date of every card, suspended and buried ones included.\n\nUndo restores the cards, but not the parameters.",
+          "Optimize again, and if the parameters still predict your reviews better, save them to config.toml and recompute the memory state and due date of every card, suspended and buried ones included.\n\nUndo puts back both the previous parameters and the cards' schedule.",
         confirmLabel: "Optimize and apply",
       }))
     )
@@ -1582,12 +1583,28 @@ function SchedulerSection({
       );
   }
 
+  // The landing page's suggestion to optimize links here
+  useEffect(() => {
+    if (window.location.hash !== `#${sectionId("Scheduler")}`) return;
+    const frame = requestAnimationFrame(() =>
+      document.getElementById(sectionId("Scheduler"))?.scrollIntoView(),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   const better =
     optimized !== null &&
     optimized.optimized.log_loss < optimized.current.log_loss;
   const busy = running !== null || !enabled;
   return (
     <>
+      {enabled && (
+        <OptimizeNudge
+          onOptimize={optimize}
+          onChanged={onChanged}
+          revision={outcome?.seq ?? 0}
+        />
+      )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
           onClick={optimize}

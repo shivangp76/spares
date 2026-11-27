@@ -593,8 +593,40 @@ export interface OptimizeResponse {
   optimized: ParametersEvaluation;
   /** Whether the optimized parameters were saved and every card rescheduled. */
   applied: boolean;
-  /** The reschedule's event, if `applied` changed any card. */
+  /** The event of saving the parameters and rescheduling, when `applied`. Undoing it puts back
+      both the cards and the previous parameters. */
   event_id: number | null;
+}
+
+/** `spares_core::schema::review::OptimizeProposal`: parameters `auto_optimize` fitted, which
+    predict the reviews better, waiting to be applied. */
+export interface OptimizeProposal {
+  parameters: number[];
+  current_parameters: number[];
+  current: ParametersEvaluation;
+  optimized: ParametersEvaluation;
+  review_count: number;
+  card_count: number;
+  fitted_at: string;
+}
+
+/** `spares_core::schema::review::OptimizeStatusResponse`: whether optimizing again is worth it. */
+export interface OptimizeStatusResponse {
+  optimizable: boolean;
+  review_count: number;
+  /** The day of study the parameters were last fitted, unless never here. */
+  fitted_at: string | null;
+  /** Reviews since then, or every review if never. */
+  reviews_since: number;
+  days_since: number | null;
+  /** After `after_reviews` reviews or `after_days` days, whichever comes first. */
+  suggested: boolean;
+  after_reviews: number;
+  after_days: number;
+  /** Whether the host fits them by itself (`auto_optimize` on the root of the sync chain). */
+  auto_optimize: boolean;
+  optimizing: boolean;
+  proposal: OptimizeProposal | null;
 }
 
 /** `spares_core::schema::review::RescheduleResponse` */
