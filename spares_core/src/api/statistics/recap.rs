@@ -43,7 +43,8 @@ pub struct YearRecap {
     /// Of the reviews of cards in review (not in their steps), the share recalled (not Again)
     pub retention: Option<f64>,
     /// The tags of the cards reviewed most, with their reviews, most first. A card's note's tags
-    /// and its own count.
+    /// and its own count, but not filtered tags, nor the tags that say how a card went rather
+    /// than what it is about: the flagged, leech and buried tags of `config.toml`.
     pub top_tags: Vec<(String, u32)>,
 }
 
@@ -105,10 +106,14 @@ pub async fn year_recap(
              JOIN tag t ON t.id = ct.tag_id
              WHERE rl.kind = {review} AND rl.reviewed_at >= ?1 AND rl.reviewed_at < ?2
                AND t.query IS NULL)
+         WHERE name NOT IN (?3, ?4, ?5)
          GROUP BY name ORDER BY n DESC, name LIMIT {TOP_TAGS}"
     )))
     .bind(from)
     .bind(to)
+    .bind(&config.flagged_tag_name)
+    .bind(&config.leech.tag_name)
+    .bind(&config.queue.tag_buried.tag)
     .fetch_all(db)
     .await
     .map_err(sql_error)?;
@@ -216,14 +221,15 @@ mod tests {
     async fn a_year_of_the_review_log(pool: SqlitePool) {
         let now = Utc::now();
         crate::api::scheduler::tests::seed_review_history(&pool, 4, now - Duration::days(40)).await;
+        // `leech` says how the card went, not what it is about, so it isn't one of the tags
         sqlx::query(
             "INSERT INTO tag (name, description, query, auto_delete, reschedule, created_at, updated_at, usn)
-             VALUES ('geo', '', NULL, 0, 0, 0, 0, -1)",
+             VALUES ('geo', '', NULL, 0, 0, 0, 0, -1), ('leech', '', NULL, 0, 0, 0, 0, -1)",
         )
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO note_tag (note_id, tag_id) SELECT note_id, (SELECT id FROM tag) FROM card LIMIT 1")
+        sqlx::query("INSERT INTO note_tag (note_id, tag_id) SELECT (SELECT note_id FROM card LIMIT 1), id FROM tag")
             .execute(&pool)
             .await
             .unwrap();
