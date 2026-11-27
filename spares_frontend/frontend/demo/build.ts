@@ -33,6 +33,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { finishDemoBuild } from "./finish";
 import { CELL_LABELS, NOTES, SAVED_SEARCHES, type ParserName } from "./notes";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -418,15 +419,7 @@ await startServer();
 cli(["card", "reschedule", "--yes"]);
 cli(["note", "generate", "--render", "--yes"]);
 await writeBundle();
-// For a static host such as GitHub Pages: the app's page at every route it doesn't have a file
-// for, and no Jekyll, which would leave out files starting with `_`
-const page = join(resolve(args.out), "index.html");
-if (existsSync(page)) copyFileSync(page, join(resolve(args.out), "404.html"));
-writeFileSync(join(resolve(args.out), ".nojekyll"), "");
-// Compressed copies of the app's files, which a static host such as GitHub Pages doesn't serve: it
-// compresses files itself
-for (const file of readdirSync(resolve(args.out), { recursive: true }) as string[])
-  if (/\.(br|gz)$/.test(file) && !file.startsWith("demo/")) rmSync(join(resolve(args.out), file));
+finishDemoBuild(args.out);
 const size = Number(spawnSync("du", ["-sk", OUT], { encoding: "utf8" }).stdout.split("\t")[0]);
 console.log(
   `Demo collection: ${created.length} notes, ${reviewCount} reviews, ${(size / 1024).toFixed(1)} MB in ${OUT}` +
