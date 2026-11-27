@@ -678,6 +678,17 @@ async fn full_upload(
     })
 }
 
+/// Replaces this database with the one `remote` downloads, as a full download does, without
+/// asking it for its [`MetaResponse`] first: for a snapshot no server serves, such as the web app's
+/// demo collection, which a browser's copy loads from static files and never syncs.
+pub async fn load_snapshot(
+    db: &SqlitePool,
+    remote: &dyn SyncRemote,
+    temp_dir: &Path,
+) -> Result<SyncReport, Error> {
+    full_download(db, remote, temp_dir).await
+}
+
 async fn full_download(
     db: &SqlitePool,
     remote: &dyn SyncRemote,

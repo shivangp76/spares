@@ -46,11 +46,7 @@ impl SyncRemote for DeviceRemote {
 
     /// Imports the server's database into the VFS under `path`, where `full::restore` attaches it.
     async fn download(&self, path: &Path) -> Result<(), Error> {
-        let bytes = self.0.download_bytes().await?;
-        let vfs = opened().map_err(storage_error)?.vfs;
-        let name = file_name(path)?;
-        remove_file(&vfs, name).map_err(storage_error)?;
-        vfs.import_db(name, &bytes).map_err(storage_error)
+        import(path, &self.0.download_bytes().await?)
     }
 
     /// Uploads the snapshot `full::snapshot` wrote to the VFS under `path`, and removes it.
@@ -60,5 +56,45 @@ impl SyncRemote for DeviceRemote {
         let bytes = vfs.export_db(name).map_err(storage_error)?;
         remove_file(&vfs, name).map_err(storage_error)?;
         self.0.upload_bytes(bytes, replica).await
+    }
+}
+
+/// Imports `bytes`, a collection's database, into the VFS under `path`, where `full::restore`
+/// attaches it.
+fn import(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let vfs = opened().map_err(storage_error)?.vfs;
+    let name = file_name(path)?;
+    remove_file(&vfs, name).map_err(storage_error)?;
+    vfs.import_db(name, bytes).map_err(storage_error)
+}
+
+/// A database the web app already has, for `spares_core::sync::run::load_snapshot`: it only
+/// downloads, since there is no server behind it.
+pub(crate) struct SnapshotRemote(pub(crate) Vec<u8>);
+
+fn no_server() -> Error {
+    Error::Sync("this copy was loaded from a snapshot and has no server to sync with".to_string())
+}
+
+#[async_trait(?Send)]
+impl SyncRemote for SnapshotRemote {
+    async fn meta(&self, _replica: u8) -> Result<MetaResponse, Error> {
+        Err(no_server())
+    }
+
+    async fn pull(&self, _request: PullRequest) -> Result<PullResponse, Error> {
+        Err(no_server())
+    }
+
+    async fn push(&self, _request: PushRequest) -> Result<PushResponse, Error> {
+        Err(no_server())
+    }
+
+    async fn download(&self, path: &Path) -> Result<(), Error> {
+        import(path, &self.0)
+    }
+
+    async fn upload(&self, _path: &Path, _replica: u8) -> Result<FullUploadResponse, Error> {
+        Err(no_server())
     }
 }

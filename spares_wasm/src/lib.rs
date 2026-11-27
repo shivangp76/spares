@@ -9,6 +9,7 @@
 //!   server ([`spares_server::route::create_local_router`]). Requests it can't answer get
 //!   `503 {"needs_server": true}`, which the web app sends to the server instead.
 //! - [`enroll`], [`sync`] and [`unenroll`] talk to the server, through the browser's `fetch`.
+//!   [`load_snapshot`] fills a copy without one, for the web app's demo.
 //! - [`pending_notes`] and [`render_assets`] tell the web app what to show for notes the server
 //!   hasn't rendered yet, and what to download for Typst cards. [`web_renders`] tells the device
 //!   which HTML files for web clients the web app has downloaded. [`media_file`] gives it an image
@@ -255,6 +256,58 @@ pub async fn sync(server: String, key: Option<String>, mode: String) -> Result<J
     media::download(&opened.device, &remote.0).await?;
     // Links aren't synced, so the device matches them for the notes the sync brought, in the
     // background like the sync, before the next page reads them
+    match_links(&opened.db).await?;
+    to_js(&report)
+}
+
+/// Fills an empty copy with `snapshot`, a collection's database, instead of a server's, and
+/// returns `spares_core::sync::run::SyncReport` as [`sync`] does. `config` is the server's
+/// `spares_core::sync::devices::DeviceConfig` as JSON (`GET /api/sync/config`), and
+/// `image_occlusion_names` and `image_occlusion_files` its image occlusion files, which a sync
+/// would download. The copy is `replica` from then on, and has no server: [`sync`] and
+/// [`unenroll`] fail. For the web app's demo, which loads a collection from static files.
+#[wasm_bindgen]
+pub async fn load_snapshot(
+    snapshot: Vec<u8>,
+    config: String,
+    replica: u8,
+    image_occlusion_names: Vec<String>,
+    image_occlusion_files: Vec<js_sys::Uint8Array>,
+) -> Result<JsValue, JsValue> {
+    let opened = opened()?;
+    if let Some(replica) = storage::load_replica(&opened.device).await? {
+        return Err(js_error(&format!(
+            "this device is already replica {}",
+            replica.number()
+        )));
+    }
+    if image_occlusion_names.len() != image_occlusion_files.len() {
+        return Err(js_error("each image occlusion file needs a name"));
+    }
+    let config: spares_core::sync::devices::DeviceConfig =
+        serde_json::from_str(&config).map_err(|e| js_error(&format!("the config: {e}")))?;
+    let replica = replica
+        .to_string()
+        .parse()
+        .map_err(|e: String| js_error(&e))?;
+    let report = spares_core::sync::run::load_snapshot(
+        &opened.db,
+        &remote::SnapshotRemote(snapshot),
+        Path::new(""),
+    )
+    .await
+    .map_err(|e| core_error(&e));
+    for file in storage::TEMP_FILES {
+        storage::remove_file(&opened.vfs, file)?;
+    }
+    let report = report?;
+    storage::save_replica(&opened.device, Some(replica)).await?;
+    storage::save_config(&opened.device, &config).await?;
+    let files = image_occlusion_names
+        .into_iter()
+        .zip(image_occlusion_files.iter().map(js_sys::Uint8Array::to_vec))
+        .collect();
+    media::keep_image_occlusions(&opened.device, files).await?;
     match_links(&opened.db).await?;
     to_js(&report)
 }

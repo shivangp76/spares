@@ -268,27 +268,58 @@ pub(crate) async fn download(device: &SqlitePool, remote: &HttpRemote) -> Result
         .buffer_unordered(DOWNLOAD_CONCURRENCY);
     while let Some((file, path, contents)) = downloads.next().await {
         let contents = contents.map_err(|e| core_error(&e))?;
-        sqlx::query(
-            "INSERT INTO media_file (path, kind, contents, mtime, uploaded) VALUES (?, ?, ?, ?, 1)
-             ON CONFLICT (path) DO UPDATE SET contents = excluded.contents,
-                 mtime = excluded.mtime, uploaded = 1",
-        )
-        .bind(path.to_string_lossy())
-        .bind(kind.as_str())
-        .bind(&contents)
-        .bind(file.mtime)
-        .execute(device)
-        .await
-        .map_err(sqlx_error)?;
-        set_size(device, &path.to_string_lossy(), &contents).await?;
-        if in_memory(&path) {
-            platform::load_files([(path, contents)]);
-        } else {
-            if let Some(size) = platform::image_dimensions(&contents) {
-                platform::load_sizes([(path.clone(), size)]);
-            }
-            platform::load_stored([path]);
+        keep_server_file(device, kind, path, contents, Some(file.mtime)).await?;
+    }
+    Ok(())
+}
+
+/// Keeps `contents` as the server's file at `path`, which it had at `mtime`, and uses it from now
+/// on.
+async fn keep_server_file(
+    device: &SqlitePool,
+    kind: MediaKind,
+    path: PathBuf,
+    contents: Vec<u8>,
+    mtime: Option<i64>,
+) -> Result<(), JsValue> {
+    sqlx::query(
+        "INSERT INTO media_file (path, kind, contents, mtime, uploaded) VALUES (?, ?, ?, ?, 1)
+         ON CONFLICT (path) DO UPDATE SET contents = excluded.contents,
+             mtime = excluded.mtime, uploaded = 1",
+    )
+    .bind(path.to_string_lossy())
+    .bind(kind.as_str())
+    .bind(&contents)
+    .bind(mtime)
+    .execute(device)
+    .await
+    .map_err(sqlx_error)?;
+    set_size(device, &path.to_string_lossy(), &contents).await?;
+    if in_memory(&path) {
+        platform::load_files([(path, contents)]);
+    } else {
+        if let Some(size) = platform::image_dimensions(&contents) {
+            platform::load_sizes([(path.clone(), size)]);
         }
+        platform::load_stored([path]);
+    }
+    Ok(())
+}
+
+/// Keeps `files`, image occlusion files by name, as the server's, as [`download`] would: for a
+/// copy filled from a snapshot rather than by a server (`load_snapshot`).
+pub(crate) async fn keep_image_occlusions(
+    device: &SqlitePool,
+    files: Vec<(String, Vec<u8>)>,
+) -> Result<(), JsValue> {
+    let Some(dirs) = platform::media_dirs() else {
+        return Err(js_error(
+            "the snapshot's config has no image occlusion directory",
+        ));
+    };
+    for (name, contents) in files {
+        let path = dirs.image_occlusion.join(&name);
+        keep_server_file(device, MediaKind::ImageOcclusion, path, contents, None).await?;
     }
     Ok(())
 }
