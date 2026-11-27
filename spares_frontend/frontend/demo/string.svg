@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="260" viewBox="0 0 560 260" font-family="Helvetica, Arial, sans-serif">
+  <!-- A Rust String in memory, drawn for the demo collection's "Stack and heap" note (see
+       notes.ts). string.png is this, made with `rsvg-convert string.svg -o string.png`. -->
+  <rect width="560" height="260" fill="#ffffff"/>
+  <text x="40" y="34" font-size="18" font-weight="bold" fill="#1e293b">Stack: s</text>
+  <text x="330" y="34" font-size="18" font-weight="bold" fill="#1e293b">Heap</text>
+  <g font-size="16" fill="#1e293b">
+    <rect x="40" y="50" width="200" height="150" fill="#e0f2fe" stroke="#0369a1" stroke-width="2"/>
+    <line x1="40" y1="100" x2="240" y2="100" stroke="#0369a1" stroke-width="2"/>
+    <line x1="40" y1="150" x2="240" y2="150" stroke="#0369a1" stroke-width="2"/>
+    <text x="52" y="81">ptr</text>
+    <text x="52" y="131">len</text>
+    <text x="180" y="131">5</text>
+    <text x="52" y="181">capacity</text>
+    <text x="180" y="181">5</text>
+  </g>
+  <circle cx="200" cy="75" r="5" fill="#0369a1"/>
+  <path d="M205 75 C 270 75, 280 75, 322 75" fill="none" stroke="#0369a1" stroke-width="2.5"/>
+  <path d="M322 75 l -12 -6 l 0 12 z" fill="#0369a1"/>
+  <g font-size="18" fill="#1e293b" text-anchor="middle">
+    <rect x="330" y="50" width="200" height="50" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+    <line x1="370" y1="50" x2="370" y2="100" stroke="#b45309" stroke-width="2"/>
+    <line x1="410" y1="50" x2="410" y2="100" stroke="#b45309" stroke-width="2"/>
+    <line x1="450" y1="50" x2="450" y2="100" stroke="#b45309" stroke-width="2"/>
+    <line x1="490" y1="50" x2="490" y2="100" stroke="#b45309" stroke-width="2"/>
+    <text x="350" y="82">h</text>
+    <text x="390" y="82">e</text>
+    <text x="430" y="82">l</text>
+    <text x="470" y="82">l</text>
+    <text x="510" y="82">o</text>
+  </g>
+  <text x="40" y="236" font-size="15" fill="#475569">let s = String::from("hello");</text>
+</svg>

@@ -113,7 +113,7 @@ const DESKTOP: Shot[] = [
   },
   {
     name: "image-occlusion",
-    take: (page) => review(page, 'tag="science:biology"'),
+    take: (page) => review(page, 'keyword="Plant cell"'),
   },
   { name: "statistics", take: (page) => go(page, "/statistics") },
   {

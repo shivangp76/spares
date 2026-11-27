@@ -5,8 +5,11 @@
 //   bun demo/build.ts --out dist-demo
 //
 // or `bun run build-demo`. It makes a host of its own in a temporary root (`--root` keeps it),
-// creates the notes in notes.ts through the API, makes up three months of reviews for them,
-// reschedules every card from those reviews, renders the notes, and writes to `<out>/demo/`:
+// creates the notes in notes.ts through the API (uploading their images and audio), makes up
+// three months of reviews for them (with days off, crams, a forgotten card and leeches),
+// reschedules every card from those reviews, does what a user would have done today (burying,
+// postponing, planning a break, splitting and merging notes), renders the notes, and writes to
+// `<out>/demo/`:
 //
 // - `collection.sqlite`: the database, which `load_snapshot` in spares_wasm restores;
 // - `config.json`: the host's `DeviceConfig` (`GET /api/sync/config`);
@@ -34,8 +37,18 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { formatNoteId } from "../src/utils";
 import { finishDemoBuild } from "./finish";
-import { CELL_LABELS, NOTES, SAVED_SEARCHES, type ParserName } from "./notes";
+import {
+  LATER_NOTES,
+  LEECH_EASE,
+  NOTES,
+  OCCLUSIONS,
+  SAVED_SEARCHES,
+  type DemoNote,
+  type DemoOcclusion,
+  type ParserName,
+} from "./notes";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
 const REPO = resolve(HERE, "../../..");
@@ -102,21 +115,48 @@ writeFileSync(join(ROOT, "host.toml"), `bind = "127.0.0.1:${PORT}"\n`);
 const COLLECTION = join(ROOT, "users", USER);
 const CONFIG = join(COLLECTION, "config/config.toml");
 
-/** The host's default config.toml, with Typst cards compiled by browsers only, as on a server, and a goal */
+/** The date `days` from now, as config.toml writes dates */
+const dateIn = (days: number) => new Date((NOW + days * DAY) * 1000).toISOString().slice(0, 10);
+
+/**
+ * The host's default config.toml, with Typst cards compiled by browsers only, as on a server,
+ * lighter Sundays, new cards held back until the notes they link to are learned, a preset for
+ * languages, and two goals: one on track, and one with a milestone missed.
+ */
 function writeConfig(): void {
-  const goalDate = new Date((NOW + 45 * DAY) * 1000).toISOString().slice(0, 10);
-  const config = readFileSync(CONFIG, "utf8")
-    .replace(/^render_browser_parsers = true$/m, "render_browser_parsers = false")
-    .replace(/^\[sync\]$/m, `[sync]\nreplica = ${HOST_REPLICA}`);
-  if (!config.includes("render_browser_parsers = false") || !config.includes("replica = "))
-    throw new Error("config.toml has no `render_browser_parsers` or `[sync]` to change");
+  let config = readFileSync(CONFIG, "utf8");
+  for (const [from, to] of [
+    [/^render_browser_parsers = true$/m, "render_browser_parsers = false"],
+    [/^\[sync\]$/m, `[sync]\nreplica = ${HOST_REPLICA}`],
+    [/^Sun = 1\.0$/m, "Sun = 0.5"],
+    [/^new_after_linked_notes = false$/m, "new_after_linked_notes = true"],
+  ] as const) {
+    if (!from.test(config)) throw new Error(`config.toml has no ${from} to change`);
+    config = config.replace(from, to);
+  }
   writeFileSync(
     CONFIG,
     `${config}
+[queue.presets.languages]
+tags = ["languages"]
+new_cards_daily_limit = 5
+learning_steps = [60, 600, 3600]
+bury_new_siblings = true
+
 [goals.linear-algebra-exam]
-date = "${goalDate}"
+date = "${dateIn(45)}"
 retention = 0.9
 query = 'tag="math:linear-algebra"'
+
+[goals.algorithms-interview]
+date = "${dateIn(21)}"
+learned_by = "${dateIn(7)}"
+query = 'tag="cs:algorithms"'
+milestones = [{ date = ${dateIn(-2)}, new_left = 0 }]
+
+[goals.algorithms-interview.parts]
+graphs = 'keyword=BFS or keyword=Dijkstra or keyword="Bellman-Ford" or keyword="Topological sort" or keyword="Union-find"'
+data-structures = 'keyword="Hash table" or keyword=Heap or keyword=Trie or keyword="Stacks and queues" or keyword="Hash table resizing"'
 `,
   );
 }
@@ -175,139 +215,232 @@ interface CreatedNote {
   ago: number;
   ease: number;
   suspended: boolean;
+  forgotten?: number;
+  buried?: boolean;
+}
+
+const parsers = {} as Record<ParserName, number>;
+/** Notes by their first keyword, for `@card(…)` in notes.ts */
+const noteByKeyword = new Map<string, number>();
+
+/** A multipart POST to the API, returning its JSON */
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${ORIGIN}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${TOKEN}` },
+    body: form,
+  });
+  if (!res.ok) throw new Error(`POST ${path}: ${res.status} ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+/** A file in this directory, uploaded as `kind` ("image" or "audio"), as its snippet */
+async function uploadMedia(kind: "image" | "audio", name: string): Promise<string> {
+  const form = new FormData();
+  form.append("parser_id", String(parsers.markdown));
+  form.append(kind, new File([readFileSync(join(HERE, name))], name));
+  return (await upload<{ snippet: string }>(kind === "image" ? "/api/images" : "/api/audio", form)).snippet;
+}
+
+/** `data` with notes.ts's placeholders (`@image(…)`, `@audio(…)`, `@card(…)`) filled in */
+async function fillIn(data: string): Promise<string> {
+  for (const [placeholder, kind, name] of data.matchAll(/@(image|audio)\(([^)]+)\)/g))
+    data = data.replace(placeholder, await uploadMedia(kind as "image" | "audio", name));
+  return data.replace(/@card\(([^/)]+)\/(\d+)\)/g, (_, keyword: string, order: string) => {
+    const id = noteByKeyword.get(keyword);
+    if (id === undefined) throw new Error(`@card(${keyword}/${order}): no note has the first keyword ${keyword}`);
+    return `${formatNoteId(id)}/${order}`;
+  });
+}
+
+/** Creates `note` through the API, and returns its id */
+async function create(note: DemoNote): Promise<number> {
+  const data = await fillIn(note.data);
+  const { notes } = await api<{ notes: { id: number; card_count: number }[] }>("POST", "/api/notes", {
+    parser_id: parsers[note.parser],
+    requests: [
+      {
+        data,
+        keywords: note.keywords ?? [],
+        tags: note.tags,
+        is_suspended: note.suspended ?? false,
+        custom_data: note.customData ?? {},
+      },
+    ],
+  }).catch((e: Error) => {
+    throw new Error(`The demo note "${data.split("\n")[0]}" was refused: ${e.message}`);
+  });
+  if (notes[0].card_count === 0)
+    throw new Error(`A demo note made no cards, so its syntax is wrong:\n${data}`);
+  if (note.keywords?.[0]) noteByKeyword.set(note.keywords[0], notes[0].id);
+  return notes[0].id;
+}
+
+/** Creates an image occlusion note: its image and clozes SVG, as the editor saves them, and the note */
+async function createOcclusion(occlusion: DemoOcclusion): Promise<number> {
+  const masks = occlusion.masks
+    .map(
+      ({ x, y, width, height, settings }, i) =>
+        `<rect id="svg_${i + 1}" x="${x}" y="${y}" width="${width}" height="${height}" fill="#FFEBA2"` +
+        (settings ? ` data-cloze-settings="${settings}"` : "") +
+        "/>",
+    )
+    .join("");
+  const clozes =
+    `<svg width="${occlusion.width}" height="${occlusion.height}" xmlns="http://www.w3.org/2000/svg">` +
+    `<g class="layer" id="markup-group"><title>Markup</title>${occlusion.markup ?? ""}</g>` +
+    `<g class="layer" id="clozes-group"><title>Clozes</title>${masks}</g></svg>`;
+  // Named after the note, as a file someone uploads would be
+  const name = `${occlusion.keywords[0].toLowerCase().replace(/\W+/g, "-")}.png`;
+  const form = new FormData();
+  form.append("parser_id", String(parsers.markdown));
+  form.append("image", new File([readFileSync(join(HERE, occlusion.image))], name, { type: "image/png" }));
+  form.append("clozes", clozes);
+  const { snippet } = await upload<{ snippet: string }>("/api/image-occlusions", form);
+  return create({
+    parser: "markdown",
+    data: occlusion.data.replace("@occlusion", snippet),
+    tags: occlusion.tags,
+    keywords: occlusion.keywords,
+    ago: occlusion.ago,
+  });
 }
 
 async function createNotes(): Promise<CreatedNote[]> {
-  const parsers: Record<ParserName, number> = {} as Record<ParserName, number>;
   for (const name of ["markdown", "typst", "latex-note", "markdown-language-tools"] as ParserName[])
     parsers[name] = (await api<{ id: number }>("POST", "/api/parsers", { name })).id;
   const created: CreatedNote[] = [];
-  const create = async (
-    parser: ParserName,
-    note: {
-      data: string;
-      tags: string[];
-      keywords?: string[];
-      suspended?: boolean;
-      customData?: Record<string, unknown>;
-    },
-  ) => {
-    const { notes } = await api<{ notes: { id: number; card_count: number }[] }>("POST", "/api/notes", {
-      parser_id: parsers[parser],
-      requests: [
-        {
-          data: note.data,
-          keywords: note.keywords ?? [],
-          tags: note.tags,
-          is_suspended: note.suspended ?? false,
-          custom_data: note.customData ?? {},
-        },
-      ],
-    }).catch((e: Error) => {
-      throw new Error(`The demo note "${note.data.split("\n")[0]}" was refused: ${e.message}`);
-    });
-    if (notes[0].card_count === 0)
-      throw new Error(`A demo note made no cards, so its syntax is wrong:\n${note.data}`);
-    return notes[0].id;
-  };
-  // Oldest first, so that ids follow creation, as they would have
-  const ordered = [...NOTES].sort((a, b) => b.ago - a.ago);
-  const occlusionAgo = 38;
-  let occlusionMade = false;
-  for (const note of ordered) {
-    if (!occlusionMade && note.ago < occlusionAgo) {
-      created.push({ id: await createOcclusionNote(parsers.markdown), ago: occlusionAgo, ease: 0.7, suspended: false });
-      occlusionMade = true;
+  // Oldest first, so that ids follow creation, as they would have. The sort is stable, so notes
+  // created on the same day keep their order in notes.ts.
+  const ordered = [
+    ...NOTES.map((note) => ({ ago: note.ago, note })),
+    ...OCCLUSIONS.map((occlusion) => ({ ago: occlusion.ago, occlusion })),
+  ].sort((a, b) => b.ago - a.ago);
+  for (const item of ordered) {
+    if ("occlusion" in item) {
+      const { occlusion } = item;
+      created.push({ id: await createOcclusion(occlusion), ago: occlusion.ago, ease: occlusion.ease, suspended: false });
+      continue;
     }
-    const id = await create(note.parser, note);
-    created.push({ id, ago: note.ago, ease: note.ease ?? 0.75, suspended: note.suspended ?? false });
+    const { note } = item;
+    created.push({
+      id: await create(note),
+      ago: note.ago,
+      ease: note.ease ?? 0.75,
+      suspended: note.suspended ?? false,
+      forgotten: note.forgotten,
+      buried: note.buried,
+    });
   }
   return created;
-
-  async function createOcclusionNote(parserId: number): Promise<number> {
-    const masks = CELL_LABELS.map(
-      ({ x, y, width, height }, i) =>
-        `<rect id="svg_${i + 1}" x="${x}" y="${y}" width="${width}" height="${height}" fill="#FFEBA2"/>`,
-    ).join("");
-    const clozes = `<svg width="600" height="500" xmlns="http://www.w3.org/2000/svg"><g class="layer" id="markup-group"><title>Markup</title></g><g class="layer" id="clozes-group"><title>Clozes</title>${masks}</g></svg>`;
-    const form = new FormData();
-    form.append("parser_id", String(parserId));
-    form.append("image", new File([readFileSync(join(HERE, "cell.png"))], "plant-cell.png", { type: "image/png" }));
-    form.append("clozes", clozes);
-    const res = await fetch(`${ORIGIN}/api/image-occlusions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TOKEN}` },
-      body: form,
-    });
-    if (!res.ok) throw new Error(`POST /api/image-occlusions: ${res.status} ${await res.text()}`);
-    const { snippet } = (await res.json()) as { snippet: string };
-    return create("markdown", {
-      data: `# Parts of a plant cell\n\nName each labelled part.\n\n${snippet}`,
-      tags: ["science:biology"],
-      keywords: ["Plant cell", "Organelles"],
-    });
-  }
 }
 
 // Made-up reviews
 
+/** A `review_log` row (`ReviewLogKind`): a review, a forget, or a cram in a filtered tag */
 interface Review {
   cardId: number;
   at: number;
-  rating: number;
+  kind: number;
+  /** `null` for a forget */
+  rating: number | null;
   previousState: number;
-  scheduled: number;
-  recall: number;
+  /** `null` for a forget or a cram */
+  scheduled: number | null;
+  /** Seconds to recall and to rate, `null` for a forget */
+  recall: number | null;
+  rate: number | null;
+  /** A cram's filtered tag */
+  tagId?: number;
 }
 
+const KIND = { review: 0, forget: 1, cram: 16 };
 const RATING = { again: 1, hard: 2, good: 3, easy: 4 };
 const STATE = { new: 0, learning: 1, review: 2, relearning: 3 };
-/** Days without reviews, by days before the build, as anyone has: reviews due then wait a day */
-const DAYS_OFF = new Set(
-  Array.from({ length: 9 }, () => 2 + Math.floor(rand() * 85)),
-);
+/** `[leech] lapses_threshold` in the default config.toml */
+const LEECH_LAPSES = 8;
 
-/** `at`, or the next day that isn't one of `DAYS_OFF` */
+// Days are study days (starting at `day_starts_at`, 4 AM), in UTC, as reviews are at UTC times.
+const DAY_STARTS_AT = 4 * 3600;
+const studyDay = (t: number) => Math.floor((t - DAY_STARTS_AT) / DAY);
+const TODAY = studyDay(NOW);
+/** The evening of the night before the linear algebra quiz, crammed in a filtered tag */
+const CRAM_AGO = 13;
+/**
+ * Days without reviews, as anyone has: a few days here and there, and a holiday of four days.
+ * Reviews due on them wait for the next day.
+ */
+const DAYS_OFF = new Set<number>();
+for (let i = 0; i < 7; i++) DAYS_OFF.add(TODAY - (2 + Math.floor(rand() * 85)));
+for (let i = 0; i < 4; i++) DAYS_OFF.add(TODAY - 52 + i);
+DAYS_OFF.delete(TODAY - CRAM_AGO);
+
+/** `at`, or the same time on the next day that isn't one of `DAYS_OFF` */
 function onDayOn(at: number): number {
-  while (DAYS_OFF.has(Math.floor((NOW - at) / DAY))) at += DAY;
+  while (DAYS_OFF.has(studyDay(at))) at += DAY;
   return at;
 }
 
-/** Reviews of a card first seen `ago` days ago, by someone who knows it as well as `ease` says */
-function reviewsOf(cardId: number, ago: number, ease: number): Review[] {
+/** 8 AM or 7 PM UTC, and up to two and a half hours after, on the day of `t` */
+const atTimeOfDay = (t: number) =>
+  t - (t % DAY) + (rand() < 0.6 ? 8 : 19) * 3600 + Math.floor(rand() * 2.5 * 3600);
+/** 8 PM UTC, `ago` days ago */
+const eveningOf = (ago: number) => {
+  const t = NOW - ago * DAY;
+  return t - (t % DAY) + 20 * 3600;
+};
+
+/** Seconds to recall a card rated `rating`: failing takes longest, and easy cards are quick */
+function recallSeconds(rating: number, ease: number): number {
+  const [low, high] =
+    rating === RATING.again ? [8, 25] : rating === RATING.hard ? [6, 16] : rating === RATING.good ? [2, 10] : [1, 4];
+  return Math.round(low + rand() * (high - low) * (1.4 - ease * 0.6));
+}
+
+/**
+ * Reviews of a card first seen `start` (a time), before `until`, by someone who knows it as well
+ * as `ease` says. Below `LEECH_EASE`, it lapses about every other review.
+ */
+function reviewsOf(cardId: number, start: number, ease: number, until = NOW): Review[] {
   const reviews: Review[] = [];
-  // Mornings and evenings
-  const timeOfDay = () => (rand() < 0.6 ? 8 : 19) * 3600 + Math.floor(rand() * 2.5 * 3600);
-  const startOfDay = (t: number) => t - (t % DAY);
-  let at = onDayOn(startOfDay(NOW - ago * DAY) + timeOfDay());
-  if (at >= NOW) return reviews;
-  const recall = () => 3 + Math.floor(rand() * 12);
+  const review = (at: number, rating: number, previousState: number, scheduled: number) =>
+    reviews.push({
+      cardId,
+      at,
+      kind: KIND.review,
+      rating,
+      previousState,
+      scheduled,
+      recall: recallSeconds(rating, ease),
+      rate: 1 + Math.floor(rand() * 2),
+    });
+  let at = onDayOn(atTimeOfDay(start));
+  if (at >= until) return reviews;
   // Learning: Again a few times for a hard card, then Good
   let state = STATE.new;
   while (rand() > 0.35 + ease * 0.6) {
-    reviews.push({ cardId, at, rating: RATING.again, previousState: state, scheduled: 600, recall: recall() });
+    review(at, RATING.again, state, 600);
     state = STATE.learning;
     at += 600 + Math.floor(rand() * 300);
   }
   let interval = 1;
-  reviews.push({ cardId, at, rating: RATING.good, previousState: state, scheduled: interval * DAY, recall: recall() });
+  review(at, RATING.good, state, interval * DAY);
   state = STATE.review;
+  const lapse = ease < LEECH_EASE ? 0.5 : (1 - ease) * 0.4;
   for (;;) {
-    at = onDayOn(
-      startOfDay(at + interval * DAY + Math.floor((rand() - 0.3) * interval * 0.25) * DAY) + timeOfDay(),
-    );
-    if (at >= NOW) break;
+    at = onDayOn(atTimeOfDay(at + interval * DAY + Math.floor((rand() - 0.3) * interval * 0.25) * DAY));
+    if (at >= until) break;
     const roll = rand();
     let rating: number;
-    if (roll < (1 - ease) * 0.4) rating = RATING.again;
-    else if (roll < (1 - ease) * 0.4 + 0.12) rating = RATING.hard;
+    if (roll < lapse) rating = RATING.again;
+    else if (roll < lapse + 0.12) rating = RATING.hard;
     else if (roll > 1 - 0.12 * ease) rating = RATING.easy;
     else rating = RATING.good;
     if (rating === RATING.again) {
-      reviews.push({ cardId, at, rating, previousState: state, scheduled: 600, recall: recall() });
+      review(at, rating, state, 600);
       at += 600 + Math.floor(rand() * 600);
       interval = 1;
-      reviews.push({ cardId, at, rating: RATING.good, previousState: STATE.relearning, scheduled: DAY, recall: recall() });
+      review(at, RATING.good, STATE.relearning, DAY);
       state = STATE.review;
       continue;
     }
@@ -318,15 +451,31 @@ function reviewsOf(cardId: number, ago: number, ease: number): Review[] {
           (rating === RATING.hard ? 1.2 : rating === RATING.good ? 1.6 + ease * 1.4 : 3 + ease * 1.5),
       ),
     );
-    reviews.push({ cardId, at, rating, previousState: state, scheduled: interval * DAY, recall: recall() });
+    review(at, rating, state, interval * DAY);
   }
   return reviews;
 }
 
-/** Dates the notes and cards from when they were "created", and gives them reviews since. */
-function backdate(created: CreatedNote[]): number {
+/** The lapses in `reviews`: Again on a card that had graduated */
+const lapsesOf = (reviews: Review[]) =>
+  reviews.filter((r) => r.kind === KIND.review && r.rating === RATING.again && r.previousState === STATE.review).length;
+
+interface Backdated {
+  reviews: number;
+  crams: number;
+  /** Notes with a card that lapsed `LEECH_LAPSES` times */
+  leeches: number[];
+}
+
+/**
+ * Dates the notes and cards from when they were "created", and gives them reviews since: a
+ * forget and the reviews after it for notes `forgotten`, and crams of the cards of `cramTag`'s
+ * query on the evening `CRAM_AGO` days ago.
+ */
+function backdate(created: CreatedNote[], cramTag: { id: number; noteIds: Set<number> }): Backdated {
   const db = new Database(join(COLLECTION, "collection.sqlite"));
   const reviews: Review[] = [];
+  const leeches: number[] = [];
   db.transaction(() => {
     for (const note of created) {
       const createdAt = NOW - note.ago * DAY - Math.floor(rand() * 4 * 3600);
@@ -334,28 +483,78 @@ function backdate(created: CreatedNote[]): number {
       db.query("UPDATE card SET created_at = ?1, updated_at = ?1 WHERE note_id = ?2").run(createdAt, note.id);
       if (note.suspended || note.ago === 0) continue;
       const cards = db.query("SELECT id FROM card WHERE note_id = ? ORDER BY \"order\"").all(note.id) as { id: number }[];
+      let leech = false;
       for (const [i, card] of cards.entries()) {
         // Siblings start a few days apart, as their notes' cards were unburied
-        reviews.push(...reviewsOf(card.id, Math.max(1, note.ago - (i % 3)), note.ease));
+        const start = NOW - Math.max(1, note.ago - (i % 3)) * DAY;
+        let ofCard: Review[];
+        if (note.forgotten === undefined) {
+          ofCard = reviewsOf(card.id, start, note.ease);
+        } else {
+          // Reset to new in the evening, and learned again from the next day
+          const forgotAt = eveningOf(note.forgotten);
+          const before = reviewsOf(card.id, start, note.ease, forgotAt);
+          const forget: Review = {
+            cardId: card.id,
+            at: forgotAt,
+            kind: KIND.forget,
+            rating: null,
+            previousState: before.length ? STATE.review : STATE.new,
+            scheduled: null,
+            recall: null,
+            rate: null,
+          };
+          ofCard = [...before, forget, ...reviewsOf(card.id, forgotAt + DAY, note.ease)];
+        }
+        if (lapsesOf(ofCard) >= LEECH_LAPSES) leech = true;
+        reviews.push(...ofCard);
+      }
+      if (leech) leeches.push(note.id);
+    }
+    // The cram: once through every card already learned by then, a second time for those failed
+    const cramStart = eveningOf(CRAM_AGO);
+    const learnedBy = new Set(reviews.filter((r) => r.kind === KIND.review && r.at < cramStart).map((r) => r.cardId));
+    let at = cramStart;
+    for (const note of created) {
+      if (!cramTag.noteIds.has(note.id)) continue;
+      const cards = db.query("SELECT id FROM card WHERE note_id = ? ORDER BY \"order\"").all(note.id) as { id: number }[];
+      for (const card of cards) {
+        if (!learnedBy.has(card.id)) continue;
+        const ratings = rand() < 0.2 ? [RATING.again, RATING.good] : [rand() < 0.15 ? RATING.easy : RATING.good];
+        for (const rating of ratings) {
+          at += 20 + Math.floor(rand() * 40);
+          reviews.push({
+            cardId: card.id,
+            at,
+            kind: KIND.cram,
+            rating,
+            previousState: STATE.review,
+            scheduled: null,
+            recall: recallSeconds(rating, note.ease),
+            rate: 1,
+            tagId: cramTag.id,
+          });
+        }
       }
     }
     reviews.sort((a, b) => a.at - b.at);
     const insert = db.query(
       `INSERT INTO review_log (id, card_id, reviewed_at, kind, rating, scheduler_name, scheduled_time,
          recall_duration, rate_duration, previous_state, tag_id, custom_data, usn, previous_interval)
-       VALUES (?, ?, ?, 0, ?, 'fsrs', ?, ?, ?, ?, NULL, '{}', -1, NULL)`,
+       VALUES (?, ?, ?, ?, ?, 'fsrs', ?, ?, ?, ?, ?, '{}', -1, NULL)`,
     );
     const first = ((db.query("SELECT COALESCE(MAX(id), 0) AS id FROM review_log").get() as { id: number }).id);
     let id = first - (first % ID_STEP) + HOST_REPLICA + ID_STEP;
-    for (const review of reviews) {
-      insert.run(id, review.cardId, review.at, review.rating, review.scheduled, review.recall, 1 + Math.floor(rand() * 2), review.previousState);
+    for (const r of reviews) {
+      insert.run(id, r.cardId, r.at, r.kind, r.rating, r.scheduled, r.recall, r.rate, r.previousState, r.tagId ?? null);
       id += ID_STEP;
     }
     // Statistics recompute these from the reviews
     db.exec("DELETE FROM study_day_cache; DELETE FROM study_day_dirty; DELETE FROM study_day;");
   })();
   db.close();
-  return reviews.length;
+  const crams = reviews.filter((r) => r.kind === KIND.cram).length;
+  return { reviews: reviews.length - crams, crams, leeches };
 }
 
 // The bundle
@@ -415,21 +614,81 @@ async function writeBundle(): Promise<void> {
 
 // Run
 
+/** The filtered tag crammed the night before a quiz, which doesn't reschedule */
+const CRAM_TAG = "linear-algebra-quiz";
+
+/** Ids of notes tagged `tag`, or one of its child tags */
+function notesTagged(tag: string): Set<number> {
+  const db = new Database(join(COLLECTION, "collection.sqlite"), { readonly: true });
+  const rows = db
+    .query("SELECT nt.note_id AS id FROM note_tag nt JOIN tag t ON t.id = nt.tag_id WHERE t.name = ?1 OR t.name LIKE ?1 || ':%'")
+    .all(tag) as { id: number }[];
+  db.close();
+  return new Set(rows.map((row) => row.id));
+}
+
+/** Ids of the cards of `noteId`, soonest due first */
+function cardsOf(noteId: number): number[] {
+  const db = new Database(join(COLLECTION, "collection.sqlite"), { readonly: true });
+  const rows = db.query("SELECT id FROM card WHERE note_id = ? ORDER BY due, \"order\"").all(noteId) as { id: number }[];
+  db.close();
+  return rows.map((row) => row.id);
+}
+
+/**
+ * What someone would have done today: tag the leeches (rating does it, but these reviews were
+ * made up), bury the card they keep putting off, postpone a few Spanish cards, plan a break, and
+ * split and merge notes (LATER_NOTES).
+ */
+async function today(created: CreatedNote[], leeches: number[]): Promise<void> {
+  if (leeches.length === 0) throw new Error("No note became a leech: lower an `ease` in notes.ts");
+  cli(["note", "edit", "--ids", ...leeches.map(formatNoteId), "--tags-to-add", "leech"]);
+  // Looking at the queue unburies yesterday's cards and records that today's unburying is done
+  // (`last_unburied`), as opening the Review page would. Without it, the first look in the browser
+  // would unbury the card buried below.
+  cli(["card", "queue"]);
+  for (const note of created.filter((note) => note.buried)) {
+    // The tag `[queue.tag_buried]` gives a card buried on two days without a rating between
+    const [card] = cardsOf(note.id);
+    cli(["card", "edit", "--ids", String(card), "--tags-to-add", "buried"]);
+    cli(["card", "edit", "--ids", String(card), "--special-state", "buried"]);
+  }
+  cli(["card", "postpone", "3", "-q", 'tag="languages:spanish" c.due<=today+3d']);
+  // Reviewed ahead, so that a card of the plant cell is due, for the README's screenshot of an
+  // image occlusion (screenshots.ts)
+  cli(["card", "advance", "1", "-q", 'keyword="Plant cell"']);
+  cli(["card", "break", "--from", dateIn(24), "--days", "5", "--spread", "4", "--yes"]);
+  for (const note of LATER_NOTES) {
+    await create(note);
+    const merged = note.deletes?.map((keyword) => formatNoteId(noteByKeyword.get(keyword)!)) ?? [];
+    if (merged.length) cli(["note", "delete", "--ids", ...merged]);
+  }
+}
+
 writeConfig();
 await startServer();
 const created = await createNotes();
 for (const search of SAVED_SEARCHES) await api("PUT", "/api/saved-searches", search);
+cli(["tag", "add", "-n", CRAM_TAG, "-q", 'tag="math:linear-algebra"', "--reschedule", "false",
+  "-d", "Crammed the night before the quiz, without changing when cards are due"]);
+const cramTagId = (await api<{ id: number }>("GET", `/api/tags/name/${CRAM_TAG}`)).id;
 await stopServer();
-const reviewCount = backdate(created);
+const { reviews: reviewCount, crams, leeches } = backdate(created, {
+  id: cramTagId,
+  noteIds: notesTagged("math:linear-algebra"),
+});
 await startServer();
 // Memory states and due dates from the reviews
 cli(["card", "reschedule", "--yes"]);
+await today(created, leeches);
 cli(["note", "generate", "--render", "--yes"]);
 await writeBundle();
 finishDemoBuild(args.out);
 const size = Number(spawnSync("du", ["-sk", OUT], { encoding: "utf8" }).stdout.split("\t")[0]);
 console.log(
-  `Demo collection: ${created.length} notes, ${reviewCount} reviews, ${(size / 1024).toFixed(1)} MB in ${OUT}` +
+  `Demo collection: ${created.length + LATER_NOTES.length - LATER_NOTES.flatMap((note) => note.deletes ?? []).length} notes, ` +
+    `${reviewCount} reviews and ${crams} crams, ` +
+    `${leeches.length} leeches, ${(size / 1024).toFixed(1)} MB in ${OUT}` +
     (args.root ? `\nIts host is in ${ROOT}` : ""),
 );
 if (!args.root) rmSync(ROOT, { recursive: true, force: true });

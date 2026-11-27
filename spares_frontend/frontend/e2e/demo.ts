@@ -20,11 +20,14 @@ const { origin, stop } = serveDemo(
 );
 const APP = `${origin}/spares`;
 
-/** The number in the review page's "N reviews in total", once it shows */
+/** The number in the review page's "N reviews (M crams) in total", once it shows */
 async function totalReviews(page: Page): Promise<number> {
   // Pointing at a day of the heatmap, as the mouse may be after a click, shows that day's instead
   await page.mouse.move(0, 0);
-  const text = await page.getByText(/[\d,]+ reviews? in total/).first().textContent();
+  const text = await page
+    .getByText(/[\d,]+ reviews?( \([\d,]+ crams?\))? in total/)
+    .first()
+    .textContent();
   return Number(text!.match(/[\d,]+/)![0].replaceAll(",", ""));
 }
 
@@ -51,8 +54,8 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     if (before < 500) throw new Error(`The demo has only ${before} reviews`);
 
     await page.getByRole("button", { name: "Start Review" }).click();
-    await page.getByRole("button", { name: /Show Answer|Check Answer/ }).waitFor();
-    await page.keyboard.press("Space");
+    // A button rather than Space, which a card with a typed answer would type into
+    await page.getByRole("button", { name: /Show Answer|Check Answer/ }).click();
     await page.getByRole("button", { name: /Good/ }).click();
     await page.getByText(/Reviewed 1\b/).waitFor();
     console.log("  reviewed a card");

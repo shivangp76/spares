@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="460" viewBox="0 0 640 460" font-family="Helvetica, Arial, sans-serif">
+  <!-- The layers of the Earth, drawn for the demo collection's second image occlusion note (see
+       notes.ts and EARTH_LABELS). The labels on the right are what its masks hide. earth.png is
+       this, made with `rsvg-convert earth.svg -o earth.png`. -->
+  <rect width="640" height="460" fill="#ffffff"/>
+  <!-- A quarter cut away: the layers as nested circles -->
+  <circle cx="220" cy="240" r="190" fill="#a16207"/>
+  <circle cx="220" cy="240" r="176" fill="#ea580c"/>
+  <circle cx="220" cy="240" r="100" fill="#facc15"/>
+  <circle cx="220" cy="240" r="48" fill="#fef9c3" stroke="#ca8a04" stroke-width="2"/>
+  <!-- Leader lines -->
+  <g stroke="#334155" stroke-width="2">
+    <line x1="370" y1="125" x2="440" y2="80"/>
+    <line x1="350" y1="190" x2="440" y2="170"/>
+    <line x1="300" y1="260" x2="440" y2="260"/>
+    <line x1="240" y1="250" x2="440" y2="350"/>
+  </g>
+  <g font-size="22" fill="#0f172a">
+    <text x="452" y="88">Crust</text>
+    <text x="452" y="178">Mantle</text>
+    <text x="452" y="268">Outer core</text>
+    <text x="452" y="358">Inner core</text>
+  </g>
+</svg>

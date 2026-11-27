@@ -6,9 +6,9 @@
 //
 // The collection (dist-demo/demo/, which build.ts makes in about two minutes) is made again only
 // when there is none, when it is over a week old (its reviews are dated from when it was made, so
-// cards stop being due), or when what it is made from changed since: notes.ts, build.ts, the image
-// occlusion's cell, or the database's migrations. Otherwise only the app is rebuilt, beside the
-// collection it keeps. The new build replaces dist-demo/ only once it is complete.
+// cards stop being due), or when what it is made from changed since: notes.ts, build.ts, the
+// images and audio clips the notes upload, or the database's migrations. Otherwise only the app
+// is rebuilt, beside the collection it keeps. The new build replaces dist-demo/ only once it is complete.
 //
 // Options:
 //   --fresh      make the collection again anyway
@@ -79,7 +79,10 @@ function portFree(port: number): Promise<boolean> {
 function collectionInputs(): string[] {
   const migrations = join(REPO, "spares_core/migrations");
   return [
-    ...["notes.ts", "build.ts", "cell.svg", "cell.png"].map((name) => join(import.meta.dir, name)),
+    // With the images and audio clips the notes upload
+    ...readdirSync(import.meta.dir)
+      .filter((name) => ["notes.ts", "build.ts"].includes(name) || /\.(png|svg|mp3)$/.test(name))
+      .map((name) => join(import.meta.dir, name)),
     ...readdirSync(migrations).map((name) => join(migrations, name)),
   ];
 }

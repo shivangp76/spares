@@ -165,7 +165,7 @@ bun e2e/demo.ts                              # Chromium, WebKit and Firefox, abo
 bun demo/screenshots.ts                      # docs/screenshots/*.webp (needs cwebp)
 ```
 
-CI runs `bun run build-demo` instead, which always builds both the app and the collection into `dist-demo/` (it needs `cargo build -p spares_cli -p spares_server` first). `bun demo/serve.ts dist-demo` serves a build as GitHub Pages does. Markdown notes in the demo avoid characters pdflatex can't typeset, such as `α` or `²`: their PDFs are rendered too, though the demo leaves them out.
+CI runs `bun run build-demo` instead, which always builds both the app and the collection into `dist-demo/` (it needs `cargo build -p spares_cli -p spares_server` first). `bun demo/serve.ts dist-demo` serves a build as GitHub Pages does. Markdown notes in the demo avoid characters pdflatex can't typeset, such as `α` or `²`, and subscripts (`H~2~O`) inside clozes, which a hidden cloze's highlighting can't hold: their PDFs are rendered too, though the demo leaves them out. The comment at the top of `demo/notes.ts` lists what the collection shows, and each feature's note says so in a comment above it, so check there before adding a note for a feature.
 
 ### Clock-dependent tests
 

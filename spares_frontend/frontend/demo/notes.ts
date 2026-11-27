@@ -1,25 +1,57 @@
 // The demo collection's notes (see build.ts). Written for the demo, on general topics, so that it
-// shows each feature the README lists: the three parsers, clozes and their settings, links
-// between notes, keywords, a tag hierarchy, card tags, text to speech, typed answers, an image
-// occlusion, and the markdown-language-tools parser's readings (dictionary lookup needs a host,
-// which the demo hasn't). Each note's `ago` is how many days before the build it was created, which its review
-// history starts from.
+// shows each feature the README lists, in each parser where it applies:
+//
+// - clozes and their settings: hints (`h:`), groupings (`g:`, `g:*`), reverse and reverse-only
+//   cards (`r`, `ro`, `rtag:`), suspended clozes (`s`), clozes hidden without being asked
+//   (`hide:`), all clozes hidden on the front and only the answer shown on the back (`f:all`,
+//   `b:a`), emphasis on the back (`be:`), typed answers (`t`), overlapping lists (`ov`), nested
+//   clozes, text to speech (`tts:`), card tags (`tag:`), and a card's history copied (`inh:`) or
+//   moved (`mv:`) from another note's card (LATER_NOTES);
+// - links between notes, with fuzzy matches (plurals), links across topics, Typst's dependent and
+//   related links, a link to a keyword no note has, a loop of "see also" links, and a
+//   prerequisite created after the note that needs it;
+// - keywords, including sources and keywords shared by several notes, and a tag hierarchy three
+//   levels deep;
+// - two image occlusions (OCCLUSIONS), the second with hints, markup and text clozes in the same
+//   cards, an image and audio clips in Markdown notes, and the markdown-language-tools parser's
+//   readings (dictionary lookup needs a host, which the demo hasn't);
+// - a review history with leeches, a card forgotten and relearned, a card buried on two days,
+//   crams in a filtered tag that doesn't reschedule, and days off.
+//
+// Each note's `ago` is how many days before the build it was created, which its review history
+// starts from.
 
 export type ParserName = "markdown" | "typst" | "latex-note" | "markdown-language-tools";
 
 export interface DemoNote {
   parser: ParserName;
+  /**
+   * The note's text. `@image(name)` and `@audio(name)` stand for the snippet of the file `name` in
+   * this directory, uploaded as an image or an audio clip, and `@card(keyword/order)` for the card
+   * of that order of the note whose first keyword is `keyword` (`NOTE_ID/ORDER`, for `inh:` and
+   * `mv:`).
+   */
   data: string;
   tags: string[];
   keywords?: string[];
   /** Days before the build it was created. Notes created today have no reviews. */
   ago: number;
-  /** How well its cards are known, from 0 (often forgotten) to 1 (never), for the made-up reviews */
+  /**
+   * How well its cards are known, from 0 (often forgotten) to 1 (never), for the made-up reviews.
+   * Below `LEECH_EASE`, cards lapse often enough to become leeches.
+   */
   ease?: number;
   suspended?: boolean;
   /** The note's custom data, such as `{"language": "ja"}` for markdown-language-tools */
   customData?: Record<string, unknown>;
+  /** Days before the build its cards were forgotten (reset to new) and started again */
+  forgotten?: number;
+  /** Its first card is buried today, and was on another day without being rated in between */
+  buried?: boolean;
 }
+
+/** An `ease` below this makes leeches (see build.ts) */
+export const LEECH_EASE = 0.2;
 
 const rust = (data: string, keywords: string[], ago: number, ease = 0.8): DemoNote => ({
   parser: "markdown",
@@ -79,6 +111,26 @@ const spanish = (data: string, keywords: string[], ago: number, ease = 0.85): De
   ago,
   ease,
 });
+
+/** Notes of `parser` tagged `tag`, for topics with a parser of their own */
+const topic =
+  (parser: ParserName, tag: string, defaultEase = 0.75) =>
+  (data: string, keywords: string[], ago: number, ease = defaultEase): DemoNote => ({
+    parser,
+    data,
+    tags: [tag],
+    keywords,
+    ago,
+    ease,
+  });
+const genetics = topic("markdown", "science:biology:genetics");
+const cells = topic("markdown", "science:biology:cells");
+const chemistry = topic("typst", "science:chemistry", 0.7);
+const physics = topic("latex-note", "science:physics", 0.7);
+const astronomy = topic("markdown", "science:physics:astronomy", 0.8);
+const history = topic("markdown", "history", 0.8);
+const geography = topic("markdown", "geography", 0.85);
+const music = topic("markdown", "music:theory", 0.8);
 
 export const NOTES: DemoNote[] = [
   // Rust
@@ -142,16 +194,20 @@ impl Area for Circle {
     ["Traits"],
     70,
   ),
-  rust(
-    `# Lifetimes
+  // The card you keep putting off: buried today, and on another day without a rating between
+  {
+    ...rust(
+      `# Lifetimes
 
 \`fn longest<'a>(x: &'a str, y: &'a str) -> &'a str\` says that the returned reference lives {{[tag:hard] at least as long as the shorter of \`x\` and \`y\`}}.
 
 Lifetimes are part of [borrowing][li]: they only describe how long references are valid, they never {{change how long values live}}.`,
-    ["Lifetimes"],
-    64,
-    0.55,
-  ),
+      ["Lifetimes"],
+      64,
+      0.55,
+    ),
+    buried: true,
+  },
   rust(
     `# Iterators
 
@@ -202,6 +258,41 @@ A \`match\` must be {{exhaustive}}: every possible value must be covered, which 
 A closure that moves captured values into itself is declared with the {{\`move\`}} keyword. The three closure traits, from most to least permissive to call, are {{[ov] \`Fn\`}}, {{[ov] \`FnMut\`}} and {{[ov] \`FnOnce\`}}.`,
     ["Closures"],
     3,
+  ),
+  // An image, uploaded with the note and shown on its cards
+  rust(
+    `# Stack and heap
+
+@image(string.png)
+
+A \`String\` is three words on the stack: a {{pointer}} to its bytes, its {{length}} and its {{capacity}}. The bytes themselves are on the {{heap}}, so moving the \`String\` copies {{[h:how many bytes?] only the three words}}, which is why [ownership][li] moves it rather than copying it.`,
+    ["Stack and heap", "String"],
+    61,
+  ),
+  // A leech: forgotten again and again
+  rust(
+    `# Interior mutability
+
+Interior mutability lets code change a value through a {{shared reference}} (\`&T\`).
+
+- \`Cell<T>\` moves values {{in and out}}, and never hands out a reference to what is inside.
+- \`RefCell<T>\` checks the [borrowing][li] rules {{at run time}}, and {{panics}} when they are broken.
+- Across threads, use {{\`Mutex<T>\`}} or \`RwLock<T>\` instead, which are [Sync][li].`,
+    ["Interior mutability", "Cell", "RefCell"],
+    84,
+    0.1,
+  ),
+  rust(
+    `# \`String\` and \`&str\`
+
+| | Owns its bytes | Can grow |
+|---|---|---|
+| \`String\` | {{[g:1] yes}} | {{[g:1] yes}} |
+| \`&str\` | {{[g:2] no: it borrows them}} | {{[g:2] no}} |
+
+A \`&String\` turns into a \`&str\` by itself, through {{[t] Deref}}, so functions take {{[h:which type?] \`&str\`}} to accept both.`,
+    ["String slice", "&str"],
+    27,
   ),
 
   // Algorithms
@@ -279,7 +370,7 @@ Merge sort splits the array in halves, sorts each, and {{merges}} them. It takes
 
 Dijkstra's algorithm finds shortest paths from one source in a graph with {{non-negative}} edge weights. It repeatedly takes the closest unvisited vertex from a {{priority queue}}.
 
-With a binary heap it takes {{[tag:hard] O((V + E) log V)}}. With negative weights, use {{Bellman–Ford}} instead. It is [BFS][li] with a priority queue in place of the queue.`,
+With a binary heap it takes {{[tag:hard] O((V + E) log V)}}. With negative weights, use {{Bellman–Ford}} instead (see [Bellman-Ford][li]). It is [BFS][li] with a [priority queue][li] in place of the queue.`,
     ["Dijkstra"],
     60,
     0.55,
@@ -328,6 +419,46 @@ A trie stores strings by their characters, one edge per character, so all words 
     ["Trie", "Prefix tree"],
     0,
   ),
+  algorithms(
+    `# Topological sort
+
+A topological order of a {{directed acyclic graph}} lists every vertex before the vertices its edges point to.
+
+- Kahn's algorithm repeatedly removes a vertex with {{in-degree 0}}.
+- Or run [DFS][li], and list vertices in {{reverse order of finishing}}.
+
+If some vertices are never removed, the graph has a {{cycle}}. Both take O(V + E).`,
+    ["Topological sort", "Kahn's algorithm"],
+    36,
+  ),
+  // With Dijkstra's note, a loop of links: each says "see the other" (`in_link_cycle`)
+  algorithms(
+    `# Bellman–Ford
+
+Bellman–Ford finds shortest paths from one source even with {{negative}} edge weights, by relaxing every edge {{V - 1}} times, in {{O(V E)}} time.
+
+If a further round still shortens a path, the graph has a {{[h:what kind?] negative cycle}}. Compare [Dijkstra][li], which is faster but needs non-negative weights.`,
+    ["Bellman-Ford", "Negative cycle"],
+    25,
+    0.6,
+  ),
+  // Merged into one note today (LATER_NOTES), moving their cards and reviews with `mv:`
+  algorithms(
+    `# Stacks
+
+A stack is {{[h:acronym] LIFO}}: the last item pushed is the first popped. Push and pop take {{O(1)}}.`,
+    ["Stack", "LIFO"],
+    71,
+    0.85,
+  ),
+  algorithms(
+    `# Queues
+
+A queue is {{[h:acronym] FIFO}}: items leave in the order they arrived. A ring buffer gives enqueue and dequeue in {{O(1)}}.`,
+    ["Queue", "FIFO"],
+    70,
+    0.85,
+  ),
 
   // Linear algebra (Typst)
   linearAlgebra(
@@ -375,16 +506,20 @@ The sum of the eigenvalues is the #cl[trace][g:1], and their product the #cl[det
     ["Eigenvalue", "Eigenvector"],
     72,
   ),
-  linearAlgebra(
-    `= Rank–nullity theorem
+  // Forgotten (reset to new) 25 days ago, and learned again since
+  {
+    ...linearAlgebra(
+      `= Rank–nullity theorem
 
 For a linear map $T: V -> W$ with $V$ finite-dimensional,
 $ dim V = #cl[$"rank"(T) + "nullity"(T)$] $
 where the rank is the dimension of the #cl[image] and the nullity that of the #cl[kernel].`,
-    ["Rank-nullity theorem"],
-    65,
-    0.55,
-  ),
+      ["Rank-nullity theorem"],
+      65,
+      0.55,
+    ),
+    forgotten: 25,
+  },
   linearAlgebra(
     `= Dot product
 
@@ -426,6 +561,42 @@ The singular values are the square roots of the eigenvalues of #cl[$A^T A$][tag:
     ["SVD", "Singular value decomposition"],
     5,
     0.45,
+  ),
+  linearAlgebra(
+    `= Linear independence
+
+Vectors $v_1, dots, v_k$ are linearly independent when $c_1 v_1 + dots.c + c_k v_k = 0$ only for #cl[$c_1 = dots.c = c_k = 0$].
+
+In $RR^n$, more than #cl[$n$] vectors are always dependent. The columns of a square matrix are independent exactly when #lin[the determinant] is #cl[non-zero].
+
+The word for a set of independent vectors that spans the space: #cl[basis][t].`,
+    ["Linear independence", "Basis"],
+    80,
+    0.8,
+  ),
+  linearAlgebra(
+    `= Gram–Schmidt process
+
+Gram–Schmidt turns a #lin[basis] into an #lin[orthogonal] one: from each vector, subtract its #cl[projections onto the vectors already made], using #lin[the dot product].
+
+Normalizing them too gives an #cl[orthonormal] basis, and writing $A$'s columns in it gives the #cl[$Q R$] decomposition.
+
+It is what the #lin(rel: "dependent")[least squares] method uses to solve its equations stably.`,
+    ["Gram-Schmidt process", "QR decomposition"],
+    31,
+    0.6,
+  ),
+  linearAlgebra(
+    `= Least squares
+
+When $A x = b$ has no solution, the least squares solution $hat(x)$ minimizes #cl[$|A x - b|$]. It solves the #cl[normal equations]
+$ #cl[$A^T A hat(x) = A^T b$][tag:hard] $
+so $A hat(x)$ is the #cl[projection of $b$ onto the column space of $A$], and $b - A hat(x)$ is #lin[orthogonal] to it.
+
+Fitting a line $y = m x + c$ to points is least squares with $A$'s columns being #cl[the $x$ values and a column of ones][h:two columns]. Compare the #lin(rel: "related")[singular value decomposition], which solves it when $A^T A$ is not invertible.`,
+    ["Least squares", "Normal equations"],
+    14,
+    0.6,
   ),
 
   // Calculus (Typst and LaTeX)
@@ -512,6 +683,247 @@ $ integral e^(a x) dif x = #cl[$1/a e^(a x) + C$] $
 Integration undoes #lin[differentiation]: see the #lin(rel: "related")[fundamental theorem of calculus].`,
     ["Integration", "Antiderivative"],
     10,
+  ),
+  calculus(
+    "latex-note",
+    `\\section*{Product rule}
+
+If $f$ and $g$ are differentiable, then
+\\[ (f g)' = \\begin{cl}f' g + f g'\\end{cl}. \\]
+
+It is also called the \\begin{cl}[t]Leibniz\\end{cl} rule. Integrating both sides gives \\li{integration by parts}, and with \\li{derivatives} of powers, $(x^2 \\sin x)' = \\begin{cl}2 x \\sin x + x^2 \\cos x\\end{cl}$.`,
+    ["Product rule", "Leibniz rule"],
+    42,
+  ),
+  calculus(
+    "latex-note",
+    `\\section*{The derivative of $x^2$ from the definition}
+
+\\textbf{Claim.} For $f(x) = x^2$, $f'(x) = \\begin{cl}2x\\end{cl}$.
+
+\\textbf{Proof.} By the definition of the \\li{derivative},
+\\[ f'(x) = \\lim_{h \\to 0} \\frac{f(x + h) - f(x)}{h} = \\lim_{h \\to 0} \\frac{\\begin{cl}[h:expand the square]2 x h + h^2\\end{cl}}{h}. \\]
+Since $h \\neq 0$ inside the limit, we may divide by it. Hence
+\\[ f'(x) = \\lim_{h \\to 0} \\begin{cl}(2x + h)\\end{cl} = 2x. \\]`,
+    ["Derivative from the definition"],
+    20,
+    0.8,
+  ),
+  // Created before the note it builds on, as notes written together often are: with
+  // `order_by_links`, Riemann sums is learned first, and `new_after_linked_notes` holds this back
+  // until it is
+  calculus(
+    "typst",
+    `= Arc length
+
+The length of the graph of $f$ from $a$ to $b$ is
+$ L = #cl[$integral_a^b sqrt(1 + f'(x)^2) dif x$][tag:hard] $
+the limit of #lin[Riemann sums] of the lengths of short straight pieces, each $sqrt(Delta x^2 + Delta y^2)$ long, which needs #lin[the derivative] of $f$.`,
+    ["Arc length"],
+    0,
+  ),
+  calculus(
+    "typst",
+    `= Riemann sums
+
+Cut $[a, b]$ into $n$ pieces of width $Delta x = (b - a) / n$, and pick a point $x_i^*$ in each. Then
+$ integral_a^b f(x) dif x = #cl[$lim_(n -> infinity) sum_(i=1)^n f(x_i^*) Delta x$] $
+for every continuous $f$. With $x_i^*$ the left end of each piece it is the #cl[left] Riemann sum. See #lin(rel: "related")[integration].`,
+    ["Riemann sums", "Riemann sum"],
+    0,
+  ),
+
+  // Science, in a tag hierarchy three levels deep (the plant cell's image occlusion is in OCCLUSIONS)
+  genetics(
+    `# DNA base pairs
+
+In DNA, adenine pairs with {{[r] thymine}} and guanine with {{[r] cytosine}}.
+
+RNA has {{uracil}} in place of thymine. A–T pairs are held by {{[h:how many?] two}} hydrogen bonds, and G–C pairs by three.`,
+    ["DNA", "Base pairs"],
+    76,
+    0.85,
+  ),
+  genetics(
+    `# Mitosis
+
+The phases of mitosis, in order: {{[ov] prophase}}, {{[ov] metaphase}}, {{[ov] anaphase}}, {{[ov] telophase}}.
+
+Mitosis makes two cells with {{the same number of chromosomes}} as the parent, while meiosis makes {{[h:how many?] four}} cells with half as many. Both happen in the {{nucleus}} of a cell (see [organelles][li]).`,
+    ["Mitosis", "Cell division"],
+    46,
+  ),
+  // Nested clozes: one card hides the whole sentence, another only the word inside it. And a
+  // link to a keyword no note has yet (the graph's "Unmatched links")
+  cells(
+    `# Cellular respiration
+
+{{Cellular respiration turns glucose and oxygen into carbon dioxide, water and {{ATP}}}}, the cell's store of energy.
+
+It happens mostly in the {{[h:organelle] mitochondria}}. Compare [photosynthesis][li], which runs it in reverse in the [chloroplasts][li].`,
+    ["Cellular respiration", "ATP"],
+    39,
+  ),
+  cells(
+    `# Photosynthesis
+
+6 CO~2~ + 6 H~2~O + light -> {{glucose}} (C~6~H~12~O~6~) + 6 O~2~
+
+It takes place in the {{chloroplasts}}, whose green pigment, {{chlorophyll}}, absorbs mostly {{[g:1] red}} and {{[g:1] blue}} light. The [cellular respiration][li] of the same cells uses the glucose.`,
+    ["Photosynthesis"],
+    34,
+  ),
+  chemistry(
+    `= Ideal gas law
+
+$ #cl[$P V = n R T$] $
+
+with $R approx #cl[$8.314$][h:in J/(mol K)]$ J/(mol K), and $T$ in #cl[kelvin][t].
+
+At constant temperature, halving the volume #cl[doubles the pressure], which is #cl[Boyle's][h:whose law?] law.`,
+    ["Ideal gas law", "Boyle's law"],
+    59,
+  ),
+  chemistry(
+    `= The mole
+
+One mole holds #cl[$6.022 times 10^23$] particles, Avogadro's number. A mole of carbon-12 weighs exactly #cl[12 g].
+
+The number of moles in $m$ grams of a substance of molar mass $M$ is #cl[$n = m / M$]. It is the $n$ of the #lin[ideal gas law].`,
+    ["Mole", "Avogadro's number"],
+    53,
+    0.8,
+  ),
+  // Emphasis on the back (`be:`): the answer is highlighted after it is revealed
+  chemistry(
+    `= pH
+
+$ "pH" = #cl[$-log_10 [H^+]$][be:] $
+
+At 25 °C, pure water has a pH of #cl[7][be:]. Below it a solution is #cl[acidic][g:1], above it #cl[basic][g:1].
+
+A pH lower by 1 means #cl[ten times as many $H^+$ ions].`,
+    ["pH", "Acids and bases"],
+    16,
+  ),
+  physics(
+    `\\section*{Newton's second law}
+
+\\[ F = \\begin{cl}m a\\end{cl} \\]
+
+More generally, force is the rate of change of momentum $p = m v$: $F = \\begin{cl}\\frac{dp}{dt}\\end{cl}$, the \\li{derivative} of momentum.
+
+The unit of force, $1\\,\\mathrm{kg\\,m/s^2}$, is the \\begin{cl}[t]newton\\end{cl}.`,
+    ["Newton's second law", "Momentum"],
+    57,
+    0.8,
+  ),
+  physics(
+    `\\section*{Kinetic energy}
+
+A mass $m$ moving at speed $v$ has kinetic energy $E_k = \\begin{cl}\\frac{1}{2} m v^2\\end{cl}$.
+
+The work done by a force along a path is $W = \\begin{cl}\\int F \\, dx\\end{cl}$, an \\li{integral}, and by the \\begin{cl}[h:which theorem?]work--energy theorem\\end{cl} it equals the change in kinetic energy. Doubling the speed multiplies the kinetic energy by \\begin{cl}4\\end{cl}.`,
+    ["Kinetic energy", "Work-energy theorem"],
+    29,
+  ),
+  // Every planet hidden on the front, and only the one asked for shown on the back (`f:all`, `b:a`)
+  astronomy(
+    `# Planets of the solar system
+
+From the Sun outwards: {{[f:all;b:a] Mercury}}, {{[f:all;b:a] Venus}}, {{[f:all;b:a] Earth}}, {{[f:all;b:a] Mars}}, {{[f:all;b:a] Jupiter}}, {{[f:all;b:a] Saturn}}, {{[f:all;b:a] Uranus}}, {{[f:all;b:a] Neptune}}.
+
+The largest is {{Jupiter}}, and the four nearest the Sun are {{rocky}}.`,
+    ["Planets", "Solar system"],
+    49,
+  ),
+
+  // History and geography, with their sources as keywords
+  // `hide:`: in the other cards, the dissolution of the Soviet Union is hidden without being
+  // asked, since it would give the year away
+  history(
+    `# The end of the Cold War
+
+The Berlin Wall fell on 9 November {{1989}}, and Germany was reunified in {{[h:year] 1990}}.
+
+The Soviet Union dissolved in December {{[g:*;hide:; g:ussr] 1991}}.`,
+    ["Berlin Wall", "Cold War", "World history lecture 11"],
+    73,
+  ),
+  history(
+    `# The French Revolution
+
+It began in {{1789}}, with the storming of the {{Bastille}} on 14 July, now France's national day.
+
+Its motto was "{{[ov] Liberté}}, {{[ov] égalité}}, {{[ov] fraternité}}".`,
+    ["French Revolution", "World history lecture 7"],
+    62,
+  ),
+  history(
+    `# The printing press
+
+Johannes {{Gutenberg}} built a printing press with movable metal type in {{[h:city] Mainz}}, around {{[h:century] 1450}}.
+
+His best-known book is the {{[t] Bible}}.`,
+    ["Printing press", "Gutenberg", "World history lecture 5"],
+    44,
+  ),
+  history(
+    `# The Moon landing
+
+Apollo 11 landed on the Moon on 20 July {{1969}}. {{[g:1] Neil Armstrong}} and {{[g:1] Buzz Aldrin}} walked on it, while {{Michael Collins}} stayed in orbit.`,
+    ["Moon landing", "Apollo 11", "World history lecture 12"],
+    11,
+  ),
+  // Reverse cards, with a tag on a forward card only (`tag:`) and on a reverse card only (`rtag:`)
+  geography(
+    `# Capitals
+
+- Australia: {{[r;tag:hard] Canberra}}
+- Canada: {{[r] Ottawa}}
+- Brazil: {{[r] Brasília}}
+- Turkey: {{[r;rtag:hard] Ankara}}`,
+    ["Capitals"],
+    79,
+  ),
+  geography(
+    `# Oceans
+
+The largest and deepest ocean is the {{Pacific}}. Its deepest point, in the {{[h:trench] Mariana Trench}}, is about {{[tag:hard] 11,000 m}} below sea level.
+
+The second largest is the {{Atlantic}}.`,
+    ["Oceans", "Mariana Trench"],
+    54,
+  ),
+  geography(
+    `# Mountains
+
+The highest mountain, {{Everest}}, is {{8,849 m}} high, on the border of {{[g:1] Nepal}} and {{[g:1] China}}. The highest outside Asia is {{Aconcagua}}, in the Andes.`,
+    ["Mountains", "Everest"],
+    23,
+  ),
+
+  // Music, with audio clips uploaded with the notes: sine tones, made with
+  //   ffmpeg -f lavfi -i "sine=frequency=440:duration=1.5" \
+  //     -af "afade=t=in:d=0.02,afade=t=out:st=1.3:d=0.2" -ac 1 -b:a 48k a440.mp3
+  // and fifth.mp3 the same with a second input at 660 Hz, mixed with `amix=inputs=2`
+  music(
+    `# Concert pitch
+
+@audio(a440.mp3)
+
+The A above middle C, A4, is tuned to {{440 Hz}}. The A an octave higher, A5, is {{880 Hz}}: an octave {{doubles}} the frequency.`,
+    ["Concert pitch", "A440", "Octave"],
+    47,
+  ),
+  music(
+    `# Perfect fifth
+
+@audio(fifth.mp3)
+
+A perfect fifth is two notes whose frequencies are in the ratio {{3:2}}, such as 440 Hz and {{660 Hz}}. In equal temperament it is {{[h:how many semitones?] 7}} semitones. See [concert pitch][li].`,
+    ["Perfect fifth", "Intervals"],
+    17,
   ),
 
   // Japanese and Chinese, with readings over the words (the markdown-language-tools parser)
@@ -625,6 +1037,55 @@ Both mean "to be". {{Ser}} is used for identity, origin and time, and {{estar}} 
     ["Days of the week", "Días de la semana"],
     1,
   ),
+  // Reverse-only cards (`ro`): each shows the Spanish and asks for the English
+  spanish(
+    `# Animals
+
+- el perro: {{[ro;tts:es_ES] the dog}}
+- el gato: {{[ro;tts:es_ES] the cat}}
+- el pájaro: {{[ro;tts:es_ES] the bird}}`,
+    ["Animals", "Animales"],
+    37,
+    0.9,
+  ),
+  // A suspended cloze (`s`) in a note whose other cards are studied
+  spanish(
+    `# In the kitchen
+
+- the knife: {{[r;tts:es_ES] el cuchillo}}
+- the spoon: {{[r;tts:es_ES] la cuchara}}
+- the frying pan: {{[s;r;tts:es_ES] la sartén}}`,
+    ["Kitchen", "Cocina"],
+    19,
+  ),
+  // A leech: the gender of these nouns keeps being forgotten
+  spanish(
+    `# Nouns of the unexpected gender
+
+- {{[h:el or la?] el}} problema
+- {{[h:el or la?] la}} mano
+- {{[h:el or la?] el}} día
+- {{[h:el or la?] el}} mapa`,
+    ["Noun gender", "Género"],
+    83,
+    0.12,
+  ),
+  spanish(
+    `# Preterite of *ir* and *ser*
+
+*Ir* and *ser* share their preterite, so "fui" means either "I went" or "I was".
+
+| | ir / ser |
+|---|---|
+| yo | {{[t] fui}} |
+| tú | {{[t] fuiste}} |
+| él / ella | {{[t] fue}} |
+| nosotros | {{[t;tag:hard] fuimos}} |
+| ellos | {{[t] fueron}} |`,
+    ["Ir", "Ser", "Preterite", "Irregular verbs"],
+    9,
+    0.65,
+  ),
   {
     parser: "markdown",
     data: `# Subjunctive after *ojalá*
@@ -637,13 +1098,98 @@ Both mean "to be". {{Ser}} is used for identity, origin and time, and {{estar}} 
   },
 ];
 
-/** The image occlusion note (see build.ts), on biology/cell.png: its masks hide these labels. */
-export const CELL_LABELS: { label: string; x: number; y: number; width: number; height: number }[] = [
-  { label: "Nucleus", x: 452, y: 60, width: 146, height: 36 },
-  { label: "Mitochondrion", x: 452, y: 150, width: 146, height: 36 },
-  { label: "Chloroplast", x: 452, y: 240, width: 146, height: 36 },
-  { label: "Vacuole", x: 452, y: 330, width: 146, height: 36 },
-  { label: "Cell wall", x: 452, y: 420, width: 146, height: 36 },
+/** An image occlusion note (see build.ts), drawn on `image`, a file in this directory */
+export interface DemoOcclusion {
+  image: string;
+  width: number;
+  height: number;
+  /** The masks, each hiding a label of the image, with its cloze settings */
+  masks: { label: string; x: number; y: number; width: number; height: number; settings?: string }[];
+  /** SVG elements drawn over the image on every card, as the editor's markup layer holds them */
+  markup?: string;
+  /** The note's text, where `@occlusion` stands for the image occlusion's snippet */
+  data: string;
+  tags: string[];
+  keywords: string[];
+  ago: number;
+  ease: number;
+}
+
+export const OCCLUSIONS: DemoOcclusion[] = [
+  {
+    image: "cell.png",
+    width: 600,
+    height: 500,
+    masks: [
+      { label: "Nucleus", x: 452, y: 60, width: 146, height: 36 },
+      { label: "Mitochondrion", x: 452, y: 150, width: 146, height: 36 },
+      { label: "Chloroplast", x: 452, y: 240, width: 146, height: 36 },
+      { label: "Vacuole", x: 452, y: 330, width: 146, height: 36 },
+      { label: "Cell wall", x: 452, y: 420, width: 146, height: 36 },
+    ],
+    data: "# Parts of a plant cell\n\nName each labelled part.\n\n@occlusion",
+    tags: ["science:biology:cells"],
+    keywords: ["Plant cell", "Organelles"],
+    ago: 38,
+    ease: 0.7,
+  },
+  // Hints over the masks, markup, and text clozes in the same cards as image clozes (`g:`)
+  {
+    image: "earth.png",
+    width: 640,
+    height: 460,
+    masks: [
+      { label: "Crust", x: 446, y: 62, width: 160, height: 36, settings: "h:thinnest" },
+      { label: "Mantle", x: 446, y: 152, width: 160, height: 36, settings: "g:mantle" },
+      { label: "Outer core", x: 446, y: 242, width: 160, height: 36, settings: "g:outer;h:liquid" },
+      { label: "Inner core", x: 446, y: 332, width: 160, height: 36, settings: "h:solid" },
+    ],
+    markup:
+      '<line x1="220" y1="52" x2="220" y2="138" stroke="#0f172a" stroke-width="2" stroke-dasharray="6 4"/>' +
+      '<text x="228" y="100" font-size="15" fill="#0f172a">about 2,900 km</text>' +
+      '<text x="20" y="448" font-size="15" fill="#475569">Not to scale</text>',
+    data: `# Layers of the Earth
+
+@occlusion
+
+The {{[g:mantle] mantle}} is solid rock that flows very slowly, and makes up most of the Earth's volume. The {{[g:outer] outer core}} is liquid iron and nickel, whose currents make the Earth's magnetic field.`,
+    tags: ["science:earth"],
+    keywords: ["Layers of the Earth", "Earth's core"],
+    ago: 24,
+    ease: 0.75,
+  },
+];
+
+/**
+ * Notes made after the reviews, today, from the cards of earlier notes: `inh:` copies a card's
+ * scheduling and reviews onto a new card, as when a note is split, and `mv:` moves the card itself,
+ * as when notes are merged. `deletes` are the first keywords of the notes merged into it, deleted
+ * once their cards have moved.
+ */
+export const LATER_NOTES: (DemoNote & { deletes?: string[] })[] = [
+  {
+    ...algorithms(
+      `# Resizing a hash table
+
+When the {{[inh:@card(Hash table/4)] load factor}} passes a threshold, such as 0.75, a [hash table][li] allocates a bigger array, usually {{twice}} as large, and {{rehashes}} every key into it.
+
+One resize takes O(n), but it happens rarely enough that inserts are still O(1) {{amortized}}.`,
+      ["Hash table resizing", "Rehashing"],
+      0,
+    ),
+  },
+  {
+    ...algorithms(
+      `# Stacks and queues
+
+- A stack is {{[mv:@card(Stack/1)] LIFO}}, used for undo, recursion and [DFS][li].
+- A queue is {{[mv:@card(Queue/1)] FIFO}}, used for buffers and [BFS][li].
+- A deque allows both: push and pop at {{either end}}.`,
+      ["Stacks and queues", "Stack", "Queue", "Deque"],
+      0,
+    ),
+    deletes: ["Stack", "Queue"],
+  },
 ];
 
 /** Saved searches, synced with the collection */
@@ -651,4 +1197,8 @@ export const SAVED_SEARCHES = [
   { name: "Hard cards", query: "tag=hard" },
   { name: "Rust, due this week", query: 'tag="programming:rust" and c.due<=today+7d' },
   { name: "Linear algebra and what builds on it", query: 'tag="math:linear-algebra" or dependent_of=(tag="math:linear-algebra")' },
+  { name: "Leeches and cards I keep burying", query: "tag=leech or tag=buried" },
+  { name: "Forgotten this week", query: "c.rated[>=today-7d]=1" },
+  { name: "Least likely to recall", query: "sort_by_asc=c.retrievability limit=20" },
+  { name: "Links in a loop", query: "in_link_cycle" },
 ];
