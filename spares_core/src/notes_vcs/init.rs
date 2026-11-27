@@ -164,9 +164,21 @@ fn warn_of_saved_copies() {
 }
 
 /// Warns if git would not run the push hooks, in which case a push would not be imported.
+///
+/// The hooks come from `spares vcs init`, not from the account's creation, which makes the
+/// repository: it needs the CLI's address of the server. A repository it hasn't set up yet, with
+/// no `core.hooksPath` of its own (which it always sets), only gets a hint, so a new host doesn't
+/// warn about hooks nobody has installed.
 fn check_hooks() {
     let repo = server_repo_dir();
     let _index = git_index_lock();
+    if git(&repo, &["config", "--local", "--get", "core.hooksPath"], None).is_err() {
+        log::info!(
+            "Pushes to {} aren't imported until `spares vcs init` installs its hooks",
+            repo.display()
+        );
+        return;
+    }
     let hooks = git(&repo, &["rev-parse", "--git-path", "hooks"], None)
         .map(|out| repo.join(String::from_utf8_lossy(&out).trim()));
     let expected = repo.join(".git").join("hooks");
