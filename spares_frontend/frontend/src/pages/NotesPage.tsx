@@ -8,6 +8,7 @@ import {
   changeNotesParser,
   countNotes,
   deleteNotes,
+  exportCards,
   exportNotes,
   getNote,
   shareBundle,
@@ -77,6 +78,7 @@ import {
 } from "../utils";
 import PageTitle from "../components/PageTitle";
 import { searchedTag } from "../quickCapture";
+import { runOnServer } from "../local/copy";
 import Skeleton from "../components/Skeleton";
 import { askConfirm, askText } from "../ask";
 import { useDraftStore } from "../noteDrafts";
@@ -687,11 +689,38 @@ export default function NotesPage() {
         options: async () => [
           { value: "share", label: "To share" },
           { value: "edit", label: "To edit and import back" },
+          { value: "csv", label: "Cards as CSV" },
+          { value: "apkg", label: "Cards for Anki (.apkg)" },
+          {
+            value: "apkg-history",
+            label: "Cards for Anki, with their schedules and reviews",
+          },
         ],
         initial: "share",
       },
       run: async (selector, [mode], count) => {
         const query = queryOf(selector);
+        if (mode === "csv" || mode.startsWith("apkg")) {
+          const { result } = await runOnServer(() =>
+            exportCards({
+              query,
+              format: mode === "csv" ? "csv" : "apkg",
+              with_history: mode === "apkg-history",
+            }),
+          );
+          const bytes = Uint8Array.from(atob(result.file), (c) =>
+            c.charCodeAt(0),
+          );
+          downloadBlob(result.file_name, new Blob([bytes]));
+          const links =
+            result.links_left_out > 0
+              ? ` ${result.links_left_out} link(s) left out: links between notes only work in spares, so they stay as text.`
+              : "";
+          return {
+            message: `Exported ${result.card_count} card(s) of ${result.note_count} note(s) to ${result.file_name}.${links}`,
+            eventIds: [],
+          };
+        }
         if (mode === "edit") {
           const files = Object.entries(await exportNotes(query));
           for (const [extension, text] of files)

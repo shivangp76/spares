@@ -78,6 +78,19 @@ To send one file from the command line, add `--zip`: `spares note export 'tag=oc
 
 Without `--share`, the file names each note by its id in your collection, so importing it updates those notes. That is for editing notes in bulk and importing them back, and another collection's import fails on those ids.
 
+### Moving cards to Anki, or a spreadsheet
+
+To take cards to another program, export them as a CSV or an Anki package:
+
+```sh
+spares note export 'tag=oceans' --format csv -o oceans.csv
+spares note export 'tag=oceans' --format apkg -o oceans.apkg --with-history
+```
+
+The CSV has a row per card: its front (the note with the card's clozes as `[...]`), its back, its tags, and the due date and interval of a card that was reviewed. The package has an Anki Cloze note per card, in a deck named `spares`. Markdown becomes simple HTML with its math for Anki's MathJax, LaTeX is wrapped in Anki's `[latex]` to render there, and Typst, which Anki can't render, stays as its source. `--with-history` keeps each card's schedule and reviews, so Anki carries them on; without it, every card is new there. In the web app, select the notes and choose **Export…**, then a CSV or Anki option.
+
+Links between notes and keyword links only work in spares, so an export keeps them as text and says how many there were ("12 link(s) left out"). See `spares_core::api::note::export_cards`.
+
 ## Putting cards off until after an exam
 
 While reviewing a tag for an exam, some cards, such as long proofs, matter in the long run but not for the exam. On the Review page, **Bury Card Until After…** (`d`) asks for the exam's date the first time, then sets the card due the day after it. The date is remembered in this browser for the query or tag being reviewed, so the next card it is pressed on is put off without asking, and the button sits beside Bury Card and Bury Note above the answer on phones. Since the cards come back on a set date rather than after a set number of days, they land after the exam however close it gets. Change Date picks another one, and a date that has passed is forgotten.

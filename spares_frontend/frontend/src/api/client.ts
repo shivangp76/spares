@@ -28,6 +28,8 @@ import type {
   OptimizeStatusResponse,
   ImportTableRequest,
   TagRetention,
+  ExportCardsRequest,
+  ExportCardsResponse,
   IntervalPreviewRequest,
   IntervalPreviewResponse,
   ImportTableResponse,
@@ -1425,6 +1427,17 @@ export async function importFiles(
       body: form,
     },
   );
+}
+
+/** The cards of a query's notes as a CSV or an Anki package, base64-encoded, like `spares note
+    export --format`. On the server, which writes the package. */
+export async function exportCards(
+  request: ExportCardsRequest,
+): Promise<ExportCardsResponse> {
+  return apiFetch("Export cards", "/api/notes/export/cards", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
 }
 
 /** Imports a table of cards (CSV, TSV, or pasted from a spreadsheet) as new notes, one per row,

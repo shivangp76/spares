@@ -629,6 +629,23 @@ export interface IntervalPreviewResponse {
   }[];
 }
 
+/** `spares_core::api::note::export_cards::ExportCardsRequest` */
+export interface ExportCardsRequest {
+  query: string;
+  format: "csv" | "apkg";
+  with_history: boolean;
+}
+
+/** `spares_core::api::note::export_cards::ExportCardsResponse` */
+export interface ExportCardsResponse {
+  /** base64 */
+  file: string;
+  file_name: string;
+  note_count: number;
+  card_count: number;
+  links_left_out: number;
+}
+
 export type TableDelimiter = "tab" | "comma" | "semicolon" | "dash";
 
 /** `spares_core::adapters::impls::delimited::Columns`, counted from 0 */
