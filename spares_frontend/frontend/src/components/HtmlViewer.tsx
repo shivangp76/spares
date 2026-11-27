@@ -4,6 +4,7 @@ import { audioLinkPath } from "../audio";
 import { scrollClozesIntoView } from "../clozeScroll";
 import { useResolvedTheme } from "../theme";
 import { openableUrl } from "../links";
+import { withoutCardId } from "../markdownCard";
 import { errorMessage, parseNoteId } from "../utils";
 import Skeleton from "./Skeleton";
 
@@ -84,6 +85,12 @@ export default function HtmlViewer({
     [key, html],
   );
   const current = given ?? (loaded?.key === key ? loaded : null);
+  // Before the iframe gets it, so the ID never shows, even briefly
+  const shownHtml = useMemo(
+    () =>
+      current?.html === undefined ? undefined : withoutCardId(current.html),
+    [current],
+  );
 
   useEffect(() => {
     if (current?.error !== undefined) onReady?.();
@@ -170,7 +177,7 @@ export default function HtmlViewer({
       ref={iframeRef}
       title="Rendered card"
       sandbox="allow-same-origin"
-      srcDoc={current.html}
+      srcDoc={shownHtml}
       style={{
         display: "block",
         width: "100%",

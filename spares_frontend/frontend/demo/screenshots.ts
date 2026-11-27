@@ -101,7 +101,6 @@ async function review(page: Page, query: string): Promise<void> {
 const DESKTOP: Shot[] = [
   {
     name: "review",
-    // A Typst card: Markdown cards show the card's marker for PDF viewers (`card-1`) by their answer
     take: (page) => review(page, 'tag="math:calculus" parser_name=typst'),
   },
   {

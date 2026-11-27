@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { markdownCardHtml, markSpanLength } from "./markdownCard";
+import {
+  markdownCardHtml,
+  markSpanLength,
+  withoutCardId,
+} from "./markdownCard";
 
 test("clozes are marked, with the brackets in them paired", () => {
   expect(markdownCardHtml("[card-1 _____]{.mark} is in France.")).toBe(
@@ -38,6 +42,22 @@ test("raw HTML blocks are kept and raw LaTeX ones dropped", () => {
   expect(markdownCardHtml("```js\nlet x;\n```\n")).toContain(
     '<code class="language-js">',
   );
+});
+
+test("the card's ID is left out of its first answer cloze", () => {
+  expect(
+    withoutCardId(markdownCardHtml("[card-1 _____]{.mark} is in France.")),
+  ).toBe("<p><mark>_____</mark> is in France.</p>\n");
+  // pandoc's HTML, as it renders a hint, and an answer with the line wrapped after the ID
+  expect(
+    withoutCardId(
+      "<p><mark>card-3 _____(a [b] c)</mark> and <mark>card-12\n<em>Paris</em></mark></p>",
+    ),
+  ).toBe("<p><mark>_____(a [b] c)</mark> and <mark><em>Paris</em></mark></p>");
+  // Only an ID at the start of a cloze
+  const html =
+    "<p><mark>Paris</mark>, card-3 and <mark>see card-3 </mark><mark>card-x y</mark></p>";
+  expect(withoutCardId(html)).toBe(html);
 });
 
 test("an image occlusion names its image by path", () => {

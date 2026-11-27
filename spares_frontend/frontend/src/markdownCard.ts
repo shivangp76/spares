@@ -75,3 +75,13 @@ function withoutMetadata(source: string): string {
 export function markdownCardHtml(source: string): string {
   return cardMarked.parse(withoutMetadata(source), { async: false });
 }
+
+// The parser writes the card's ID (`cloze_tag_str` in spares_core) at the start of its first
+// answer cloze, `[card-<order> _____]{.mark}`, for PDF viewers to search for. pandoc may wrap the
+// line after it.
+const CARD_ID = /<mark>card-\d+\s+/g;
+
+/** A Markdown card's HTML without the card's ID, which is only there for PDF viewers. */
+export function withoutCardId(html: string): string {
+  return html.replace(CARD_ID, "<mark>");
+}

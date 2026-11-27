@@ -18,6 +18,8 @@
 //!   to show its HTML even if content is lost.
 //! - Raw LaTeX meant only for the PDF, written as a ```` ```{=latex} ```` block, is left out of the
 //!   HTML without falling back to the PDF.
+//! - The card's ID at its first answer cloze (`card-3`), which PDF viewers search for to scroll to
+//!   it, is in the HTML too. The web app leaves it out (`withoutCardId` in `src/markdownCard.ts`).
 //! - Style the HTML with a pandoc defaults file at `markdown/web-defaults.yaml` in the config
 //!   directory, e.g. with `css: [~/.config/spares/markdown/web.css]`. The PDF's `defaults_file` is
 //!   not used for HTML. Math macros defined in its `header-includes` are unknown to the HTML, so
