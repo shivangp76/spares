@@ -180,6 +180,12 @@ pub trait Parseable: Send + Sync {
         text.to_string()
     }
 
+    /// Other ways `text` may be typed and accepted, such as its readings (`たべる` for
+    /// `食[た]べる`), without markup like [`Self::typed_answer_text`]. None by default.
+    fn typed_answer_alternatives(&self, _text: &str) -> Vec<String> {
+        Vec::new()
+    }
+
     /// What rendering a note file reads of `contents`, e.g. for the back of a card whose back is
     /// its note. The file keeps its clozes as written, since notes are also exported as it, and the
     /// LaTeX and Typst templates say how they show. pandoc has no such template.

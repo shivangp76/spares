@@ -82,8 +82,8 @@ pub(super) fn format_typed_answers(info: &TypedAnswerInfo, answers: &[String]) -
                     lines.push(blank.expected.clone());
                     continue;
                 }
-                let diff =
-                    compare_typed_answer(&blank.expected, typed, ignore_case, ignore_combining);
+                let expected = blank.answer_for(typed, ignore_case, ignore_combining);
+                let diff = compare_typed_answer(expected, typed, ignore_case, ignore_combining);
                 lines.push(segments(&diff.typed));
                 if !diff.is_exact() {
                     lines.push("↓".dimmed().to_string());
@@ -109,6 +109,7 @@ mod tests {
                 .map(|expected| TypedBlank {
                     expected: (*expected).to_string(),
                     hint: None,
+                    also_accepted: Vec::new(),
                 })
                 .collect(),
         }

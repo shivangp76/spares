@@ -2836,6 +2836,7 @@ mod tests {
                         blanks: vec![TypedBlank {
                             expected: "Paris".to_string(),
                             hint: Some("city".to_string()),
+                            also_accepted: Vec::new(),
                         }],
                     })
                 ),

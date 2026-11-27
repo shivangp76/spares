@@ -2,6 +2,7 @@ import { lazy, Suspense, useRef, useState } from "react";
 import { useVimKeybindings } from "../preferences";
 import type { TypedAnswerInfo } from "../types/spares";
 import {
+  answerFor,
   compareTypedAnswer,
   isExact,
   type DiffSegment,
@@ -157,17 +158,26 @@ function Segments({ segments }: { segments: DiffSegment[] }) {
 
 /** The answer typed into one blank, compared with its expected answer. */
 function BlankDiff({
-  expected,
+  expected: expectedAnswer,
+  alsoAccepted,
   typed,
   ignoreCase,
   ignoreCombining,
 }: {
   expected: string;
+  alsoAccepted?: string[];
   typed: string;
   ignoreCase: boolean;
   ignoreCombining: boolean;
 }) {
-  if (!typed.trim()) return <div style={answerText}>{expected}</div>;
+  if (!typed.trim()) return <div style={answerText}>{expectedAnswer}</div>;
+  const expected = answerFor(
+    expectedAnswer,
+    alsoAccepted,
+    typed,
+    ignoreCase,
+    ignoreCombining,
+  );
   const diff = compareTypedAnswer(expected, typed, ignoreCase, ignoreCombining);
   if (isExact(diff))
     return (
@@ -234,6 +244,7 @@ export function TypedAnswerResult({
               ) : (
                 <BlankDiff
                   expected={blank.expected}
+                  alsoAccepted={blank.also_accepted}
                   typed={typed}
                   ignoreCase={ignoreCase}
                   ignoreCombining={ignoreCombining}

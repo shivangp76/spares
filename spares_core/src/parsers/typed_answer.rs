@@ -26,6 +26,24 @@ pub struct TypedBlank {
     pub expected: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// Other answers that are accepted, such as the answer typed as its readings
+    /// ([`Parseable::typed_answer_alternatives`]). The typed answer is compared with whichever it
+    /// matches, or else with `expected`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also_accepted: Vec<String>,
+}
+
+impl TypedBlank {
+    /// The answer `typed` is compared with: `expected`, or an answer also accepted that `typed`
+    /// matches.
+    pub fn answer_for(&self, typed: &str, ignore_case: bool, ignore_combining: bool) -> &str {
+        self.also_accepted
+            .iter()
+            .find(|answer| {
+                compare_typed_answer(answer, typed, ignore_case, ignore_combining).is_exact()
+            })
+            .map_or(&self.expected, String::as_str)
+    }
 }
 
 /// What a client needs to ask for a card's typed answers.
@@ -100,7 +118,18 @@ pub fn expected_typed_answers(
             text.push_str(&note_data[start..range.end]);
             let text = remove_audio_refs(parser, &text);
             let expected = clean_typed_answer(&parser.typed_answer_text(&text));
-            (!expected.is_empty()).then_some(TypedBlank { expected, hint })
+            let mut also_accepted = Vec::new();
+            for answer in parser.typed_answer_alternatives(&text) {
+                let answer = clean_typed_answer(&answer);
+                if !answer.is_empty() && answer != expected && !also_accepted.contains(&answer) {
+                    also_accepted.push(answer);
+                }
+            }
+            (!expected.is_empty()).then_some(TypedBlank {
+                expected,
+                hint,
+                also_accepted,
+            })
         })
         .collect())
 }
@@ -297,6 +326,7 @@ mod tests {
                 .map(|expected| TypedBlank {
                     expected: (*expected).to_string(),
                     hint: None,
+                    also_accepted: Vec::new(),
                 })
                 .collect(),
         })
@@ -402,6 +432,7 @@ mod tests {
                 blanks: vec![TypedBlank {
                     expected: "100".to_string(),
                     hint: Some("°C".to_string()),
+                    also_accepted: Vec::new(),
                 }],
             })]
         );

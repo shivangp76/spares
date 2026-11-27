@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import cases from '../../../spares_core/tests/fixtures/typed_answer_cases.json';
-import { compareTypedAnswer, isExact, type TypedDiff } from './typedAnswer';
+import { answerFor, compareTypedAnswer, isExact, type TypedDiff } from './typedAnswer';
 
 interface Case {
   name: string;
@@ -27,4 +27,10 @@ test('a long mismatch is not diffed', () => {
     expected: [{ kind: 'missed', text: expected }],
   });
   expect(isExact(compareTypedAnswer(expected, expected, false, false))).toBe(true);
+});
+
+test("answerFor compares with an answer also accepted that the typed answer matches", () => {
+  expect(answerFor("食べる", ["たべる"], "たべる", false, false)).toBe("たべる");
+  expect(answerFor("食べる", ["たべる"], "たべ", false, false)).toBe("食べる");
+  expect(answerFor("食べる", undefined, "たべる", false, false)).toBe("食べる");
 });

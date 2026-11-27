@@ -80,3 +80,18 @@ export function compareTypedAnswer(expected: string, typed: string, ignoreCase: 
 export function isExact(diff: TypedDiff): boolean {
   return [...diff.typed, ...diff.expected].every(s => s.kind === 'good');
 }
+
+/** The answer `typed` is compared with: `expected`, or an answer also accepted that it matches (`TypedBlank::answer_for`). */
+export function answerFor(
+  expected: string,
+  alsoAccepted: string[] | undefined,
+  typed: string,
+  ignoreCase: boolean,
+  ignoreCombining: boolean,
+): string {
+  return (
+    alsoAccepted?.find((answer) =>
+      isExact(compareTypedAnswer(answer, typed, ignoreCase, ignoreCombining)),
+    ) ?? expected
+  );
+}

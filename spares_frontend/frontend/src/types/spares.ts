@@ -76,6 +76,8 @@ export type TypeAnswer =
 export interface TypedBlank {
   expected: string;
   hint?: string;
+  // Other answers that are accepted, such as the answer typed as its readings
+  also_accepted?: string[];
 }
 
 export interface TypedAnswerInfo {
