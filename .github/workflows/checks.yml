@@ -26,6 +26,12 @@ jobs:
           tar -xJf "$RUNNER_TEMP/typst.tar.xz" -C "$RUNNER_TEMP" "$archive/typst"
           sudo install "$RUNNER_TEMP/$archive/typst" /usr/local/bin/typst
       - run: cargo test --locked --workspace --exclude spares_wasm
+      # The workspace's tests turn on spares_core's `language-tools` (the server and CLI do), so
+      # its own tests, and the server and CLI with no default features, check spares without it
+      - name: Without the language-tools feature
+        run: |
+          cargo test --locked -p spares_core --lib
+          cargo check --locked -p spares_server -p spares_cli --no-default-features --all-targets
 
   frontend:
     runs-on: ubuntu-latest
@@ -81,3 +87,5 @@ jobs:
         if: matrix.browser == 'chromium'
         run: bun test ./src/local/pandocWasm.test.ts
       - run: bun run e2e ${{ matrix.browser }}
+      - name: Dictionary lookup on markdown-language-tools cards
+        run: bun e2e/language_tools.ts ${{ matrix.browser }}

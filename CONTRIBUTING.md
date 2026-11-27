@@ -100,6 +100,16 @@ cd spares_frontend/frontend
 SPARES_SEARCH_BENCH=1 bun e2e/local_copy.ts chromium
 ```
 
+Dictionary lookup on the cards of the `markdown-language-tools` parser has an end-to-end test of its own, outside `bun run e2e`, which CI runs weekly. With `SPARES_E2E_SHOTS=<dir>` it saves a screenshot of each step:
+
+```sh
+bun e2e/language_tools.ts chromium   # or webkit, firefox
+```
+
+Cards shown as HTML are in a sandboxed iframe without `allow-scripts`. WebKit runs no event listeners in it, even ones the app adds from outside ("Blocked script execution in 'about:srcdoc'"), while Chromium and Firefox do. DOM calls from the app, such as `caretRangeFromPoint` or reading the selection, work in all three. So a feature that needs the pointer or clicks on a card gets them from the app's window, with the iframe's `pointer-events: none` while it does (see `src/languageTools/LookupLayer.tsx`).
+
+The parser sits behind spares_core's `language-tools` feature, which the server, the CLI and the browser's build turn on. Check spares without it with `cargo test -p spares_core --lib` (the workspace's tests turn it on) and `cargo check -p spares_server -p spares_cli --no-default-features --all-targets`.
+
 Before blaming a change for an e2e failure, run the suite on `main` too: WebKit and Firefox have failed there on their own.
 
 #### In a jj workspace
