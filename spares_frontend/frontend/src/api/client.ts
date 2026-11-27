@@ -28,6 +28,8 @@ import type {
   OptimizeStatusResponse,
   ImportTableRequest,
   TagRetention,
+  IntervalPreviewRequest,
+  IntervalPreviewResponse,
   ImportTableResponse,
   ParserResponse,
   QueryExample,
@@ -1035,6 +1037,18 @@ export async function optimizeScheduler(
     "Optimize",
     `/api/scheduler/${encodeURIComponent(schedulerName)}/optimize`,
     { method: "POST", body: JSON.stringify({ apply }) },
+  );
+}
+
+/** The next interval of each rating for example cards, with config.toml's settings or `request`'s. */
+export async function previewIntervals(
+  schedulerName: string,
+  request: IntervalPreviewRequest,
+): Promise<IntervalPreviewResponse> {
+  return apiFetch(
+    "Interval preview",
+    `/api/scheduler/${encodeURIComponent(schedulerName)}/preview`,
+    { method: "POST", body: JSON.stringify(request) },
   );
 }
 

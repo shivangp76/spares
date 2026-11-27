@@ -1226,6 +1226,54 @@ pub mod review {
         pub fitted_at: NaiveDate,
     }
 
+    /// Settings to preview the scheduler's intervals with, in place of `config.toml`'s, for
+    /// `POST /api/scheduler/{name}/preview`. Each left out is `config.toml`'s.
+    #[derive(Debug, Default, Deserialize, Serialize)]
+    pub struct IntervalPreviewRequest {
+        /// The retention cards are scheduled for, such as 0.9
+        #[serde(default)]
+        pub desired_retention: Option<f64>,
+        /// In seconds
+        #[serde(default)]
+        pub learning_steps: Option<Vec<i64>>,
+        /// In seconds
+        #[serde(default)]
+        pub relearning_steps: Option<Vec<i64>>,
+        /// In seconds
+        #[serde(default)]
+        pub maximum_interval: Option<i64>,
+    }
+
+    /// The next interval for each rating of some example cards, with the settings used.
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct IntervalPreviewResponse {
+        pub desired_retention: f64,
+        /// In seconds
+        pub learning_steps: Vec<i64>,
+        /// In seconds
+        pub relearning_steps: Vec<i64>,
+        /// In seconds
+        pub maximum_interval: i64,
+        pub examples: Vec<IntervalExample>,
+    }
+
+    /// An example card, and how long until it is due again after each rating.
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct IntervalExample {
+        /// Such as "New card"
+        pub label: String,
+        /// The reviews it has had, each rated Good when it was due
+        pub reviews: usize,
+        pub intervals: Vec<RatingInterval>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct RatingInterval {
+        pub rating: Rating,
+        /// Seconds until it is due again, before load balancing moves it by a day or so
+        pub seconds: i64,
+    }
+
     /// What `POST /api/scheduler/{name}/reschedule` did.
     #[derive(Debug, Default, Deserialize, Serialize)]
     pub struct RescheduleResponse {

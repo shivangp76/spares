@@ -1,4 +1,5 @@
 use chrono::DateTime;
+use chrono::Duration;
 use chrono::NaiveDate;
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -17,15 +18,21 @@ use crate::config::SparesExternalConfig;
 use crate::config::read_external_config;
 use crate::config::write_fsrs_parameters;
 use crate::helpers::study_date;
+use crate::model::Card;
 use crate::model::EventType;
+use crate::model::ReviewLog;
 use crate::schedulers::SrsScheduler;
 use crate::schedulers::get_scheduler_from_string;
 use crate::schema::review::CardState;
+use crate::schema::review::IntervalExample;
+use crate::schema::review::IntervalPreviewRequest;
+use crate::schema::review::IntervalPreviewResponse;
 use crate::schema::review::OptimizeProposal;
 use crate::schema::review::OptimizeRequest;
 use crate::schema::review::OptimizeResponse;
 use crate::schema::review::OptimizeStatusResponse;
 use crate::schema::review::Rating;
+use crate::schema::review::RatingInterval;
 use crate::schema::review::ReschedulePreviewResponse;
 use crate::schema::review::RescheduleResponse;
 
@@ -113,6 +120,154 @@ pub async fn optimize_scheduler(
         response.applied = true;
     }
     Ok(response)
+}
+
+/// The example cards [`preview_intervals`] shows: a new card, and one reviewed this many times.
+const PREVIEW_REVIEWS: [usize; 2] = [0, 3];
+
+/// The next interval of each rating for example cards (a new card, and one rated Good three times,
+/// each when it was due), as the scheduler gives them with `config.toml`'s settings, or the
+/// request's in their place. It is the scheduler's own `schedule`, kept within the minimum and
+/// maximum interval as placing a card does, but before load balancing or easy days move it by a
+/// day or so (see `place_due`), so it shows what the settings' numbers mean.
+pub fn preview_intervals(
+    scheduler_name: &str,
+    request: IntervalPreviewRequest,
+    at: DateTime<Utc>,
+) -> Result<IntervalPreviewResponse, Error> {
+    let scheduler = get_scheduler_from_string(scheduler_name)?;
+    let mut config = read_external_config()?;
+    let invalid = |message: String| Error::Library(LibraryError::InvalidConfig(message));
+    let steps = |seconds: Vec<i64>, name: &str| {
+        if seconds.iter().any(|s| *s <= 0 || *s >= 86_400) || !seconds.is_sorted() {
+            return Err(invalid(format!(
+                "{name} must be increasing, each longer than 0 and shorter than a day"
+            )));
+        }
+        Ok(seconds
+            .into_iter()
+            .map(Duration::seconds)
+            .collect::<Vec<_>>())
+    };
+    if let Some(seconds) = request.learning_steps {
+        config.learning_steps = steps(seconds, "Learning steps")?;
+    }
+    if let Some(seconds) = request.relearning_steps {
+        config.relearning_steps = steps(seconds, "Relearning steps")?;
+    }
+    if let Some(seconds) = request.maximum_interval {
+        if seconds < 86_400 {
+            return Err(invalid(
+                "The maximum interval must be a day or more".to_string(),
+            ));
+        }
+        config.maximum_interval = Duration::seconds(seconds);
+    }
+    let desired_retention = request
+        .desired_retention
+        .unwrap_or(crate::model::DEFAULT_DESIRED_RETENTION);
+    if !(0.7..=0.99).contains(&desired_retention) {
+        return Err(invalid(format!(
+            "Desired retention must be from 0.7 to 0.99, not {desired_retention}"
+        )));
+    }
+    let ratings = scheduler.get_ratings();
+    let good = ratings
+        .iter()
+        .find(|r| r.description.eq_ignore_ascii_case("good"))
+        .or_else(|| ratings.get(ratings.len().saturating_sub(2)))
+        .ok_or_else(|| invalid("The scheduler has no ratings".to_string()))?
+        .id;
+    let examples = PREVIEW_REVIEWS
+        .iter()
+        .map(|&reviews| {
+            let (card, logs, now) = example_card(
+                scheduler.as_ref(),
+                &config,
+                desired_retention,
+                good,
+                reviews,
+                at,
+            )?;
+            let intervals = ratings
+                .iter()
+                .map(|rating| {
+                    let (next, _) = scheduler.schedule(
+                        &config,
+                        &card,
+                        &logs,
+                        rating.id,
+                        now,
+                        Duration::seconds(5),
+                        Duration::seconds(2),
+                    )?;
+                    Ok(RatingInterval {
+                        rating: rating.clone(),
+                        seconds: (placed_due(&config, &next, now) - now).num_seconds(),
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            Ok(IntervalExample {
+                label: if reviews == 0 {
+                    "New card".to_string()
+                } else {
+                    format!("Seen {reviews} times")
+                },
+                reviews,
+                intervals,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let seconds = |steps: &[Duration]| steps.iter().map(Duration::num_seconds).collect();
+    Ok(IntervalPreviewResponse {
+        desired_retention,
+        learning_steps: seconds(&config.learning_steps),
+        relearning_steps: seconds(&config.relearning_steps),
+        maximum_interval: config.maximum_interval.num_seconds(),
+        examples,
+    })
+}
+
+/// `card`'s due date after a review at `at`, kept within the minimum and maximum interval once it
+/// is in review, as placing it does (`place_due`), leaving out the day or so load balancing moves
+/// it.
+fn placed_due(config: &SparesExternalConfig, card: &Card, at: DateTime<Utc>) -> DateTime<Utc> {
+    if crate::schedulers::state_role(card.state) != Some(crate::schema::review::StateRole::Review) {
+        return card.due;
+    }
+    at + (card.due - at).clamp(config.minimum_interval, config.maximum_interval)
+}
+
+/// A card rated `rating` `reviews` times, each when it was due, from a new card, with its review
+/// logs and when it is next due. Its reviews start far enough back to end before `at`.
+fn example_card(
+    scheduler: &dyn SrsScheduler,
+    config: &SparesExternalConfig,
+    desired_retention: f64,
+    rating: crate::model::RatingId,
+    reviews: usize,
+    at: DateTime<Utc>,
+) -> Result<(Card, Vec<ReviewLog>, DateTime<Utc>), Error> {
+    let mut card = Card::new(at);
+    card.desired_retention = desired_retention;
+    let mut logs = Vec::new();
+    let mut now = at;
+    for _ in 0..reviews {
+        let (next, log) = scheduler.schedule(
+            config,
+            &card,
+            &logs,
+            rating,
+            now,
+            Duration::seconds(5),
+            Duration::seconds(2),
+        )?;
+        now = placed_due(config, &next, now);
+        card = next;
+        card.due = now;
+        logs.push(log);
+    }
+    Ok((card, logs, now))
 }
 
 /// Suggest optimizing again after this many reviews since the parameters were fitted, ...
@@ -494,6 +649,110 @@ pub(crate) mod tests {
         assert!(!optimize_due(fitted, 1000, day(1) + chrono::Days::new(90)));
         // Fewer reviews than then, e.g. after deleting cards, is none since
         assert!(!optimize_due(fitted, 10, day(2)));
+    }
+
+    /// Runs `test` in a collection of its own whose `config.toml` is `config`.
+    fn with_config<T>(config: &str, test: impl FnOnce() -> T) -> T {
+        let root = tempfile::tempdir().unwrap();
+        let paths = crate::collection::CollectionPaths::in_dir(root.path());
+        std::fs::create_dir_all(&paths.config).unwrap();
+        std::fs::write(paths.config_file(), config).unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
+        let collection =
+            std::sync::Arc::new(crate::collection::Collection::new("preview", pool, paths));
+        let _guard = collection.enter();
+        test()
+    }
+
+    fn seconds(response: &IntervalPreviewResponse, example: usize) -> Vec<i64> {
+        response.examples[example]
+            .intervals
+            .iter()
+            .map(|i| i.seconds)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_preview_is_what_the_scheduler_does() {
+        with_config("learning_steps = [60, 600]\n", || {
+            let at = Utc::now();
+            let preview = preview_intervals("fsrs", IntervalPreviewRequest::default(), at).unwrap();
+            assert_eq!(preview.desired_retention, 0.9);
+            assert_eq!(preview.learning_steps, [60, 600]);
+            assert_eq!(preview.examples.len(), 2);
+            let new = seconds(&preview, 0);
+            assert_eq!(new[0], 60, "Again on a new card is its first step");
+            assert!(new[3] >= 86_400, "Easy graduates it: {new:?}");
+            let seen = seconds(&preview, 1);
+            assert!(seen.windows(2).all(|w| w[0] <= w[1]), "{seen:?}");
+
+            // The same as scheduling the card itself
+            let config = read_external_config().unwrap();
+            let scheduler = get_scheduler_from_string("fsrs").unwrap();
+            let (card, logs, now) =
+                example_card(scheduler.as_ref(), &config, 0.9, 3, 3, at).unwrap();
+            let (next, _) = scheduler
+                .schedule(
+                    &config,
+                    &card,
+                    &logs,
+                    3,
+                    now,
+                    Duration::seconds(5),
+                    Duration::seconds(2),
+                )
+                .unwrap();
+            assert_eq!(
+                seen[2],
+                (placed_due(&config, &next, now) - now).num_seconds()
+            );
+        });
+    }
+
+    #[tokio::test]
+    async fn the_preview_follows_the_settings_tried() {
+        with_config("", || {
+            let at = Utc::now();
+            let preview = |request| preview_intervals("fsrs", request, at).unwrap();
+            let usual = preview(IntervalPreviewRequest::default());
+            let strong = preview(IntervalPreviewRequest {
+                desired_retention: Some(0.97),
+                ..IntervalPreviewRequest::default()
+            });
+            assert!(
+                seconds(&strong, 1)[2] < seconds(&usual, 1)[2],
+                "a higher retention reviews sooner"
+            );
+            let steps = preview(IntervalPreviewRequest {
+                learning_steps: Some(vec![300]),
+                ..IntervalPreviewRequest::default()
+            });
+            assert_eq!(seconds(&steps, 0)[0], 300);
+            let capped = preview(IntervalPreviewRequest {
+                maximum_interval: Some(2 * 86_400),
+                ..IntervalPreviewRequest::default()
+            });
+            assert!(
+                seconds(&capped, 1).iter().all(|s| *s <= 2 * 86_400),
+                "{capped:?}"
+            );
+            for bad in [
+                IntervalPreviewRequest {
+                    desired_retention: Some(0.5),
+                    ..Default::default()
+                },
+                IntervalPreviewRequest {
+                    learning_steps: Some(vec![600, 60]),
+                    ..Default::default()
+                },
+                IntervalPreviewRequest {
+                    maximum_interval: Some(60),
+                    ..Default::default()
+                },
+            ] {
+                assert!(preview_intervals("fsrs", bad, at).is_err());
+            }
+        });
     }
 
     #[sqlx::test]

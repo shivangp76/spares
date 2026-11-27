@@ -607,6 +607,28 @@ export interface TagRetention {
   week: number;
 }
 
+/** `spares_core::schema::review::IntervalPreviewRequest`: settings to try, each left out being
+    config.toml's. Durations in seconds. */
+export interface IntervalPreviewRequest {
+  desired_retention?: number;
+  learning_steps?: number[];
+  relearning_steps?: number[];
+  maximum_interval?: number;
+}
+
+/** `spares_core::schema::review::IntervalPreviewResponse` */
+export interface IntervalPreviewResponse {
+  desired_retention: number;
+  learning_steps: number[];
+  relearning_steps: number[];
+  maximum_interval: number;
+  examples: {
+    label: string;
+    reviews: number;
+    intervals: { rating: Rating; seconds: number }[];
+  }[];
+}
+
 export type TableDelimiter = "tab" | "comma" | "semicolon" | "dash";
 
 /** `spares_core::adapters::impls::delimited::Columns`, counted from 0 */

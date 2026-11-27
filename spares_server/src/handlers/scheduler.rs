@@ -163,6 +163,18 @@ pub(crate) async fn discard_optimize_proposal_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The next interval of each rating for example cards, with `config.toml`'s settings or those the
+/// request tries in their place (`spares_core::api::scheduler::preview_intervals`).
+pub(crate) async fn preview_intervals_handler(
+    Path(name): Path<String>,
+    Coll(_data): Coll,
+    Json(body): Json<spares_core::schema::review::IntervalPreviewRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let res = spares_core::api::scheduler::preview_intervals(name.as_str(), body, Utc::now())
+        .map_err(error_to_response)?;
+    Ok(Json(res))
+}
+
 pub(crate) async fn reschedule_scheduler_handler(
     Path(name): Path<String>,
     Coll(data): Coll,

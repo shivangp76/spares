@@ -524,6 +524,10 @@ fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             get(get_scheduler_states_handler),
         )
         .route(
+            "/api/scheduler/{name}/preview",
+            post(crate::handlers::scheduler::preview_intervals_handler),
+        )
+        .route(
             "/api/scheduler/{name}/rating",
             get(get_rating_from_score_handler),
         )

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { chooseScheduler, getCredentials, listSchedulers } from "../api/client";
 import { errorMessage } from "../utils";
+import IntervalPreview from "./IntervalPreview";
 
 /** The scheduler this device rates cards with, of the host's, kept across logging in again. */
 export default function SchedulerSettings() {
@@ -41,6 +42,7 @@ export default function SchedulerSettings() {
         <p className="field-hint">
           What schedules the cards you rate. The host has no other.
         </p>
+        <IntervalPreview schedulerName={current} />
       </>
     );
   return (
@@ -72,6 +74,7 @@ export default function SchedulerSettings() {
           ? `The host's schedulers could not be listed: ${error}`
           : "What schedules the cards you rate on this device, and whose statistics are shown. Logging in again keeps it, if the host has it."}
       </p>
+      <IntervalPreview schedulerName={current} />
     </>
   );
 }
