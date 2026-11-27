@@ -270,6 +270,16 @@ function ActionGroup({
   );
 }
 
+// A label and the controls it names, kept on one line when an action group wraps. The right
+// margin spaces it from the next cluster without indenting a cluster that starts a line.
+const controlCluster: React.CSSProperties = {
+  display: "inline-flex",
+  gap: 8,
+  alignItems: "center",
+  whiteSpace: "nowrap",
+  marginRight: 8,
+};
+
 // Hides a rendered side without changing its width, so a Typst side compiled for the hidden
 // viewer's width is not recompiled when it is shown.
 const hiddenSide: React.CSSProperties = {
@@ -1082,7 +1092,6 @@ export default function ReviewPage() {
       setPhase("error");
     }
   }
-
 
   /** Starts the next timebox and shows the next card. */
   function continueAfterTimebox() {
@@ -3301,63 +3310,65 @@ export default function ReviewPage() {
                   {/* Phones use their whole width already */}
                   {!isNarrow && (
                     <>
-                      <span style={{ fontSize: 13 }}>
-                        Width <span className="key-hint">(w)</span>
+                      <span style={controlCluster}>
+                        <span style={{ fontSize: 13 }}>
+                          Width <span className="key-hint">(w)</span>
+                        </span>
+                        {PAGE_WIDTHS.map((width) => (
+                          <button
+                            key={width}
+                            onClick={() => setPageWidth(width)}
+                            aria-pressed={pageWidth === width}
+                            style={actionButton}
+                          >
+                            {PAGE_WIDTH_LABELS[width]}
+                          </button>
+                        ))}
                       </span>
-                      {PAGE_WIDTHS.map((width) => (
-                        <button
-                          key={width}
-                          onClick={() => setPageWidth(width)}
-                          aria-pressed={pageWidth === width}
-                          style={actionButton}
-                        >
-                          {PAGE_WIDTH_LABELS[width]}
-                        </button>
-                      ))}
-                      <span style={{ fontSize: 13, marginLeft: 8 }}>
-                        Pages per row
+                      <span style={controlCluster}>
+                        <span style={{ fontSize: 13 }}>Pages per row</span>
+                        {PAGES_PER_ROW.map((pages) => (
+                          <button
+                            key={pages}
+                            onClick={() => setPagesPerRow(pages)}
+                            aria-pressed={pagesPerRow === pages}
+                            style={actionButton}
+                          >
+                            {PAGES_PER_ROW_LABELS[pages]}
+                          </button>
+                        ))}
                       </span>
-                      {PAGES_PER_ROW.map((pages) => (
-                        <button
-                          key={pages}
-                          onClick={() => setPagesPerRow(pages)}
-                          aria-pressed={pagesPerRow === pages}
-                          style={actionButton}
-                        >
-                          {PAGES_PER_ROW_LABELS[pages]}
-                        </button>
-                      ))}
                     </>
                   )}
-                  <span style={{ fontSize: 13, marginLeft: isNarrow ? 0 : 8 }}>
-                    Text size
+                  <span style={controlCluster}>
+                    <span style={{ fontSize: 13 }}>Text size</span>
+                    <button
+                      onClick={zoomOut}
+                      disabled={zoomIndex === 0}
+                      style={actionButton}
+                      title="Smaller card text (-)"
+                    >
+                      A−
+                    </button>
+                    <span
+                      style={{
+                        fontSize: 13,
+                        minWidth: "4ch",
+                        textAlign: "center",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {cardZoom}%
+                    </span>
+                    <button
+                      onClick={zoomIn}
+                      disabled={zoomIndex === CARD_ZOOMS.length - 1}
+                      style={actionButton}
+                      title="Larger card text (+)"
+                    >
+                      A+
+                    </button>
                   </span>
-                  <button
-                    onClick={zoomOut}
-                    disabled={zoomIndex === 0}
-                    style={actionButton}
-                    title="Smaller card text (-)"
-                  >
-                    A−
-                  </button>
-                  <span
-                    style={{
-                      fontSize: 13,
-                      minWidth: "4ch",
-                      textAlign: "center",
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    {cardZoom}%
-                  </span>
-                  <button
-                    onClick={zoomIn}
-                    disabled={zoomIndex === CARD_ZOOMS.length - 1}
-                    style={actionButton}
-                    title="Larger card text (+)"
-                  >
-                    A+
-                  </button>
                 </ActionGroup>
                 {/* Last and on its own, away from the buttons that only put the card off, since
                     it throws away the card's schedule */}
