@@ -49,6 +49,7 @@ import { prepareNextCard } from "../nextCard";
 import { withoutSpeech } from "../audio";
 import CardInfo from "../components/CardInfo";
 import CardRenderer from "../components/CardRenderer";
+import type { LookupHandle } from "../languageTools/LookupLayer";
 import CodeText from "../components/CodeText";
 import { RedoIcon, UndoIcon } from "../components/Icons";
 import FindInQueue from "../components/QueuePositions";
@@ -101,6 +102,7 @@ import {
 import { rememberReviewWidth } from "../typst/width";
 import {
   type GetReviewCardResponse,
+  type SpeechItem,
   type NoteResponse,
   type Rating,
   type ReviewConfig,
@@ -174,6 +176,9 @@ const FILTER_MODES: { mode: FilterMode; label: string; placeholder: string }[] =
 const loadNoteDetail = () => import("../components/NoteDetail");
 const NoteDetail = lazy(loadNoteDetail);
 const NewNoteForm = lazy(() => import("../components/NewNoteForm"));
+// Dictionary lookup, only for the cards of the `markdown-language-tools` parser
+const LookupLayer = lazy(() => import("../languageTools/LookupLayer"));
+const LANGUAGE_TOOLS_PARSER = "markdown-language-tools";
 
 const actionButton: React.CSSProperties = { padding: "6px 10px", fontSize: 13 };
 
@@ -914,6 +919,19 @@ export default function ReviewPage() {
   const playAudioClip = useCallback(
     (path: string) => playAudio([path]),
     [playAudio],
+  );
+  // The documents of the card's sides shown as HTML, which dictionary lookup listens on
+  const isLanguageCard = card?.parser_name === LANGUAGE_TOOLS_PARSER;
+  const [frontDocument, setFrontDocument] = useState<Document | null>(null);
+  const [backDocument, setBackDocument] = useState<Document | null>(null);
+  const lookupDocs = useMemo(
+    () => [frontDocument, backDocument],
+    [frontDocument, backDocument],
+  );
+  const lookupRef = useRef<LookupHandle>(null);
+  const speakWord = useCallback(
+    (item: SpeechItem) => audioPlayer.play([item]),
+    [audioPlayer],
   );
 
   const refreshStatistics = useCallback(() => {
@@ -1987,6 +2005,11 @@ export default function ReviewPage() {
       available: reviewing,
     },
     { keys: ["-"], description: "Smaller card text", available: reviewing },
+    {
+      keys: ["K"],
+      description: "Look up the selection or the word under the pointer",
+      available: cardShown && isLanguageCard,
+    },
     ...TYPED_ANSWER_SHORTCUTS.map((s) => ({
       ...s,
       available: phase === "front" && !!card?.typed_answer,
@@ -2098,6 +2121,7 @@ export default function ReviewPage() {
       "+": zoomIn,
       "=": zoomIn,
       "-": zoomOut,
+      K: () => void lookupRef.current?.lookUp(),
     };
     ratings.forEach((r, i) => {
       actions[String(i + 1)] = () => rate(r.id);
@@ -2890,6 +2914,19 @@ export default function ReviewPage() {
             </div>
           )}
 
+          {isLanguageCard && (
+            <Suspense fallback={null}>
+              <LookupLayer
+                ref={lookupRef}
+                docs={lookupDocs}
+                noteId={card.note_id}
+                tags={card.tags}
+                onOpenNote={openNote}
+                onSpeak={speakWord}
+              />
+            </Suspense>
+          )}
+
           {/* Like the CLI, the front is closed when the card is flipped. It stays mounted so undoing
               the flip shows it again without rerendering. */}
           <div
@@ -2966,6 +3003,7 @@ export default function ReviewPage() {
                     onPlayAudio={playAudioClip}
                     onTypstWidth={rememberReviewWidth}
                     scrollToCloze={phase === "front"}
+                    onDocument={isLanguageCard ? setFrontDocument : undefined}
                   />
                 </div>
               </>
@@ -3041,6 +3079,7 @@ export default function ReviewPage() {
                   onOpenNote={openNote}
                   onPlayAudio={playAudioClip}
                   scrollToCloze={phase === "back"}
+                  onDocument={isLanguageCard ? setBackDocument : undefined}
                 />
               </div>
             </div>

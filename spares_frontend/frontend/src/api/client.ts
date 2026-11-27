@@ -406,7 +406,7 @@ async function throwIfNotOk(res: Response, label: string): Promise<void> {
   throw Object.assign(new ApiError(message, span, queryField), diagnostics);
 }
 
-async function apiFetch<T>(
+export async function apiFetch<T>(
   label: string,
   path: string,
   init: RequestInit = {},
