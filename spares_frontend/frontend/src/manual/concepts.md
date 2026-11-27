@@ -52,7 +52,7 @@ New notes are learned in the order they were created, except that a note's prere
 
 ## Parsers
 
-Parsers allow notes to be created in different markup languages. Spares ships with "markdown", "typst" and "latex-note" parsers, which are meant to be modified by the user (see `spares_core::parsers::impls`).
+Parsers allow notes to be created in different markup languages. Spares ships with "markdown", "typst" and "latex-note" parsers, which are meant to be modified by the user (see `spares_core::parsers::impls`). The opt-in "markdown-language-tools" parser adds readings and dictionary lookup for learning languages (see [Language Tools](./language-tools.md)).
 
 ## Adapters
 

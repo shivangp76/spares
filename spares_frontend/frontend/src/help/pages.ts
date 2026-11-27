@@ -32,6 +32,7 @@ export const MANUAL_PAGES: { file: string; title: string }[] = [
   { file: "deploying.md", title: "Deploying a Sync Server" },
   { file: "concepts.md", title: "Main Concepts" },
   { file: "workflows.md", title: "Workflows" },
+  { file: "language-tools.md", title: "Language Tools" },
   { file: "comparison.md", title: "Comparison with Anki" },
 ];
 

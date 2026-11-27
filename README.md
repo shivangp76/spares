@@ -93,6 +93,7 @@ The manual is also in the web app, under Manual.
 - [Deploying a Sync Server](spares_frontend/frontend/src/manual/deploying.md)
 - [Concepts](spares_frontend/frontend/src/manual/concepts.md)
 - [Workflows](spares_frontend/frontend/src/manual/workflows.md)
+- [Language Tools](spares_frontend/frontend/src/manual/language-tools.md)
 - [Comparison with Anki](spares_frontend/frontend/src/manual/comparison.md)
 - API docs, with every setting and how each part works: `cargo doc --workspace --no-deps --document-private-items --open`
 
