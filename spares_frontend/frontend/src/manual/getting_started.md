@@ -134,7 +134,7 @@ The CLI also provides an import functionality to add notes in bulk. For example,
 # Oceans
 
 - The 5 oceans in the world are:
-    - {{ [Pacific](li) }}
+    - {{ [Pacific][li] }}
     - {{ Atlantic }}
     - {{ Indian }}
     - {{ Southern }}
@@ -163,7 +163,7 @@ In the web app, **Import** on the Notes page does the same: pick the files (or z
 
 ## Linked Notes
 
-Note the usage of `[Pacific](li)` in the first note. This is a linked note. The keyword "Pacific" will be searched for across all other notes and the note with the closest match will be linked in that note document. In this case, the second note has the keyword "Pacific Ocean". Since this is the only other note, this is the closest match. This linking will be done when notes are rendered (see below).
+Note the usage of `[Pacific][li]` in the first note. This is a linked note. The keyword "Pacific" will be searched for across all other notes and the note with the closest match will be linked in that note document. In this case, the second note has the keyword "Pacific Ocean". Since this is the only other note, this is the closest match. This linking will be done when notes are rendered (see below).
 
 ## Typed answers
 
