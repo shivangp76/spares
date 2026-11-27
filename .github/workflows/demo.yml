@@ -42,6 +42,8 @@ jobs:
       - run: bunx playwright-core install --with-deps chromium-headless-shell
       - run: bun run build-demo
         env:
+          # For pandoc-wasm.ts's request to GitHub's API, which runners' shared addresses exhaust
+          GITHUB_TOKEN: ${{ github.token }}
           CC_wasm32_unknown_unknown: clang
           AR_wasm32_unknown_unknown: llvm-ar
       - name: Test the demo in a browser

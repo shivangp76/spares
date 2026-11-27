@@ -44,9 +44,12 @@ export async function pandocWasm(): Promise<{ version: string; path: string }> {
   if (existsSync(path)) return { version, path };
 
   console.log(`Downloading pandoc ${version}'s WebAssembly build`);
-  // Its name changes from release to release
+  // Its name changes from release to release. With `GITHUB_TOKEN` (CI passes the job's), the API
+  // counts the request against that token rather than the address, which CI runners share.
+  const token = process.env.GITHUB_TOKEN;
   const release = await fetch(
     `https://api.github.com/repos/jgm/pandoc/releases/tags/${version}`,
+    token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
   );
   if (!release.ok)
     throw new Error(
