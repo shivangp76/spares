@@ -254,16 +254,6 @@ pub fn create_note_files_bulk(
         "Generating note files for the `{}` parser",
         parser.get_parser_name()
     );
-    let requests = request.requests.par_iter();
-    // A progress bar in the terminal
-    #[cfg(not(target_family = "wasm"))]
-    let requests = requests.progress_with_style(
-        ProgressStyle::with_template(
-            "[{elapsed_precise}] ETA: {eta} {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
-        )
-        .unwrap()
-        .progress_chars("##-"),
-    );
     // Cards the batch's notes had, to copy those whose source moved to another note or card
     let reuse = if request.render && !request.force_render {
         RenderReuse::snapshot(parser, &request.render_states)
@@ -272,28 +262,67 @@ pub fn create_note_files_bulk(
     };
     // Rayon's threads render in the current collection too.
     let context = crate::collection::capture();
-    let result = requests
-        .map(|create_note_files_request| {
-            let _collection = context.enter();
-            create_note_files(
-                parser,
-                create_note_files_request,
-                note_template_contents.as_str(),
-                card_template_contents.as_str(),
-                body_placeholder.as_str(),
-                request.overridden_output_raw_dir.as_deref(),
-                request.include_cards,
-                request.render,
-                request.force_render,
-                request.precomputed_cards.as_ref(),
-                request
-                    .render_states
-                    .get(&create_note_files_request.note_id),
-                reuse.as_ref(),
+    let generate = || {
+        let requests = request.requests.par_iter();
+        // A progress bar in the terminal
+        #[cfg(not(target_family = "wasm"))]
+        let requests = requests.progress_with_style(
+            ProgressStyle::with_template(
+                "[{elapsed_precise}] ETA: {eta} {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
             )
-        })
-        .collect();
+            .unwrap()
+            .progress_chars("##-"),
+        );
+        requests
+            .map(|create_note_files_request| {
+                let _collection = context.enter();
+                create_note_files(
+                    parser,
+                    create_note_files_request,
+                    note_template_contents.as_str(),
+                    card_template_contents.as_str(),
+                    body_placeholder.as_str(),
+                    request.overridden_output_raw_dir.as_deref(),
+                    request.include_cards,
+                    request.render,
+                    request.force_render,
+                    request.precomputed_cards.as_ref(),
+                    request
+                        .render_states
+                        .get(&create_note_files_request.note_id),
+                    reuse.as_ref(),
+                )
+            })
+            .collect()
+    };
+    // Its nested parallel work (a note's cards, image occlusion) runs on the same pool.
+    let result = if request.render && request.requests.len() > LARGE_RENDER_NOTES {
+        large_render_pool().install(generate)
+    } else {
+        generate()
+    };
     Ok(result)
+}
+
+/// A batch of more notes than this renders on [`large_render_pool`]. A render someone waits for,
+/// such as the web app's after saving a note, is of one note and the notes it links to.
+const LARGE_RENDER_NOTES: usize = 50;
+
+/// The Rayon pool that large renders run on (see [`LARGE_RENDER_NOTES`]), apart from the global
+/// one. A render of every note keeps all of its pool's threads busy until it is done, since
+/// Rayon's threads finish the work they have before they take new work from outside. On the
+/// global pool, rendering a note just saved in the web app, or matching its links, would wait for
+/// the whole render: minutes, while forcing a render of every note. Small renders still wait
+/// their turn at rendering ([`RenderSlots`](crate::render::RenderSlots)), but a turn comes up
+/// every few milliseconds.
+fn large_render_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .thread_name(|i| format!("spares-large-render-{i}"))
+            .build()
+            .expect("Failed to start the threads of large renders")
+    })
 }
 
 /// The raw note file.
