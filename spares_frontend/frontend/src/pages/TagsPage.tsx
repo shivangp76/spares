@@ -6,6 +6,7 @@ import {
   ApiError,
   createTag,
   deleteTag,
+  getTagRetention,
   listTags,
   rebuildTag,
   renameTags,
@@ -21,7 +22,13 @@ import { useClientPages } from "../hooks/useClientPages";
 import { useRowKeys } from "../hooks/useRowKeys";
 import { useTableWidths } from "../hooks/useTableWidths";
 import { setTagsPageSize, useTagsPageSize } from "../preferences";
-import type { TagResponse, UpdateTagRequest } from "../types/spares";
+import type {
+  TagResponse,
+  TagRetention,
+  UpdateTagRequest,
+} from "../types/spares";
+import TagRetentionBar from "../components/TagRetentionBar";
+import { weakestFirst } from "../tagRetention";
 import { errorMessage, td, th } from "../utils";
 import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
@@ -119,6 +126,8 @@ interface TagTreeProps {
   node: TreeNode;
   path: string;
   tagsByName: Map<string, TagResponse>;
+  /** Each tag's predicted retention, by full name */
+  retention: Map<string, TagRetention>;
   /** Full names of the nodes whose children are hidden */
   collapsed: Set<string>;
   onToggle: (fullName: string) => void;
@@ -153,6 +162,7 @@ function TagTree({
   node,
   path,
   tagsByName,
+  retention,
   collapsed,
   onToggle,
   actions,
@@ -232,6 +242,9 @@ function TagTree({
                   {key || "(empty)"}
                 </span>
               )}
+              <span style={{ marginLeft: 8, display: "inline-flex" }}>
+                <TagRetentionBar retention={retention.get(fullName)} />
+              </span>
               <span
                 style={{
                   fontSize: 12,
@@ -270,6 +283,7 @@ function TagTree({
                 node={child}
                 path={fullName}
                 tagsByName={tagsByName}
+                retention={retention}
                 collapsed={collapsed}
                 onToggle={onToggle}
                 actions={actions}
@@ -526,15 +540,26 @@ export default function TagsPage() {
     }));
   const [filter, setFilter] = useState("");
   const [view, setView] = useState<"table" | "tree">("table");
+  const [retention, setRetention] = useState<Map<string, TagRetention>>(
+    () => new Map(),
+  );
+  const [sort, setSort] = useState<"name" | "weakest">("name");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // `null` for a new tag
   const [editing, setEditing] = useState<{ tag: TagResponse | null } | null>(
     null,
   );
 
+  const schedulerName = credentials?.schedulerName;
   const load = useCallback(() => {
     listAllTags().then(setTags, (e) => setError(errorMessage(e)));
-  }, []);
+    // Errors are ignored: the bars are extra, and the tags are shown without them
+    if (schedulerName)
+      getTagRetention(schedulerName).then(
+        (list) => setRetention(new Map(list.map((r) => [r.name, r]))),
+        () => {},
+      );
+  }, [schedulerName]);
 
   // Fetch again after an undo, redo or sync elsewhere changed what is shown
   const dataVersion = useDataVersion();
@@ -621,9 +646,11 @@ export default function TagsPage() {
   };
 
   const needle = filter.trim().toLowerCase();
-  const found = (tags ?? []).filter(
+  const matching = (tags ?? []).filter(
     (t) => !needle || t.name.toLowerCase().includes(needle),
   );
+  const found =
+    sort === "weakest" ? weakestFirst(matching, retention) : matching;
   // Only the table is split into pages, as the tree's branches would be split across them
   const pages = useClientPages(found, useTagsPageSize(), setTagsPageSize);
   const shown = pages.shown;
@@ -696,6 +723,21 @@ export default function TagsPage() {
           />
           Tree
         </label>
+        {view === "table" && (
+          <label style={{ fontSize: 14 }}>
+            Sort{" "}
+            <select
+              value={sort}
+              onChange={(e) => {
+                setSort(e.target.value as "name" | "weakest");
+                pages.pagination.goToPage(1);
+              }}
+            >
+              <option value="name">By name</option>
+              <option value="weakest">Weakest first</option>
+            </select>
+          </label>
+        )}
         <button
           onClick={() => setEditing({ tag: null })}
           className="touch-target-small"
@@ -755,6 +797,7 @@ export default function TagsPage() {
             node={buildTree(found.map((t) => t.name))}
             path=""
             tagsByName={new Map(tags.map((t) => [t.name, t]))}
+            retention={retention}
             collapsed={collapsed}
             onToggle={toggleCollapsed}
             actions={treeActions}
@@ -775,6 +818,11 @@ export default function TagsPage() {
                     className="hide-narrow"
                   />
                   <ResizableHeader widths={widths} column="name" label="Name" />
+                  <ResizableHeader
+                    widths={widths}
+                    column="retention"
+                    label="In 7 days"
+                  />
                   <ResizableHeader
                     widths={widths}
                     column="description"
@@ -816,6 +864,9 @@ export default function TagsPage() {
                       })}
                     >
                       {tag.name}
+                    </td>
+                    <td style={widths.style("retention", td)}>
+                      <TagRetentionBar retention={retention.get(tag.name)} />
                     </td>
                     <td
                       style={widths.style("description", td)}
@@ -884,7 +935,7 @@ export default function TagsPage() {
                 {shown.length === 0 && (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="empty-state"
                     >
                       No tags found

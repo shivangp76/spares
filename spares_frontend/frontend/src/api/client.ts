@@ -27,6 +27,7 @@ import type {
   OptimizeResponse,
   OptimizeStatusResponse,
   ImportTableRequest,
+  TagRetention,
   ImportTableResponse,
   ParserResponse,
   QueryExample,
@@ -1590,6 +1591,16 @@ export async function listTags(
   limit: number,
 ): Promise<TagResponse[]> {
   return apiFetch("Tags fetch", `/api/tags?${pageQuery(page, limit)}`);
+}
+
+/** Each tag's predicted retention today and in 7 days, by name, with its descendants' cards. */
+export async function getTagRetention(
+  schedulerName: string,
+): Promise<TagRetention[]> {
+  return apiFetch(
+    "Tag retention",
+    `/api/tags/retention?scheduler=${encodeURIComponent(schedulerName)}`,
+  );
 }
 
 export async function createTag(req: CreateTagRequest): Promise<TagResponse> {

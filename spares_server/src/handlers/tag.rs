@@ -82,6 +82,27 @@ pub(crate) async fn delete_tag_handler(
     Ok(Json(serde_json::json!({ "event_id": event_id })))
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct TagRetentionQuery {
+    scheduler: String,
+}
+
+/// The retention of each tag's reviewed cards today and in a week, with its descendants'
+/// (`spares_core::api::statistics::tag_retention`).
+pub(crate) async fn tag_retention_handler(
+    Query(query): Query<TagRetentionQuery>,
+    Coll(data): Coll,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let retention = spares_core::api::statistics::tag_retention::tag_retention(
+        &data.db,
+        &query.scheduler,
+        chrono::Utc::now(),
+    )
+    .await
+    .map_err(error_to_response)?;
+    Ok(Json(retention))
+}
+
 pub(crate) async fn list_tags_handler(
     opts: Query<FilterOptions>,
     Coll(data): Coll,

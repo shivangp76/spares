@@ -455,6 +455,10 @@ fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route("/api/tags/rename", post(rename_tags_handler))
         .route("/api/tags/{id}", delete(delete_tag_handler))
         .route("/api/tags", get(list_tags_handler))
+        .route(
+            "/api/tags/retention",
+            get(crate::handlers::tag::tag_retention_handler),
+        )
         .route("/api/tags/{id}/rebuild", get(rebuild_tag_handler))
         // Note
         .route("/api/notes", post(create_notes_handler))

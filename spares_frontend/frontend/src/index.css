@@ -1889,3 +1889,34 @@ html:has(.review-answer-bar) {
   font-size: 14px;
   align-items: center;
 }
+
+/* A tag's predicted retention in 7 days on the Tags page */
+.tag-retention {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tag-retention-track {
+  display: inline-block;
+  width: 56px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+.tag-retention-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.tag-retention-value {
+  min-width: 3ch;
+  text-align: right;
+}

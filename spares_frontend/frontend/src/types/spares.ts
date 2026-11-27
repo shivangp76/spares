@@ -598,6 +598,15 @@ export interface OptimizeResponse {
   event_id: number | null;
 }
 
+/** `spares_core::api::statistics::tag_retention::TagRetention`: a tag's reviewed cards, its
+    descendants' included, and their mean predicted retrievability today and in 7 days */
+export interface TagRetention {
+  name: string;
+  card_count: number;
+  today: number;
+  week: number;
+}
+
 export type TableDelimiter = "tab" | "comma" | "semicolon" | "dash";
 
 /** `spares_core::adapters::impls::delimited::Columns`, counted from 0 */
