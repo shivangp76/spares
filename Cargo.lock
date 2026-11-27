@@ -5231,6 +5231,7 @@ dependencies = [
  "toml_edit 0.25.17+spec-1.1.0",
  "tower",
  "tower-http 0.7.1",
+ "zip",
 ]
 
 [[package]]

@@ -43,6 +43,8 @@ sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "chr
 
 [dev-dependencies]
 http-body-util = "0.1.5"
+# Dictionary zips for `language_tools`'s tests
+zip = { version = "2.2.3", default-features = false, features = ["deflate"] }
 tower = { version = "0.5.3", features = ["util"] }
 
 [lints]

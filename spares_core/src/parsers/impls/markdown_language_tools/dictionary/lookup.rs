@@ -21,6 +21,7 @@ use sqlx::SqlitePool;
 use super::DictionaryError;
 use super::DictionaryInfo;
 use super::list;
+use crate::model::NoteId;
 use crate::parsers::impls::markdown_language_tools::language::Deinflection;
 use crate::parsers::impls::markdown_language_tools::language::Language;
 use crate::parsers::impls::markdown_language_tools::language::is_unspaced;
@@ -68,6 +69,9 @@ pub struct Entry {
     pub dictionary_id: i64,
     pub dictionary: String,
     pub attribution: String,
+    /// The notes with the entry's expression as a keyword (see [`mark_notes`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<NoteId>,
 }
 
 /// A form of a prefix of the text to look for.
@@ -257,6 +261,7 @@ pub async fn lookup(
                 dictionary_id: dict_id,
                 dictionary: dictionary.title.clone(),
                 attribution: dictionary.attribution.clone(),
+                notes: Vec::new(),
                 expression,
                 reading,
             },
@@ -280,4 +285,39 @@ pub async fn lookup(
         language: language_code,
         entries,
     })
+}
+
+/// Fills in each entry's [`Entry::notes`]: the notes of the collection `db` whose keywords include
+/// its expression, so a client can say the word is already in them.
+pub async fn mark_notes(
+    db: &SqlitePool,
+    response: &mut LookupResponse,
+) -> Result<(), DictionaryError> {
+    let expressions = response
+        .entries
+        .iter()
+        .map(|e| e.expression.as_str())
+        .collect::<HashSet<_>>();
+    if expressions.is_empty() {
+        return Ok(());
+    }
+    let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        "SELECT DISTINCT keyword, note_id FROM note_keyword WHERE keyword IN ",
+    );
+    builder.push_tuples(&expressions, |mut b, expression| {
+        b.push_bind(*expression);
+    });
+    let mut notes: HashMap<String, Vec<NoteId>> = HashMap::new();
+    for row in builder.build().fetch_all(db).await? {
+        notes
+            .entry(row.get("keyword"))
+            .or_default()
+            .push(row.get("note_id"));
+    }
+    for entry in &mut response.entries {
+        if let Some(ids) = notes.get(&entry.expression) {
+            entry.notes.clone_from(ids);
+        }
+    }
+    Ok(())
 }

@@ -408,6 +408,16 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .merge(media_routes())
         .merge(notes_vcs_routes())
         .merge(sync_routes())
+        .merge(language_tools_routes())
+}
+
+/// `/api/language-tools`, with the `language-tools` feature: dictionaries are files on the host.
+#[cfg(not(target_family = "wasm"))]
+fn language_tools_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
+    #[cfg(feature = "language-tools")]
+    return crate::language_tools::routes();
+    #[cfg(not(feature = "language-tools"))]
+    Router::new()
 }
 
 /// Review
@@ -699,6 +709,17 @@ pub fn create_local_router(collection: Arc<spares_core::collection::Collection>)
             get(needs_server).post(needs_server),
         )
         .route("/api/cards/break", post(needs_server))
+        // Dictionaries are on the host (`language_tools`)
+        .route("/api/language-tools/lookup", get(needs_server))
+        .route(
+            "/api/language-tools/dictionaries",
+            get(needs_server).post(needs_server),
+        )
+        .route("/api/language-tools/dictionaries/order", put(needs_server))
+        .route(
+            "/api/language-tools/dictionaries/{id}",
+            patch(needs_server).delete(needs_server),
+        )
         .fallback(not_on_device)
         // Also when a route has the path for another method: `POST /api/notes/live` matches
         // `GET /api/notes/{id}`.

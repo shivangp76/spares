@@ -18,6 +18,8 @@ pub mod auto_sync;
 mod handlers;
 #[cfg(not(target_family = "wasm"))]
 pub mod host;
+#[cfg(all(feature = "language-tools", not(target_family = "wasm")))]
+mod language_tools;
 pub mod route;
 #[cfg(not(target_family = "wasm"))]
 mod version;
