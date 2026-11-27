@@ -10,7 +10,9 @@
 //!   build on it stay where they were, among the notes added around them.
 //! - Notes that link to each other in a loop, directly or through other notes, can't all come
 //!   after their prerequisites. Within such a loop, only the links to older notes count, as they
-//!   all did before positions; links into and out of the loop all count.
+//!   all did before positions; links into and out of the loop all count. `in_link_cycle` searches
+//!   list the notes of loops, whose links are often "see also" links worth making
+//!   `rel: "related"`.
 //!
 //! For example, with notes created in the order *warp*, *latency hiding*, *thread hierarchy*,
 //! *memory hierarchy*, where *warp* builds on *thread hierarchy* and *latency hiding* on *warp*
@@ -40,6 +42,14 @@ use crate::model::NoteId;
 /// The SQL of the position of the note aliased `note`, or NULL if it has none yet.
 pub(crate) fn position_sql(note: &str) -> String {
     format!("(SELECT np.position FROM note_position np WHERE np.note_id = {note}.id)")
+}
+
+/// The SQL of whether the note aliased `note` is in a loop of links, see the
+/// [module docs](self).
+pub(crate) fn in_link_cycle_sql(note: &str) -> String {
+    format!(
+        "COALESCE((SELECT np.in_link_cycle FROM note_position np WHERE np.note_id = {note}.id), 0)"
+    )
 }
 
 /// The order of notes `0..count`, which are numbered in the order they were created, given that
@@ -353,6 +363,32 @@ mod tests {
 
     fn order(count: usize, prerequisites: &[(usize, usize)]) -> Vec<usize> {
         order_notes(count, prerequisites).0
+    }
+
+    /// `position` sorts and compares notes by their positions, and `in_link_cycle` finds the
+    /// notes of loops, working positions out first.
+    #[sqlx::test]
+    async fn searches_read_positions(pool: SqlitePool) {
+        let now = Utc::now();
+        let [a, b, c, d] = create_cards(&pool, 4, now - Duration::days(1)).await[..] else {
+            unreachable!()
+        };
+        // `a` builds on `c`, and `b` and `d` on each other
+        link(&pool, a, c, 0.0).await;
+        link(&pool, b, d, 0.0).await;
+        link(&pool, d, b, 0.0).await;
+        let search = async |query: &str| {
+            crate::search::evaluator::Evaluator::new(query)
+                .get_card_ids(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{query}: {e}"))
+        };
+        assert_eq!(search("sort_by_asc=position").await, [c, a, b, d]);
+        assert_eq!(search("sort_by_desc=c.id,position").await, [d, c, b, a]);
+        assert_eq!(search("position<2 sort_by_asc=position").await, [c, a]);
+        assert_eq!(search("in_link_cycle sort_by_asc=c.id").await, [b, d]);
+        assert_eq!(search("-in_link_cycle sort_by_asc=c.id").await, [a, c]);
+        assert_eq!(search("in_link_cycle=false sort_by_asc=c.id").await, [a, c]);
     }
 
     #[test]

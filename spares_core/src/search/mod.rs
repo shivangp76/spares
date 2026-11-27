@@ -39,6 +39,8 @@
 //! | `linked_from_note`    | i64      |
 //! | `prerequisite_of`     | i64      |
 //! | `dependent_of`        | i64      |
+//! | position            | i64      |
+//! | `in_link_cycle`       | bool     |
 //! | c.rated             | u32      |
 //! | c.postponed         | bool     |
 //! | c.reviewed          | `DateTime` |

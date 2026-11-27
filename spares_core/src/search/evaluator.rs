@@ -18,6 +18,8 @@ use sqlx::Sqlite;
 use sqlx::SqlitePool;
 
 use crate::LibraryError;
+use crate::api::note_position::in_link_cycle_sql;
+use crate::api::note_position::position_sql;
 use crate::api::queue::waiting_on_links;
 use crate::api::statistics::local_time::Zone;
 use crate::config::QueueConfig;
@@ -619,6 +621,11 @@ enum NoteField {
     /// The notes that reach a note by following links, as in `dependent_of=(tag=measure-theory)`:
     /// what builds on those notes. See [`evaluate_link_walk`].
     DependentOf,
+    /// The note's place in the order notes are learned in, from 0 (see
+    /// [`crate::api::note_position`]), as in `sort_by_asc=position`
+    Position,
+    /// Whether the note is in a loop of links (see [`crate::api::note_position`])
+    InLinkCycle,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -676,7 +683,7 @@ const fn doc(name: &'static str, example: &'static str, about: &'static str) -> 
 }
 
 #[rustfmt::skip]
-pub(crate) const FIELDS: [FieldDoc; 40] = [
+pub(crate) const FIELDS: [FieldDoc; 42] = [
     doc("id", "id=gir", "The note's id"),
     doc("data", "data~verb", "The note's text, which a word on its own searches"),
     doc("created_at", "created_at>=today-7d", "When the note was created"),
@@ -691,6 +698,8 @@ pub(crate) const FIELDS: [FieldDoc; 40] = [
     doc("link_relation", "link_relation=dependent", "Which way a link in the note points: prerequisite, dependent or related"),
     doc("prerequisite_of", "prerequisite_of=(tag=spdes depth<=2)", "A note the note is reached from by following links to prerequisites, any number of steps"),
     doc("dependent_of", "dependent_of=(tag=measure-theory)", "A note the note reaches by following links to prerequisites, any number of steps"),
+    doc("position", "sort_by_asc=position", "The note's place in the order new notes are learned in: by when they were created, with a note's prerequisites first"),
+    doc("in_link_cycle", "in_link_cycle", "Whether the note links to notes that link back to it, directly or through others, so that the order can't put each after the notes it builds on"),
     doc("c.id", "c.id=12", "The card's id"),
     doc("c.created_at", "c.created_at>=today", "When the card was created"),
     doc("c.updated_at", "c.updated_at>=today", "When the card was last changed"),
@@ -940,6 +949,8 @@ impl Field {
             "link_relation" => Ok(Field::Note(NoteField::LinkRelation)),
             "prerequisite_of" => Ok(Field::Note(NoteField::PrerequisiteOf)),
             "dependent_of" => Ok(Field::Note(NoteField::DependentOf)),
+            "position" => Ok(Field::Note(NoteField::Position)),
+            "in_link_cycle" => Ok(Field::Note(NoteField::InLinkCycle)),
             "c.id" => Ok(Field::Card(CardField::Id)),
             "c.created_at" => Ok(Field::Card(CardField::CreatedAt)),
             "c.updated_at" => Ok(Field::Card(CardField::UpdatedAt)),
@@ -986,6 +997,7 @@ impl Field {
         }
     }
 
+    #[expect(clippy::too_many_lines)]
     fn to_sql_str(&self, value_str: &str) -> Result<String, Error> {
         let with_op = move |field_name: &str| format!("{} {}", field_name, value_str);
         // Never NULL, so negating it matches the cards that have no value, like new cards.
@@ -1046,6 +1058,11 @@ impl Field {
                 NoteField::LinkRelation => link_relation_sql(value_str),
                 NoteField::PrerequisiteOf | NoteField::DependentOf => {
                     link_walk_from_sql(self, value_str)
+                }
+                NoteField::Position => with_op(&position_sql("n")),
+                NoteField::InLinkCycle => {
+                    let wanted = u8::from(!value_str.contains("false"));
+                    format!("{} = {wanted}", in_link_cycle_sql("n"))
                 }
             },
             Field::Card(card_field) => match card_field {
@@ -1129,7 +1146,9 @@ impl Field {
                 | NoteField::LinkedToNote
                 | NoteField::LinkedFromNote
                 | NoteField::PrerequisiteOf
-                | NoteField::DependentOf => FieldType::Integer,
+                | NoteField::DependentOf
+                | NoteField::Position => FieldType::Integer,
+                NoteField::InLinkCycle => FieldType::Boolean,
                 NoteField::Data
                 | NoteField::Keyword
                 | NoteField::ParserName
@@ -1186,6 +1205,7 @@ impl Field {
                 | NoteField::DependentOf => Ok("n.id".to_string()),
                 NoteField::CreatedAt => Ok("n.created_at".to_string()),
                 NoteField::UpdatedAt => Ok("n.updated_at".to_string()),
+                NoteField::Position => Ok(position_sql("n")),
                 NoteField::ParserName => Ok("p.name".to_string()),
                 NoteField::Data => Ok("n.data".to_string()),
                 NoteField::Keyword => Ok(
@@ -1205,6 +1225,7 @@ impl Field {
                 )),
                 // Unsupported types
                 NoteField::CustomData(_) => Err(miette!("it holds JSON")),
+                NoteField::InLinkCycle => Err(miette!("it can't be sorted")),
             },
             Field::Card(card_field) => match card_field {
                 CardField::Id => Ok("c.id".to_string()),
@@ -3043,12 +3064,19 @@ pub(crate) fn tree_has_limit(tree: &TokenTree) -> bool {
 }
 
 /// Returns true if the token tree contains a `c.cloze` field reference.
-/// Whether `tree` uses a field that reads notes' positions (see [`crate::api::note_position`]).
+/// Whether `tree` uses a field that reads notes' positions (see [`crate::api::note_position`]),
+/// to compare or to sort by, as in `sort_by_asc=c.due,position`.
 fn reads_positions(tree: &TokenTree) -> bool {
     match tree {
-        TokenTree::Atom(Atom::Field(f), _) => {
-            Field::from_str(f).is_ok_and(|f| matches!(f, Field::Card(CardField::WaitingOnLinks)))
-        }
+        TokenTree::Atom(Atom::Field(f) | Atom::Word(f), _) => f.split(',').any(|name| {
+            Field::from_str(name.trim()).is_ok_and(|f| {
+                matches!(
+                    f,
+                    Field::Card(CardField::WaitingOnLinks)
+                        | Field::Note(NoteField::Position | NoteField::InLinkCycle)
+                )
+            })
+        }),
         TokenTree::Cons(_, children) => children.iter().any(reads_positions),
         TokenTree::Atom(_, _) => false,
     }

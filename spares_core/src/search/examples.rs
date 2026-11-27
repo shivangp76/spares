@@ -35,6 +35,7 @@ const EXAMPLES: &[QueryExample] = &[
     example("Examples", "sort_by_asc=c.retrievability limit=20", "The 20 cards you are least likely to recall"),
     example("Examples", "linked_to_note=(tag=history)", "Notes linking to a note tagged `history`"),
     example("Examples", "prerequisite_of=(tag=history depth<=2)", "Notes that notes tagged `history` build on, up to two links away"),
+    example("Examples", "in_link_cycle tag=history", "Notes tagged `history` linking in a loop, whose links may be worth making `rel: \"related\"`"),
     example("Examples", "(tag=a limit=5) or (tag=b limit=5)", "Up to 5 of each tag"),
 
     example("Text", "tag~history", "`~` finds text anywhere in a field: tags like `prehistory` and `history:rome`"),
@@ -58,6 +59,7 @@ const EXAMPLES: &[QueryExample] = &[
     example("Combining", "-(tag=a or tag=b)", "Parentheses group conditions: neither tag"),
 
     example("Sorting and limits", "sort_by_desc=c.difficulty,c.due", "Hardest first, and then by due date"),
+    example("Sorting and limits", "tag=history sort_by_asc=position", "In the order new cards are learned in: by when notes were created, with each note's prerequisites first"),
     example("Sorting and limits", "Paris limit=5", "The 5 notes that match `Paris` best, since notes found by words come in order of relevance"),
     example("Sorting and limits", "((tag=a limit=5) or (tag=b limit=5)) limit=8", "Up to 5 of each tag, and 8 in all"),
 ];

@@ -493,12 +493,12 @@ pub struct QueueConfig {
     /// prerequisites move forward to just before the first note that needs them, and every other
     /// note keeps its place, since notes added one after another often build on each other
     /// without linking. Notes that link to each other in a loop keep the created order between
-    /// them. See [`crate::api::note_position`].
+    /// them; `in_link_cycle` searches list them. See [`crate::api::note_position`].
     ///
     /// The order is used by [`Self::new_after_linked_notes`] and
     /// [`Self::reviews_after_linked_notes`] (a note waits only for notes before it),
     /// [`NewCardOrder::Created`], [`NewCardOrder::Unblocking`], `"unless_blocking"` sibling
-    /// burying, and goals' projections.
+    /// burying, goals' projections, and `sort_by_asc=position` searches.
     /// [`NewCardOrder::NewestFirst`] and [`ReviewOrder::NoteCreated`] still go by when notes were
     /// created. Links are matched on each machine, so the order is too, like the links that hold
     /// cards back.
