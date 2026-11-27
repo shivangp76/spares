@@ -10,6 +10,7 @@ import type {
 } from "../types/spares";
 import { errorMessage } from "../utils";
 import { askConfirm } from "../ask";
+import { appPath } from "../demo";
 
 /** Set on the editor's window by the `ext-spares` svgedit extension when it is embedded. */
 interface SparesBridge {
@@ -42,7 +43,7 @@ type Props =
       onClose: () => void;
     };
 
-const EDITOR_PATH = "/svgedit/src/editor/index.html";
+const EDITOR_PATH = appPath("/svgedit/src/editor/index.html");
 
 function imageSize(url: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {

@@ -6,6 +6,8 @@ import LocalCopySettings from "../components/LocalCopySettings";
 import SchedulerSettings from "../components/SchedulerSettings";
 import VersionSettings from "../components/VersionSettings";
 import { useAuth } from "../hooks/useAuth";
+import { DEMO } from "../demo";
+import { resetDemo } from "../local/demo";
 import {
   CARD_ZOOMS,
   EDITOR_FONT_LABELS,
@@ -348,11 +350,25 @@ export default function SettingsPage() {
         </label>
       </fieldset>
 
-      <AccountSettings />
+      {DEMO ? (
+        // The demo has no account, host or copy to set up: only its collection here
+        <fieldset className="settings-section">
+          <legend>Demo</legend>
+          <p className="field-hint">
+            The demo&apos;s notes and reviews are kept in this browser only.
+            Starting over deletes your changes and loads them again.
+          </p>
+          <button onClick={() => void resetDemo()}>Reset demo</button>
+        </fieldset>
+      ) : (
+        <>
+          <AccountSettings />
 
-      <LocalCopySettings />
+          <LocalCopySettings />
 
-      <VersionSettings />
+          <VersionSettings />
+        </>
+      )}
     </div>
   );
 }

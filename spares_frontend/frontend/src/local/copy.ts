@@ -63,6 +63,7 @@ import {
   usesLocalCopy,
 } from "./transport";
 import { COPY_PANDOC_CACHE, PANDOC_WASM_URL } from "./pandoc";
+import { DEMO, demoNeedsServer } from "../demo";
 import type { CollectionProgress } from "./worker";
 
 /** Syncs once nothing changed for this long */
@@ -294,6 +295,7 @@ function syncHere(
   syncing ??= (async () => {
     // Inside the `try`, so a failure is never left in `syncing` for later syncs to return
     try {
+      if (DEMO) throw new LocalError(demoNeedsServer("Syncing"));
       const server = copyCredentials();
       setStatus({ syncing: true });
       const report = await syncWhileBusy(server, mode);
@@ -353,8 +355,10 @@ async function syncWhileBusy(
 }
 
 function syncInBackground(): void {
-  // Logged out, there is nothing to sync with, and no error worth showing
+  // Logged out, there is nothing to sync with, and no error worth showing. Nor in the demo, which
+  // has no host.
   if (
+    DEMO ||
     !status.active ||
     status.fullSyncRequired ||
     status.notEnrolled ||

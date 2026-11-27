@@ -15,6 +15,9 @@ import SyncButton from "./SyncButton";
 import UpdateIndicator from "./UpdateIndicator";
 import { errorMessage } from "../utils";
 import { dataChanged } from "../dataVersion";
+import { DEMO } from "../demo";
+import DemoBanner from "./DemoBanner";
+import { resetDemo } from "../local/demo";
 
 /** The help of a page that opens it itself, with `?`, and has shortcuts of its own. */
 interface Help {
@@ -213,6 +216,7 @@ export default function Navbar({
   return (
     <PageHelpContext.Provider value={setPageHelpOpener}>
       <div className="app-navbar">
+        {DEMO && <DemoBanner />}
         <nav className="navbar">
           <div className="navbar-links">
             {linksIn("main").map(({ to, label }) =>
@@ -246,8 +250,9 @@ export default function Navbar({
             </span>
           </div>
           <div className="navbar-actions">
-            <UpdateIndicator />
-            <OfflineIndicator />
+            {/* The demo has no host to update from, be offline from or sync with */}
+            {!DEMO && <UpdateIndicator />}
+            {!DEMO && <OfflineIndicator />}
             <SavedCopiesNotice />
             <button
               onClick={() => setPaletteOpen(true)}
@@ -256,7 +261,7 @@ export default function Navbar({
             >
               Go to… <span className="key-hint">(Ctrl+K)</span>
             </button>
-            <SyncButton onStatus={showStatus} />
+            {!DEMO && <SyncButton onStatus={showStatus} />}
             <span className="navbar-split">
               <button
                 onClick={undoLatest}
@@ -304,7 +309,7 @@ export default function Navbar({
             <NavMenu
               label="Account"
               current={onAccountPage}
-              title="Settings, and logging out"
+              title={DEMO ? "Settings, and starting the demo over" : "Settings, and logging out"}
               align="right"
             >
               {linksIn("account").map((link) => (
@@ -313,9 +318,9 @@ export default function Navbar({
               <button
                 className="nav-menu-item"
                 role="menuitem"
-                onClick={onLogout}
+                onClick={DEMO ? () => void resetDemo() : onLogout}
               >
-                Log out
+                {DEMO ? "Reset demo" : "Log out"}
               </button>
             </NavMenu>
           </div>

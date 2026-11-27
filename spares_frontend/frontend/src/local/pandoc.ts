@@ -13,9 +13,10 @@
 import { useEffect, useState } from "react";
 import type { PandocRequest, PandocResponse } from "./pandoc.worker";
 import { call } from "./transport";
+import { appPath } from "../demo";
 
 /** pandoc.wasm of the server's version (see pandoc-wasm.ts), which the copy keeps in `COPY_PANDOC_CACHE` */
-export const PANDOC_WASM_URL = new URL(__PANDOC_WASM__, location.origin).href;
+export const PANDOC_WASM_URL = new URL(appPath(__PANDOC_WASM__), location.origin).href;
 export const COPY_PANDOC_CACHE = "spares-copy-pandoc";
 
 const IDLE_MS = 60 * 1000;

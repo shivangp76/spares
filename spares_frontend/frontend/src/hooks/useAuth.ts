@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { getCredentials, logout as endSession } from "../api/client";
 import type { Credentials } from "../types/spares";
+import { appPath } from "../demo";
 
 export function useAuth(): {
   credentials: Credentials | null;
@@ -15,7 +16,7 @@ export function useAuth(): {
   }, []);
 
   function logout() {
-    void endSession().then(() => window.location.replace("/login"));
+    void endSession().then(() => window.location.replace(appPath("/login")));
   }
 
   return { credentials, logout };

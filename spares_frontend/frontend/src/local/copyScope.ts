@@ -1,5 +1,11 @@
+import { DEMO, DEMO_CREDENTIALS } from "../demo";
+
 /** Storage and transport names belong to the account that opened this document. */
 export const credentialsKey = "spares_credentials";
+
+// The demo's one account is logged in before the account is read below
+if (DEMO && localStorage.getItem(credentialsKey) === null)
+  localStorage.setItem(credentialsKey, JSON.stringify(DEMO_CREDENTIALS));
 
 function currentAccount(): string | null {
   try {

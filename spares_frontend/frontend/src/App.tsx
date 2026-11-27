@@ -4,6 +4,7 @@ import { AskDialogHost } from "./components/AskDialog";
 import Navbar from "./components/Navbar";
 import Skeleton from "./components/Skeleton";
 import { useAuth } from "./hooks/useAuth";
+import { DEMO } from "./demo";
 
 // Pages are loaded on demand so a page doesn't wait for the others' code, e.g. the note editor
 const CardsPage = lazy(() => import("./pages/CardsPage"));
@@ -49,9 +50,22 @@ export default function App() {
     <Suspense fallback={<PageSkeleton />}>
       <AskDialogHost />
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        {DEMO ? (
+          // The demo's one account is always logged in
+          ["/login", "/signup", "/reset-password"].map((path) => (
+            <Route
+              key={path}
+              path={path}
+              element={<Navigate to="/review" replace />}
+            />
+          ))
+        ) : (
+          <>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+          </>
+        )}
         <Route element={<NavbarLayout />}>
           <Route path="/notes" element={<NotesPage />} />
           <Route path="/graph" element={<GraphPage />} />

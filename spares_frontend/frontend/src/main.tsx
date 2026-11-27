@@ -9,15 +9,19 @@ import { startVersionChecks } from "./version";
 import { onServerBack } from "./api/reachability";
 import { usesLocalCopy } from "./local/transport";
 import { dataChanged } from "./dataVersion";
+import { appPath, DEMO } from "./demo";
+import DemoLoading from "./components/DemoLoading";
 
-// Lets the app open offline (see service-worker.js). Not in development, where files change.
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch(console.error);
+// Lets the app open offline (see service-worker.js). Not in development, where files change, nor
+// in the demo, which has nothing to update it from.
+if (import.meta.env.PROD && !DEMO && "serviceWorker" in navigator) {
+  navigator.serviceWorker.register(appPath("/sw.js")).catch(console.error);
 }
 // Notices when the server has a newer build than this page (see version.ts)
-startVersionChecks();
-// Opens this device's copy of the collection, if it keeps one, and syncs it
-startLocalCopy().catch(console.error);
+if (!DEMO) startVersionChecks();
+// Opens this device's copy of the collection, if it keeps one, and syncs it. The demo opens it
+// once it has loaded it (DemoLoading).
+if (!DEMO) startLocalCopy().catch(console.error);
 // Pages that failed while the server was unreachable fetch again once it is back. A device with a
 // copy shows the copy, and its sync tells the pages when anything changed.
 onServerBack(() => {
@@ -43,8 +47,14 @@ window.addEventListener("pageshow", (event) => {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
+    <BrowserRouter basename={appPath("") || "/"}>
+      {DEMO ? (
+        <DemoLoading>
+          <App />
+        </DemoLoading>
+      ) : (
+        <App />
+      )}
     </BrowserRouter>
   </StrictMode>,
 );

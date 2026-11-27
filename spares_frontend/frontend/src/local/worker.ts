@@ -90,6 +90,7 @@ const calls = {
   status: spares.status,
   handle: spares.handle,
   enroll: spares.enroll,
+  load_snapshot: spares.load_snapshot,
   sync: spares.sync,
   unenroll: spares.unenroll,
   forget: spares.forget,

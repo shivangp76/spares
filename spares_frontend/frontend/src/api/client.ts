@@ -66,6 +66,7 @@ import {
   usesLocalCopy,
 } from "../local/transport";
 import { loginPath } from "../login";
+import { DEMO, demoNeedsServer } from "../demo";
 import { isGatewayError, reportServerReachable } from "./reachability";
 
 import { credentialsKey as STORAGE_KEY, copyAccount, requireCopyAccount } from "../local/copyScope";
@@ -422,6 +423,7 @@ async function apiSend(
   if (usesLocalCopy()) {
     res = await localFetch(path, request);
     if (await needsServer(res)) {
+      if (DEMO) throw new ApiError(demoNeedsServer(label));
       try {
         res = await send(label, `${serverUrl}${path}`, request);
       } catch (e) {
@@ -454,9 +456,11 @@ export function fileUrl(relativePath: string): string {
  */
 export async function fetchFile(relativePath: string): Promise<Blob> {
   const url = fileUrl(relativePath);
-  const res =
-    (await copyFile(url, COPY_FILES_CACHE)) ??
-    (await sendForFile("Loading file", url));
+  const cached = await copyFile(url, COPY_FILES_CACHE);
+  // The demo has every file there is, which no host renders again
+  if (!cached && DEMO)
+    throw new ApiError(demoNeedsServer("Rendering a changed note"));
+  const res = cached ?? (await sendForFile("Loading file", url));
   await throwIfNotOk(res, "Loading file");
   return res.blob();
 }
