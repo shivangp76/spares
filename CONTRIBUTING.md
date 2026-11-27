@@ -162,8 +162,16 @@ It makes the collection again (about two minutes, most of it rendering) only whe
 
 ```sh
 bun e2e/demo.ts                              # Chromium, WebKit and Firefox, about a minute each
-bun demo/screenshots.ts                      # docs/screenshots/*.webp (needs cwebp)
 ```
+
+After a change to a page the README shows, take its screenshots again, from anywhere in the repository (it needs cwebp: `brew install webp`):
+
+```sh
+cargo xtask screenshots              # builds the demo as `cargo xtask demo` does, then docs/screenshots/*.webp
+cargo xtask screenshots --only graph # one of them; --fresh, --app and --no-build as demo/screenshots.ts says
+```
+
+It runs only by hand, not in CI. Afterwards it checks the README against what it took: it fails if the README shows a screenshot it doesn't take, and names any file in `docs/screenshots` the README doesn't show. A new screenshot goes in `DESKTOP` in `demo/screenshots.ts` and in the README together. Commit the README and `docs/screenshots` together too.
 
 CI runs `bun run build-demo` instead, which always builds both the app and the collection into `dist-demo/` (it needs `cargo build -p spares_cli -p spares_server` first). `bun demo/serve.ts dist-demo` serves a build as GitHub Pages does. Markdown notes in the demo avoid characters pdflatex can't typeset, such as `α` or `²`, and subscripts (`H~2~O`) inside clozes, which a hidden cloze's highlighting can't hold: their PDFs are rendered too, though the demo leaves them out. The comment at the top of `demo/notes.ts` lists what the collection shows, and each feature's note says so in a comment above it, so check there before adding a note for a feature.
 

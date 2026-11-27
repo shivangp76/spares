@@ -3,6 +3,7 @@
 //
 //   bun demo/run.ts            # builds dist-demo/, serves it at http://127.0.0.1:8798/spares/
 //   bun demo/run.ts --dev      # vite's dev server instead, which reloads as the app changes
+//   bun demo/run.ts --build    # only builds dist-demo/ (screenshots.ts does this before it shoots)
 //
 // The collection (dist-demo/demo/, which build.ts makes in about two minutes) is made again only
 // when there is none, when it is over a week old (its reviews are dated from when it was made, so
@@ -14,6 +15,7 @@
 //   --fresh      make the collection again anyway
 //   --app        keep the collection, however old
 //   --dev        serve the app from vite's dev server, with the collection from dist-demo/demo/
+//   --build      build dist-demo/ and stop, without serving it
 //   --open       open the demo in a browser
 //   --port <n>   the port to serve it on (8798)
 import { spawn, spawnSync } from "node:child_process";
@@ -43,26 +45,28 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-let args: { fresh?: boolean; app?: boolean; dev?: boolean; open?: boolean; port?: string; help?: boolean };
+let args: { fresh?: boolean; app?: boolean; dev?: boolean; build?: boolean; open?: boolean; port?: string; help?: boolean };
 try {
   ({ values: args } = parseArgs({
     options: {
       fresh: { type: "boolean" },
       app: { type: "boolean" },
       dev: { type: "boolean" },
+      build: { type: "boolean" },
       open: { type: "boolean" },
       port: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   }));
 } catch (error) {
-  fail(`${(error as Error).message}\nusage: bun demo/run.ts [--fresh | --app] [--dev] [--open] [--port <n>]`);
+  fail(`${(error as Error).message}\nusage: bun demo/run.ts [--fresh | --app] [--dev | --build] [--open] [--port <n>]`);
 }
 if (args.help) {
-  console.log("usage: bun demo/run.ts [--fresh | --app] [--dev] [--open] [--port <n>]\nSee the top of demo/run.ts.");
+  console.log("usage: bun demo/run.ts [--fresh | --app] [--dev | --build] [--open] [--port <n>]\nSee the top of demo/run.ts.");
   process.exit(0);
 }
 if (args.fresh && args.app) fail("--fresh makes the collection again, and --app keeps it: give one");
+if (args.dev && args.build) fail("--dev serves the app from vite, and --build serves nothing: give one");
 const port = Number(args.port ?? 8798);
 if (!Number.isInteger(port) || port <= 0 || port > 65535) fail(`--port ${args.port} isn't a port`);
 
@@ -113,7 +117,7 @@ function step(what: string, command: string, argv: string[], options: { cwd?: st
   if (result.status !== 0) fail(`${what} failed`);
 }
 
-if (!(await portFree(port)))
+if (!args.build && !(await portFree(port)))
   fail(`port ${port} is in use, perhaps by another demo: stop it, or give another with --port`);
 const stale = args.fresh ? "--fresh asks for it" : args.app ? null : staleCollection();
 if (args.app && !existsSync(MANIFEST)) fail("there is no demo collection to keep: run it without --app");
@@ -158,7 +162,9 @@ if (args.dev) {
 }
 
 const url = `http://127.0.0.1:${port}${BASE}`;
-if (args.dev) {
+if (args.build) {
+  console.log(`\nBuilt the demo in ${relative(FRONTEND, DIST)}`);
+} else if (args.dev) {
   console.log(`\n» Serving the demo from vite's dev server at ${url}`);
   const vite = spawn(join(BIN, "vite"), ["--base", BASE, "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: FRONTEND,

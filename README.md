@@ -76,7 +76,7 @@ See our [Getting Started Guide](spares_frontend/frontend/src/manual/getting_star
 
 ## Screenshots
 
-Taken from the [demo](https://shivangp76.github.io/spares/) (`bun demo/screenshots.ts` in `spares_frontend/frontend` takes them again).
+Taken from the [demo](https://shivangp76.github.io/spares/) (`cargo xtask screenshots` takes them again).
 
 | | |
 |---|---|
