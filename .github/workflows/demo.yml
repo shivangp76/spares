@@ -1,12 +1,11 @@
 name: Demo
 # Builds the demo (the web app with example notes, in the browser, with no host; see
-# spares_frontend/frontend/demo/build.ts), tests it, and publishes it to GitHub Pages. Weekly too,
-# since its made-up reviews are dated from the build, so that it keeps cards due.
+# spares_frontend/frontend/demo/build.ts), tests it, and publishes it to GitHub Pages. Weekly,
+# since its made-up reviews are dated from the build, so that it keeps cards due, and when run by
+# hand (`gh workflow run demo.yml`) to publish a change sooner; not on every push, as a build is slow.
 #
 # Needs Settings → Pages → Source: GitHub Actions in the repository.
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: '41 4 * * 1'
   workflow_dispatch:

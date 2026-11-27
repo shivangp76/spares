@@ -149,7 +149,7 @@ The frontend's lint (react-hooks 7) rejects calling setState synchronously in an
 
 ### The demo and the README's screenshots
 
-The demo is the web app built with `VITE_SPARES_DEMO=1` (`src/demo.ts`): it has no host, and loads a collection of example notes into the browser's copy (`src/local/demo.ts`, with `load_snapshot` in `spares_wasm`). `demo/build.ts` makes that collection on a scratch host of its own, from `demo/notes.ts`, with three months of made-up reviews dated from the build. `.github/workflows/demo.yml` publishes it to GitHub Pages on every push to `main`, and weekly so that cards stay due.
+The demo is the web app built with `VITE_SPARES_DEMO=1` (`src/demo.ts`): it has no host, and loads a collection of example notes into the browser's copy (`src/local/demo.ts`, with `load_snapshot` in `spares_wasm`). `demo/build.ts` makes that collection on a scratch host of its own, from `demo/notes.ts`, with three months of made-up reviews dated from the build. `.github/workflows/demo.yml` publishes it to GitHub Pages weekly, so that cards stay due, and when run by hand: `gh workflow run demo.yml` publishes `main` as it is now.
 
 To build it and try it, from anywhere in the repository:
 
