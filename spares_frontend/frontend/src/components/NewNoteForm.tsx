@@ -57,6 +57,8 @@ export interface NewNoteStart {
   parserName?: string;
   tags?: string[];
   keywords?: string[];
+  /** The note's custom data, such as its `language`. */
+  customData?: Record<string, unknown>;
 }
 
 /**
@@ -223,7 +225,7 @@ export default function NewNoteForm({
           keywords: lines(keywords),
           tags: lines(tags),
           is_suspended: isSuspended,
-          custom_data: {},
+          custom_data: start?.customData ?? {},
         },
       ]);
       newNoteDraft.save(null);

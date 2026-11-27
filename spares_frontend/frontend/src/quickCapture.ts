@@ -5,6 +5,7 @@
  * them when it stops.
  */
 import { useEffect } from 'react';
+import type { NewNoteStart } from './components/NewNoteForm';
 
 let current: string[] = [];
 
@@ -29,4 +30,12 @@ export function searchedTag(query: string | null | undefined): string | null {
   const match = /^\s*tag\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s"()]+))\s*$/.exec(query ?? '');
   if (!match) return null;
   return match[1] !== undefined ? match[1].replace(/\\(.)/g, '$1') : match[2];
+}
+
+/** The event that opens quick capture with a note to start from (`captureNote`). */
+export const CAPTURE_EVENT = 'spares-capture';
+
+/** Opens quick capture with a new note starting as `start`, such as a card for a word looked up. */
+export function captureNote(start: NewNoteStart): void {
+  window.dispatchEvent(new CustomEvent<NewNoteStart>(CAPTURE_EVENT, { detail: start }));
 }

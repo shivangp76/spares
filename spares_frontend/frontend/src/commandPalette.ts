@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { parseNoteId } from "./utils";
 
 /** An entry of the command palette (`CommandPalette`). */
@@ -67,4 +68,21 @@ export function startsAWord(label: string, query: string): boolean {
 export function looksLikeNoteId(query: string): boolean {
   const q = query.trim();
   return /^[a-z]{1,6}$/i.test(q) && parseNoteId(q) !== null;
+}
+
+let pageCommands: Command[] = [];
+
+/** The commands the page shown offers the palette (`usePageCommands`). */
+export function currentPageCommands(): Command[] {
+  return pageCommands;
+}
+
+/** Offers `commands` to the command palette while the calling component is shown. */
+export function usePageCommands(commands: Command[]): void {
+  useEffect(() => {
+    pageCommands = commands;
+    return () => {
+      pageCommands = [];
+    };
+  });
 }

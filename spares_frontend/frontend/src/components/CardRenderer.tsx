@@ -39,6 +39,8 @@ interface Props {
   onTypstWidth?: (width: number) => void;
   /** Scrolls the card's clozes into view once it is displayed, e.g. while its side is shown. */
   scrollToCloze?: boolean;
+  /** Gets the document of a card shown as HTML (see `HtmlViewer`). */
+  onDocument?: (doc: Document | null) => void;
 }
 
 export default function CardRenderer({
@@ -54,6 +56,7 @@ export default function CardRenderer({
   onPlayAudio,
   onTypstWidth,
   scrollToCloze,
+  onDocument,
 }: Props) {
   // The card text size setting, wherever a card is shown
   const zoom = Number(useCardZoom()) / 100;
@@ -85,6 +88,7 @@ export default function CardRenderer({
         onPlayAudio={onPlayAudio}
         scrollToCloze={scrollToCloze}
         zoom={zoom}
+        onDocument={onDocument}
       />
     ) : (
       <RenderedFile path={path} version={version} onReady={onReady} />

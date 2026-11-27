@@ -7,6 +7,8 @@ import { dialogOpen, keyName, takesKeys } from "../keys";
 import { NAV_LINKS, isOnPage, type NavPlace } from "../navLinks";
 import CommandPalette from "./CommandPalette";
 import QuickCapture from "./QuickCapture";
+import type { NewNoteStart } from "./NewNoteForm";
+import { CAPTURE_EVENT } from "../quickCapture";
 import NavMenu from "./NavMenu";
 import { RedoIcon, UndoIcon } from "./Icons";
 import OfflineIndicator from "./OfflineIndicator";
@@ -109,6 +111,16 @@ export default function Navbar({
   // `c` writes a new note over the page (`QuickCapture`), except on the Notes page, whose own `c`
   // opens one in its pane. Not behind a popup, or while typing.
   const [capturing, setCapturing] = useState(false);
+  // A note to start from, from `captureNote`
+  const [captureStart, setCaptureStart] = useState<NewNoteStart | undefined>();
+  useEffect(() => {
+    function capture(e: Event) {
+      setCaptureStart((e as CustomEvent<NewNoteStart>).detail);
+      setCapturing(true);
+    }
+    window.addEventListener(CAPTURE_EVENT, capture);
+    return () => window.removeEventListener(CAPTURE_EVENT, capture);
+  }, []);
   useEffect(() => {
     if (pathname === "/notes") return;
     function handleKey(e: KeyboardEvent) {
@@ -342,7 +354,11 @@ export default function Navbar({
           </div>
           {capturing && (
             <QuickCapture
-              onClose={() => setCapturing(false)}
+              start={captureStart}
+              onClose={() => {
+                setCapturing(false);
+                setCaptureStart(undefined);
+              }}
               onCreated={(message) => showStatus(message)}
             />
           )}

@@ -22,6 +22,8 @@ interface Props {
   scrollToCloze?: boolean;
   /** How much larger than usual the text is, e.g. 1.5. */
   zoom?: number;
+  /** Gets the iframe's document each time one loads, and `null` when it goes, for listening to it. */
+  onDocument?: (doc: Document | null) => void;
 }
 
 type Loaded = { key: string; html?: string; error?: string };
@@ -44,6 +46,7 @@ export default function HtmlViewer({
   onPlayAudio,
   scrollToCloze,
   zoom = 1,
+  onDocument,
 }: Props) {
   const key = html === undefined ? `${path}?v=${version}` : `html:${html}`;
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -57,12 +60,14 @@ export default function HtmlViewer({
   const zoomRef = useRef(zoom);
   const onOpenNoteRef = useRef(onOpenNote);
   const onPlayAudioRef = useRef(onPlayAudio);
+  const onDocumentRef = useRef(onDocument);
   useEffect(() => {
     themeRef.current = theme;
     zoomRef.current = zoom;
     onOpenNoteRef.current = onOpenNote;
     onPlayAudioRef.current = onPlayAudio;
-  }, [theme, zoom, onOpenNote, onPlayAudio]);
+    onDocumentRef.current = onDocument;
+  }, [theme, zoom, onOpenNote, onPlayAudio, onDocument]);
 
   useEffect(() => {
     if (html !== undefined) return;
@@ -115,6 +120,7 @@ export default function HtmlViewer({
       observer.observe(doc.documentElement);
       setHeight(doc.documentElement.scrollHeight);
       setLoadedKey(loadedFor);
+      onDocumentRef.current?.(doc);
       onReady?.();
     };
     iframe.addEventListener("load", onLoad);
@@ -129,6 +135,7 @@ export default function HtmlViewer({
       onLoad();
     return () => {
       iframe.removeEventListener("load", onLoad);
+      if (observer) onDocumentRef.current?.(null);
       observer?.disconnect();
     };
   }, [current, onReady]);

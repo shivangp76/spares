@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   type Command,
   looksLikeNoteId,
+  currentPageCommands,
   matchCommands,
   startsAWord,
 } from "../commandPalette";
@@ -104,6 +105,7 @@ export default function CommandPalette({
         run: go("/review?query=&start"),
       },
       { id: "undo", label: "Undo the last change", hint: "Undo", run: onUndo },
+      ...currentPageCommands(),
       ...(syncButton && !syncButton.disabled
         ? [
             {

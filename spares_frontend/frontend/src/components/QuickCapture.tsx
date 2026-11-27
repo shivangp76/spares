@@ -14,9 +14,12 @@ import type { NotePaneHandle } from "./NoteDetail";
  * new note is waiting, which it carries on, as the Notes and Review pages do.
  */
 export default function QuickCapture({
+  start: given,
   onClose,
   onCreated,
 }: {
+  /** The note to start from, instead of the page's tags or a draft */
+  start?: NewNoteStart;
   onClose: () => void;
   /** Says what was created, as the navbar's status */
   onCreated: (message: string) => void;
@@ -26,6 +29,7 @@ export default function QuickCapture({
   const { newNoteDraft } = useDraftStore();
   // Read once, as the form reads its start once
   const [start] = useState<NewNoteStart | undefined>(() => {
+    if (given) return given;
     const tags = captureTags();
     return newNoteDraft.load() || tags.length === 0 ? undefined : { tags };
   });
