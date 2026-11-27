@@ -6,6 +6,7 @@ import type { Keybinding } from "../help/shortcuts";
 import { dialogOpen, keyName, takesKeys } from "../keys";
 import { NAV_LINKS, isOnPage, type NavPlace } from "../navLinks";
 import CommandPalette from "./CommandPalette";
+import QuickCapture from "./QuickCapture";
 import NavMenu from "./NavMenu";
 import { RedoIcon, UndoIcon } from "./Icons";
 import OfflineIndicator from "./OfflineIndicator";
@@ -105,6 +106,21 @@ export default function Navbar({
     return () =>
       window.removeEventListener("keydown", handleKey, { capture: true });
   }, []);
+  // `c` writes a new note over the page (`QuickCapture`), except on the Notes page, whose own `c`
+  // opens one in its pane. Not behind a popup, or while typing.
+  const [capturing, setCapturing] = useState(false);
+  useEffect(() => {
+    if (pathname === "/notes") return;
+    function handleKey(e: KeyboardEvent) {
+      if (keyName(e) !== "c" || takesKeys(e.target) || dialogOpen()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setCapturing(true);
+    }
+    window.addEventListener("keydown", handleKey, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", handleKey, { capture: true });
+  }, [pathname]);
   // `g` and then a page's key in `NAV_LINKS` goes to it, as in Gmail, listed as `GO_TO_SHORTCUTS`.
   // They are listened to before the page's own keys, so that the second does nothing else, as `s`
   // would suspend the card being reviewed.
@@ -324,9 +340,18 @@ export default function Navbar({
               </button>
             </NavMenu>
           </div>
+          {capturing && (
+            <QuickCapture
+              onClose={() => setCapturing(false)}
+              onCreated={(message) => showStatus(message)}
+            />
+          )}
           {paletteOpen && (
             <CommandPalette
               onClose={() => setPaletteOpen(false)}
+              onCapture={
+                pathname === "/notes" ? undefined : () => setCapturing(true)
+              }
               onUndo={() => void undoLatest()}
               onHelp={
                 pageHelp

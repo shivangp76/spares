@@ -1959,3 +1959,15 @@ html:has(.review-answer-bar) {
 .interval-preview-rating {
   color: var(--text-muted);
 }
+
+/* Quick capture's new note, over any page */
+.audio-recorder.quick-capture {
+  width: min(760px, calc(100% - 32px));
+  /* The form is a box of its own */
+  border: none;
+  background: none;
+}
+
+.audio-recorder.quick-capture > .audio-recorder-content {
+  padding: 0;
+}

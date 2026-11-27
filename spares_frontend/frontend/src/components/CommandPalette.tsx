@@ -20,11 +20,14 @@ export default function CommandPalette({
   onClose,
   onUndo,
   onHelp,
+  onCapture,
 }: {
   onClose: () => void;
   onUndo: () => void;
   /** Opens the page's help, where it has one. */
   onHelp?: () => void;
+  /** Writes a new note over the page (`QuickCapture`), where it can */
+  onCapture?: () => void;
 }) {
   const navigate = useNavigate();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -90,8 +93,9 @@ export default function CommandPalette({
       {
         id: "new-note",
         label: "New note",
-        hint: "c on Notes",
-        run: go("/notes?new"),
+        hint: "c",
+        // Over this page, or on the Notes page in its pane
+        run: onCapture ?? go("/notes?new"),
       },
       {
         id: "review",
@@ -146,7 +150,7 @@ export default function CommandPalette({
     return matched.length > 0 && startsAWord(matched[0].label, q)
       ? [...matched, ...typed]
       : [...typed, ...matched];
-  }, [query, saved, navigate, onUndo, onHelp]);
+  }, [query, saved, navigate, onUndo, onHelp, onCapture]);
 
   const shown = Math.min(active, Math.max(0, commands.length - 1));
 

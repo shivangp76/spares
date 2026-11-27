@@ -23,6 +23,13 @@ export const PALETTE_SHORTCUT: Shortcut = {
   description: 'Open a note by its id, search, review, or go to a page or action (Cmd+K on a Mac)',
 };
 
+/** Writes a new note over any page, from the navbar (`Navbar`, `QuickCapture`). Not Ctrl+N, which
+    browsers keep for a new window and the note editor's Vim completion uses. */
+export const CAPTURE_SHORTCUT: Shortcut = {
+  keys: ['c'],
+  description: 'Write a new note, tagged like what the page shows (on Notes, in its pane)',
+};
+
 /** Go to another page, from the navbar (`Navbar`). */
 export const GO_TO_SHORTCUTS: Shortcut[] = NAV_LINKS.map(({ label, key }) => ({ keys: [`g ${key}`], description: `Go to ${label}` }));
 

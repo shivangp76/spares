@@ -124,6 +124,7 @@ import { askNotesBefore } from "../notesBefore";
 import type { NotePaneHandle } from "../components/NoteDetail";
 import PageTitle from "../components/PageTitle";
 import OptimizeNudge from "../components/OptimizeNudge";
+import { useCaptureTags } from "../quickCapture";
 import Skeleton from "../components/Skeleton";
 import LinkRelationMark from "../components/LinkRelationMark";
 
@@ -670,6 +671,8 @@ export default function ReviewPage() {
   // The flipped card, which swiping rates on touchscreens
   const backSideRef = useRef<HTMLDivElement>(null);
   const swipeEnabled = useSwipeToRate();
+  // A note written with `c` while reviewing starts with the card's note's tags
+  useCaptureTags(card ? topicTags(card.tags) : null);
   const [keywordResults, setKeywordResults] = useState<{
     keyword: string;
     notes: NoteResponse[];

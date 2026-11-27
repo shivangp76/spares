@@ -76,6 +76,7 @@ import {
   withSearch,
 } from "../utils";
 import PageTitle from "../components/PageTitle";
+import { searchedTag } from "../quickCapture";
 import Skeleton from "../components/Skeleton";
 import { askConfirm, askText } from "../ask";
 import { useDraftStore } from "../noteDrafts";
@@ -780,9 +781,18 @@ export default function NotesPage() {
       {
         keys: ["c"],
         codes: ["c"],
-        description: "Write a new note",
+        description:
+          "Write a new note, with the tag searched for (as tag=x) unless a draft is waiting",
         available: !creating,
-        run: () => void startNewNote(),
+        run: () => {
+          // Like quick capture elsewhere (`QuickCapture`): a draft is carried on
+          const tag = searchedTag(searchQuery);
+          void startNewNote(
+            tag !== null && newNoteDraft.load() === null
+              ? { tags: [tag] }
+              : undefined,
+          );
+        },
       },
       // A Mac's Delete key is Backspace
       {

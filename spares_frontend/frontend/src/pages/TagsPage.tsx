@@ -29,6 +29,7 @@ import type {
 } from "../types/spares";
 import TagRetentionBar from "../components/TagRetentionBar";
 import { weakestFirst } from "../tagRetention";
+import { useCaptureTags } from "../quickCapture";
 import { errorMessage, td, th } from "../utils";
 import PageTitle from "../components/PageTitle";
 import Skeleton from "../components/Skeleton";
@@ -674,6 +675,15 @@ export default function TagsPage() {
     prevPage: view === "table" ? pages.pagination.prevPage : null,
     nextPage: view === "table" ? pages.pagination.nextPage : null,
   });
+
+  // A note written with `c` starts with the highlighted tag, unless it is filtered
+  const highlightedTag =
+    view === "table" && keys.highlighted >= 0
+      ? shown[keys.highlighted]
+      : undefined;
+  useCaptureTags(
+    highlightedTag && highlightedTag.query === null ? [highlightedTag.name] : null,
+  );
 
   return (
     <div
