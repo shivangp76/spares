@@ -49,9 +49,30 @@
   if c.has("body") { return _is-block-content(c.body) }
   false
 }
+// The equation that is all of `c` but spaces, if there is one.
+#let _only-equation(c) = {
+  if type(c) != content { return none }
+  if c.func() == math.equation { return c }
+  if c.has("children") {
+    let rest = c.children.filter(x => x.func() != _space)
+    if rest.len() == 1 { return _only-equation(rest.first()) }
+  }
+  none
+}
+// Whether the content being laid out is in display math, for `cloze-reveal`.
+#let _in-display = state("spares-in-display", false)
+#show math.equation.where(block: true): it => {
+  _in-display.update(true)
+  it
+  _in-display.update(false)
+}
+#let _reveal-box = box.with(fill: aqua, outset: (y: .2em))
 // A revealed cloze is highlighted inline when it fits in a line of text, so the clozes of a group
 // stay in their sentence. A block holds what can't sit in a paragraph (display math, lists,
 // paragraphs, environments).
+// `highlight` colours only text, so math gets a box. A cloze that is all math, as clozes in an
+// equation are, is one box, laid out in display style in display math: its own `$...$` would
+// otherwise be inline, with small fractions and sums.
 // The invisible `id` is what the web app scrolls to. Inline, it takes no width and keeps the space
 // before the cloze.
 #let cloze-reveal(id: none, markup) = {
@@ -64,7 +85,15 @@
     block(fill: aqua, outset: .2em, markup)
   } else {
     if id != none { box(width: 0pt, id-mark) }
-    highlight(fill: aqua, markup)
+    let equation = _only-equation(markup)
+    if equation != none {
+      context _reveal-box(
+        if _in-display.get() { math.equation(math.display(equation.body)) } else { equation },
+      )
+    } else {
+      show math.equation: _reveal-box
+      highlight(fill: aqua, markup)
+    }
   }
 }
 
