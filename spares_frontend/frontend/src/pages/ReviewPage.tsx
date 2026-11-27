@@ -2253,13 +2253,16 @@ export default function ReviewPage() {
             <div style={{ marginBottom: 20 }}>{summary}</div>
           )}
           {/* Rendered before the statistics load, at the height of one row of cards, so the search bar below does not shift.
-              On phones the four states' cards are narrowed to fit on that one row. */}
+              The cards share one width, the widest card's, in a grid of equal columns that shrink together when the row is too narrow (as on phones). */}
           <div
             style={{
-              display: "flex",
+              display: "grid",
+              gridAutoFlow: "column",
+              gridAutoColumns: "minmax(0, 1fr)",
+              width: "fit-content",
+              maxWidth: "100%",
               gap: isNarrow ? 8 : 12,
               marginBottom: 20,
-              flexWrap: isNarrow ? "nowrap" : "wrap",
               alignItems: "center",
               minHeight: DUE_CARD_HEIGHT,
             }}
