@@ -82,6 +82,7 @@ mod tests {
                     linked_note_id: Some(to.parse().unwrap()),
                     matched_keyword: Some((*to).to_string()),
                     relation: *relation,
+                    linked_parser_name: None,
                 })
                 .collect::<Vec<_>>(),
             "card_count": 0,
