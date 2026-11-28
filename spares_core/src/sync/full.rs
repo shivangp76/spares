@@ -91,6 +91,9 @@ pub async fn restore(db: &SqlitePool, path: &Path) -> Result<RestoredState, Erro
         .execute(&mut *conn)
         .await
         .map_err(sqlx_error);
+    // Released before reloading the settings takes one: a browser's pool has a single connection,
+    // which it would wait for until the pool gives up (30 seconds) and the settings went unread
+    drop(conn);
     let state = result?;
     detached?;
     crate::settings::reload_after_sync(db).await;

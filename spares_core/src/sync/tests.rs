@@ -1864,6 +1864,7 @@ async fn a_full_download_works_on_a_single_connection() {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let started = std::time::Instant::now();
     let report = sync(
         &pool,
         &replicas.remote,
@@ -1873,6 +1874,12 @@ async fn a_full_download_works_on_a_single_connection() {
     .await
     .unwrap();
     assert_eq!(report.notes_changed.len(), 1);
+    // Reloading the settings after it once waited out the pool's timeout, and only logged that
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "the full download took {:?}, as if waiting for a second connection",
+        started.elapsed()
+    );
 }
 
 /// A single connection, as a browser's copy has, that has done its first sync
