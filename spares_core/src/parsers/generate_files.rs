@@ -736,13 +736,31 @@ fn create_raw_and_rendered_file(
             output,
             mut dependencies,
         } = {
+            // A render that failed is an error even if it wrote the file (as latexmk does) or an
+            // earlier render's file is there, which `render_aside` then puts back
             let render = || {
-                parser.render_file(
-                    &aux_dir,
-                    &output_text_filepath,
-                    &output_rendered_dir,
-                    &output_rendered_filepath,
-                )
+                parser
+                    .render_file(
+                        &aux_dir,
+                        &output_text_filepath,
+                        &output_rendered_dir,
+                        &output_rendered_filepath,
+                    )
+                    .and_then(|rendered| {
+                        if rendered.output.status.success() {
+                            return Ok(rendered);
+                        }
+                        Err(Error::Io {
+                            description: format!(
+                                "[Note Id: {}] Failed to render {} ({}): {}",
+                                note_id.letters(),
+                                output_text_filepath.display(),
+                                rendered.output.status,
+                                String::from_utf8_lossy(&rendered.output.stderr).trim()
+                            ),
+                            source: std::io::Error::other("render failed"),
+                        })
+                    })
             };
             // Others' links to the file being replaced keep what it was (see `RenderReuse`)
             if reuse.is_some() {

@@ -557,9 +557,17 @@ fn render_file(
         .arg(&auxdir_arg)
         .arg(&outdir_arg)
         .arg(output_text_filepath)
+        // Log lines unwrapped (TeX wraps them at 79 characters), so that errors, which name the
+        // file by its whole path, are read whole from the log (see `latex_error`)
+        .env("max_print_line", "10000")
         // Current directory is changed to ensure first vimtex compilation is fast.
         .current_dir(output_text_filepath.parent().unwrap());
     let output = render_command_output(&mut command, "latexmk")?;
+    // latexmk writes the PDF in spite of errors: an undefined command such as `\tfrac` without
+    // `amsmath` is left out of it, and only the exit status says so
+    if !output.status.success() {
+        return Err(latex_error(aux_dir, output_text_filepath, &output));
+    }
     let dependencies = record_dependencies(aux_dir, output_text_filepath, output_rendered_dir)
         .unwrap_or_else(|e| {
             warn!(
@@ -572,6 +580,57 @@ fn render_file(
         output,
         dependencies,
     })
+}
+
+/// The error of a `latexmk` run that failed, with the errors of the file's last compilation, read
+/// from its log in `aux_dir`: when the file is unchanged, `latexmk` fails again without compiling
+/// it, and prints none of them.
+fn latex_error(aux_dir: &Path, tex_file: &Path, output: &std::process::Output) -> Error {
+    let log_file = aux_dir
+        .join(tex_file.file_name().unwrap_or_default())
+        .with_extension("log");
+    let errors = read_to_string(&log_file)
+        .map(|log| latex_log_errors(&log))
+        .unwrap_or_default();
+    let details = if errors.is_empty() {
+        String::from_utf8_lossy(&output.stderr).trim().to_string()
+    } else {
+        errors.join("\n")
+    };
+    Error::Io {
+        description: format!(
+            "LaTeX failed to compile {} ({}):\n{details}",
+            tex_file.display(),
+            output.status
+        ),
+        source: std::io::Error::other("latexmk failed"),
+    }
+}
+
+/// The errors in a LaTeX log written with `-file-line-error`, as `file:line: message`, each with
+/// the `l.<line>` line after it that shows where in the line it stopped.
+fn latex_log_errors(log: &str) -> Vec<String> {
+    let error_regex = get_or_compile_regex(r"^[^\s:()][^:]*:\d+: ").unwrap();
+    let lines: Vec<&str> = log.lines().collect();
+    let mut errors: Vec<String> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if !error_regex.is_match(line).unwrap_or(false) {
+            continue;
+        }
+        let context = lines[i + 1..]
+            .iter()
+            .take(4)
+            .take_while(|line| !error_regex.is_match(line).unwrap_or(false))
+            .find(|line| line.starts_with("l."));
+        let error = match context {
+            Some(context) => format!("{line}\n  {}", context.trim_end()),
+            None => (*line).to_string(),
+        };
+        if !errors.contains(&error) {
+            errors.push(error);
+        }
+    }
+    errors
 }
 
 /// The [`RenderDependencies`] of a rendered file, from the recorder file (`.fls`) that `latexmk`
@@ -663,6 +722,7 @@ mod tests {
     use indoc::indoc;
     use serde_json::Number;
 
+    use super::latex_log_errors;
     use super::recorded_inputs;
     use crate::adapters::get_adapter_from_string;
     use crate::parsers::BackReveal;
@@ -871,5 +931,34 @@ mod tests {
             .trim();
         assert!(line.starts_with(&format!("{include}{{")), "{card}");
         assert!(line.ends_with("-io-1.png}"), "{card}");
+    }
+
+    /// The errors of a log are its `file:line:` lines with where they stopped, once each, and
+    /// not the files it opened
+    #[test]
+    fn latex_log_errors_are_read_from_its_log() {
+        let log = indoc! {r"
+            (/usr/local/texlive/2026/texmf-dist/tex/latex/base/size10.clo))
+            (aux/bad.aux)
+            ./bad.tex:3: Undefined control sequence.
+            <recently read> \tfrac
+
+            l.3 Half: $\tfrac
+                             {1}{2}$
+            [1{/usr/local/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map}]
+            ./bad.tex:5: LaTeX Error: Environment foo undefined.
+            ./bad.tex:3: Undefined control sequence.
+            <recently read> \tfrac
+
+            l.3 Half: $\tfrac
+            Output written on aux/bad.pdf (1 page, 12230 bytes).
+        "};
+        assert_eq!(
+            latex_log_errors(log),
+            [
+                "./bad.tex:3: Undefined control sequence.\n  l.3 Half: $\\tfrac",
+                "./bad.tex:5: LaTeX Error: Environment foo undefined.",
+            ]
+        );
     }
 }
