@@ -500,6 +500,10 @@ pub enum EventType {
     /// `UpdateNotes`: undoing it restores both the cards and the parameters in `config.toml`.
     /// Unlike `RescheduleCards`, it is the user's action, as they asked for or approved it.
     OptimizeScheduler,
+    /// A change to the collection's settings (see [`crate::settings`]) through the web app or
+    /// `spares config`. Carries `UpdateSettingsPayload`, and is its own undo, like `UpdateNotes`:
+    /// undoing it changes back the keys it changed, unless they changed again since.
+    UpdateSettings,
 }
 
 impl EventType {

@@ -45,6 +45,7 @@ use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::undo::payloads::UpdateCardTagsPayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
 use crate::api::undo::payloads::UpdateParserPayload;
+use crate::api::undo::payloads::UpdateSettingsPayload;
 use crate::api::undo::payloads::UpdateTagPayload;
 use crate::model::Event;
 use crate::model::EventAction;
@@ -695,8 +696,19 @@ async fn apply_event(db: &SqlitePool, event: &Event) -> Result<(), Error> {
                 serde_json::from_value(event.payload.clone()).unwrap();
             // The swapped payload's `after`, as for the card kinds
             let parameters = &payload.parameters.after;
-            crate::config::write_fsrs_parameters(&parameters.fsrs_parameters, parameters.fitted)?;
+            crate::config::write_fsrs_parameters(
+                db,
+                &parameters.fsrs_parameters,
+                parameters.fitted,
+            )
+            .await?;
             update_card_event(db, payload.cards, false).await?;
+        }
+        EventType::UpdateSettings => {
+            let payload: UpdateSettingsPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // The swapped payload's change, from `before` to `after`
+            crate::settings::apply_change(db, &payload.text.before, &payload.text.after).await?;
         }
         // For every card kind, the payload already has .after = value to restore
         // (create_undo_event swapped it). Their `review_log` rows were handled while inverting.

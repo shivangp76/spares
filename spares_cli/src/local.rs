@@ -114,6 +114,7 @@ pub(crate) async fn collection(
         .max_connections(4)
         .connect_lazy_with(options);
     let collection = Arc::new(Collection::new(user.id, db, paths));
+    spares_core::settings::load_read_only(&collection).await;
     let replica = {
         let _entered = collection.enter();
         spares_server::host::collection_replica().ok()

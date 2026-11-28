@@ -340,6 +340,21 @@ impl OptimizeSchedulerPayload {
     }
 }
 
+/// Payload for `UpdateSettings`: the collection's settings text before and after. It is its own
+/// undo, swapped.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct UpdateSettingsPayload {
+    pub text: Transition<String>,
+}
+
+impl UpdateSettingsPayload {
+    pub fn swap(self) -> Self {
+        Self {
+            text: self.text.swap(),
+        }
+    }
+}
+
 /// Payload for `RelocateCards`, applied in this order: `deleted_cards` are deleted, `moved` cards
 /// are moved, then `restored_cards` are inserted. Its undo swaps each move and the two lists.
 #[derive(Clone, Debug, Deserialize, Serialize)]

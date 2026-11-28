@@ -338,10 +338,6 @@ fn sync_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             get(crate::handlers::sync::sync_push_target_handler),
         )
         .route(
-            "/api/sync/push-config",
-            put(crate::handlers::sync::sync_push_config_handler),
-        )
-        .route(
             "/api/sync/render",
             post(crate::handlers::sync::sync_render_handler),
         )
@@ -458,6 +454,13 @@ fn review_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
 #[allow(clippy::too_many_lines, reason = "one line per route")]
 fn shared_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
+        // The collection's settings, which sync, so a browser's copy changes them itself
+        .route(
+            "/api/settings",
+            get(crate::handlers::settings::get_settings_handler)
+                .put(crate::handlers::settings::replace_settings_handler)
+                .patch(crate::handlers::settings::update_settings_handler),
+        )
         // Parser
         .route("/api/parsers", post(create_parser_handler))
         .route("/api/parsers/{id}", get(get_parser_handler))
@@ -1079,11 +1082,86 @@ mod tests {
         )
     }
 
+    /// The web app and `spares config` read and change the collection's settings; this
+    /// machine's stay in config.toml, and the sync token is never shown.
+    #[tokio::test]
+    async fn settings_are_read_and_changed_through_the_api() {
+        use axum::http::header::AUTHORIZATION;
+
+        let (host, root) = crate::host::tests::test_host().await;
+        let config_file = root.0.join("users/me/config/config.toml");
+        std::fs::create_dir_all(config_file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config_file,
+            "new_cards_daily_limit = 12\n\n[sync]\nreplica = 1\ntoken = \"spt_secret\"\n",
+        )
+        .unwrap();
+        let router = create_router(Arc::new(AppState { host }), None);
+        let post = |uri: &str| Request::builder().method("POST").uri(uri.to_string());
+        let credentials =
+            serde_json::json!({ "user": "me", "password": "password1", "name": "a CLI" });
+        let (_, _, body) = send(&router, post("/api/auth/token"), Some(credentials)).await;
+        let token = format!("Bearer {}", body["token"].as_str().unwrap());
+        let request = |method: &str| {
+            Request::builder()
+                .method(method)
+                .uri("/api/settings")
+                .header(AUTHORIZATION, &token)
+        };
+
+        let (status, _, view) = send(&router, request("GET"), None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["text"], "new_cards_daily_limit = 12\n");
+        assert_eq!(view["values"]["new_cards_daily_limit"], 12);
+        assert_eq!(view["defaults"]["new_cards_daily_limit"], 20);
+        assert!(
+            view["local"].as_str().unwrap().contains("replica = 1"),
+            "{view}"
+        );
+        assert!(!view.to_string().contains("spt_secret"), "{view}");
+
+        let patch = serde_json::json!({ "values": [
+            { "key": ["queue", "review_order"], "value": "retrievability" },
+            { "key": ["new_cards_daily_limit"] },
+        ] });
+        let (status, _, changed) = send(&router, request("PATCH"), Some(patch)).await;
+        assert_eq!(status, StatusCode::OK, "{changed}");
+        assert_eq!(
+            changed["changed_keys"],
+            serde_json::json!(["new_cards_daily_limit", "queue.review_order"])
+        );
+        assert!(changed["event_id"].is_i64());
+        assert_eq!(changed["settings"]["values"]["new_cards_daily_limit"], 20);
+        let text = changed["settings"]["text"].as_str().unwrap().to_string();
+
+        // A change made from settings that changed since is refused
+        let stale = serde_json::json!({ "text": "load_balance = false\n", "base": "x = 1\n" });
+        let (status, _, body) = send(&router, request("PUT"), Some(stale)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["current"], text.as_str());
+        let invalid = serde_json::json!({ "text": "new_cards_daily_limit = -1\n", "base": text });
+        let (status, _, body) = send(&router, request("PUT"), Some(invalid)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let local = serde_json::json!({ "text": "[sync]\nreplica = 4\n" });
+        let (status, _, _) = send(&router, request("PUT"), Some(local)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let put = serde_json::json!({ "text": "load_balance = false\n", "base": text });
+        let (status, _, body) = send(&router, request("PUT"), Some(put)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["settings"]["values"]["load_balance"], false);
+        let file = std::fs::read_to_string(&config_file).unwrap();
+        assert!(
+            !file.contains("new_cards_daily_limit"),
+            "moved out of the file: {file}"
+        );
+        assert!(file.contains("spt_secret"), "{file}");
+    }
+
     /// `spares sync cloud` learns where to copy files with its token, and finds the check value
     /// the answer names in the file it names. The web app's session can't ask.
     #[tokio::test]
     #[allow(clippy::too_many_lines, reason = "one scenario")]
-    async fn the_push_target_and_config_are_for_device_tokens() {
+    async fn the_push_target_and_render_are_for_device_tokens() {
         use axum::http::header::AUTHORIZATION;
         use axum::http::header::COOKIE;
         use axum::http::header::SET_COOKIE;
@@ -1137,54 +1215,6 @@ mod tests {
             checks.push(target.check);
         }
         assert_ne!(checks[0], checks[1]);
-
-        // The pushed config.toml replaces the server's but for its [sync] table.
-        let config_file = root.0.join("users/me/config/config.toml");
-        std::fs::write(&config_file, "[sync]\nreplica = 1\n").unwrap();
-        let laptop = "maximum_interval = 100\n\n[sync]\ntoken = \"spt_secret\"\nreplica = 0\n";
-        let put_config = |auth: (axum::http::HeaderName, String), body: &str| {
-            Request::builder()
-                .method("PUT")
-                .uri("/api/sync/push-config")
-                .header(auth.0, auth.1)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        };
-        let response = router
-            .clone()
-            .oneshot(put_config((COOKIE, cookie.clone()), laptop))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        for changed in [true, false] {
-            let response = router
-                .clone()
-                .oneshot(put_config((AUTHORIZATION, token.clone()), laptop))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let body = response.into_body().collect().await.unwrap().to_bytes();
-            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-            assert_eq!(body["changed"], changed);
-        }
-        let written = std::fs::read_to_string(&config_file).unwrap();
-        assert!(written.contains("maximum_interval = 100"), "{written}");
-        assert!(
-            written.contains("render_browser_parsers = false"),
-            "{written}"
-        );
-        assert!(written.contains("replica = 1"), "{written}");
-        assert!(!written.contains("spt_secret"), "{written}");
-        let response = router
-            .clone()
-            .oneshot(put_config(
-                (AUTHORIZATION, token.clone()),
-                "maximum_interval = \"soon\"",
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(std::fs::read_to_string(&config_file).unwrap(), written);
 
         // Rendering again after the push starts in the background.
         let (status, _, _) = send(

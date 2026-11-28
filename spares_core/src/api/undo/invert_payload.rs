@@ -22,6 +22,7 @@ use crate::api::undo::payloads::UpdateCardTagsPayload;
 use crate::api::undo::payloads::UpdateNotePayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
 use crate::api::undo::payloads::UpdateParserPayload;
+use crate::api::undo::payloads::UpdateSettingsPayload;
 use crate::api::undo::payloads::UpdateTagPayload;
 use crate::model::Event;
 use crate::model::EventType;
@@ -65,6 +66,7 @@ pub async fn create_undo_event(
         EventType::UnscheduleBreak => EventType::ScheduleBreak,
         EventType::UpdateCardTags => EventType::UpdateCardTags,
         EventType::OptimizeScheduler => EventType::OptimizeScheduler,
+        EventType::UpdateSettings => EventType::UpdateSettings,
         EventType::UpdateCards
         | EventType::BuryCards
         | EventType::UnburyCards
@@ -346,6 +348,27 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
                     "Event {} can't be undone: `fsrs_parameters` in config.toml changed since. \
                      Undo the later change first, or set them by hand.",
                     event.id
+                ))));
+            }
+            Ok(serde_json::to_value(payload.swap()).unwrap())
+        }
+        EventType::UpdateSettings => {
+            let payload: UpdateSettingsPayload =
+                serde_json::from_value(event.payload.clone()).unwrap();
+            // Keys changed since, by hand or by a later change, would be lost
+            crate::settings::load(db).await?;
+            let changed =
+                crate::settings::changed_since(&payload.text.before, &payload.text.after)?;
+            if !changed.is_empty() {
+                return Err(Error::Library(LibraryError::InvalidConfig(format!(
+                    "Event {} can't be undone: the settings {} changed again since. Undo the \
+                     later change first, or change them by hand.",
+                    event.id,
+                    changed
+                        .iter()
+                        .map(|key| format!("`{key}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ))));
             }
             Ok(serde_json::to_value(payload.swap()).unwrap())

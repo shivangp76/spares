@@ -1,5 +1,6 @@
-//! Optimizing the scheduler's parameters: saving them to `config.toml` and rescheduling, as one
-//! `OptimizeScheduler` event that undo reverts entirely, and `auto_optimize`'s proposals.
+//! Optimizing the scheduler's parameters: saving them to the collection's settings and
+//! rescheduling, as one `OptimizeScheduler` event that undo reverts entirely, and
+//! `auto_optimize`'s proposals.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -106,10 +107,10 @@ async fn undoing_an_optimize_restores_the_parameters_and_the_cards(pool: SqliteP
         );
         assert_eq!(config.fsrs_parameters_review_count, None);
         assert_eq!(schedules(&pool).await, before);
-        let file = std::fs::read_to_string(crate::collection::paths().config_file()).unwrap();
+        let settings = crate::settings::cached().unwrap();
         assert!(
-            file.contains("# My settings"),
-            "the rest of the file is kept: {file}"
+            settings.contains("# My settings"),
+            "the rest of the settings is kept: {settings}"
         );
 
         redo_event(

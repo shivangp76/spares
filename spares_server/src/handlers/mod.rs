@@ -30,6 +30,7 @@ pub(crate) mod review;
 mod review_tests;
 pub(crate) mod saved_search;
 pub(crate) mod scheduler;
+pub(crate) mod settings;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod share;
 pub(crate) mod sync;

@@ -73,6 +73,9 @@ pub async fn sync_now(
         }
     };
     after_sync(db, &report.notes_changed, &report.notes_deleted).await;
+    if report.render_settings_changed {
+        render_out_of_date(db).await;
+    }
     render_notes_naming(db, &replaced).await;
     // Automatic sync sends local changes within a minute, so a sync that only sent is routine.
     let level = if report.pulled > 0 || !report.conflicts.is_empty() {
@@ -246,6 +249,33 @@ pub async fn note_ids(db: &SqlitePool) -> Result<BTreeSet<NoteId>, Error> {
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
     Ok(ids.into_iter().collect())
+}
+
+/// Renders every note whose files are out of date, after a change to the settings rendering reads
+/// (see [`crate::settings::RENDER_KEYS`]). The render cache leaves the others alone. The change has
+/// happened, so a failure is logged rather than returned.
+pub async fn render_out_of_date(db: &SqlitePool) {
+    let db = db.clone();
+    let rendered = crate::notes_vcs::run_shared(async move {
+        crate::api::note::render_notes(
+            &db,
+            crate::schema::note::RenderNotesRequest {
+                selector: crate::schema::note::NotesSelector::All,
+                immutable_note_ids: None,
+                overridden_output_raw_dir: None,
+                include_linked_notes: true,
+                include_cards: true,
+                generate_rendered: true,
+                force_generate_rendered: false,
+            },
+            &get_all_parsers(),
+        )
+        .await
+    })
+    .await;
+    if let Err(e) = rendered {
+        error!("Failed to render notes after a change to the settings rendering reads: {e}");
+    }
 }
 
 /// Regenerates the files of `changed` notes and removes those of `deleted` ones, and card files

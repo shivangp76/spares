@@ -122,6 +122,9 @@ pub struct SyncReport {
     pub notes_changed: BTreeSet<NoteId>,
     /// Notes deleted here, whose files have to go.
     pub notes_deleted: BTreeSet<NoteId>,
+    /// Whether the collection's settings that rendering reads changed here, so every note's
+    /// files may be out of date
+    pub render_settings_changed: bool,
 }
 
 /// What this replica remembers of its last sync.
@@ -221,7 +224,7 @@ pub async fn sync(
     let replica = get_replica()?.number();
     let meta = remote.meta(replica).await?;
     check_meta(db, &meta).await?;
-    match mode {
+    let report = match mode {
         SyncMode::FullUpload => full_upload(db, remote, replica, temp_dir).await,
         SyncMode::FullDownload => full_download(db, remote, temp_dir).await,
         SyncMode::Normal => {
@@ -232,7 +235,10 @@ pub async fn sync(
             }
             normal_sync(db, remote, replica).await
         }
-    }
+    };
+    // The merge may have changed the collection's settings
+    crate::settings::reload_after_sync(db).await;
+    report
 }
 
 pub(crate) async fn read_render_assets(
@@ -412,7 +418,9 @@ impl SyncReport {
         let Applied {
             notes_changed,
             notes_deleted,
+            render_settings_changed,
         } = outcome.applied;
+        self.render_settings_changed |= render_settings_changed;
         for id in &notes_changed {
             self.notes_deleted.remove(id);
         }
@@ -541,7 +549,19 @@ async fn finish_push(
         for grave in &pushed.graves {
             delete_base(conn, grave.kind, grave.oid).await?;
         }
+        // Settings changed during the push: what was pushed is now what both sides have
+        if let Some(settings) = &pushed.settings {
+            sqlx::query("UPDATE collection_settings SET base = ? WHERE usn = -1")
+                .bind(&settings.text)
+                .execute(&mut *conn)
+                .await
+                .map_err(sqlx_error)?;
+        }
     }
+    sqlx::query("UPDATE collection_settings SET base = NULL WHERE usn = -2")
+        .execute(&mut *conn)
+        .await
+        .map_err(sqlx_error)?;
     for table in USN_TABLES {
         if table != "review_log" {
             sqlx::query(AssertSqlSafe(format!(
@@ -649,6 +669,10 @@ async fn full_upload(
             .await
             .map_err(sqlx_error)?;
     }
+    sqlx::query("UPDATE collection_settings SET base = NULL")
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_error)?;
     set_state(
         &mut tx,
         NEEDS_FULL_SYNC_KEY,

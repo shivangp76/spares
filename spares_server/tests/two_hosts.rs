@@ -445,7 +445,8 @@ async fn invalid_sync_settings_keep_the_last_success_visible() {
         .await
         .unwrap();
     let path = host.host.paths("me").config_file();
-    let saved = std::fs::read(&path).unwrap();
+    // A collection without settings of its own has no config.toml
+    let saved = std::fs::read(&path).unwrap_or_default();
     std::fs::write(&path, "day_starts_at = 50\n").unwrap();
     let error = spares_server::auto_sync::syncs_automatically(&host.host.paths("me")).unwrap_err();
     assert!(error.to_string().contains("day_starts_at"));

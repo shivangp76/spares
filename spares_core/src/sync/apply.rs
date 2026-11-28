@@ -22,6 +22,7 @@ use super::records::NoteRecord;
 use super::records::ParserRecord;
 use super::records::ReviewLogRecord;
 use super::records::SavedSearchRecord;
+use super::records::SettingsRecord;
 use super::records::TagRecord;
 use crate::Error;
 use crate::api::note::update::links::update_note_links;
@@ -103,6 +104,29 @@ pub(crate) async fn upsert_tag(
     .execute(&mut *conn)
     .await
     .map_err(sqlx_error)?;
+    Ok(())
+}
+
+/// Writes the `collection_settings` row as `record`, with `usn`, and `base` as its last synced
+/// text (for a row still to be pushed). The triggers are off, so this is what the row ends up as.
+pub(crate) async fn write_settings(
+    conn: &mut SqliteConnection,
+    record: &SettingsRecord,
+    usn: i64,
+    base: Option<&str>,
+) -> Result<(), Error> {
+    sqlx::query(
+        "INSERT INTO collection_settings (id, text, base, updated_at, usn) VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET text = excluded.text, base = excluded.base,
+             updated_at = excluded.updated_at, usn = excluded.usn",
+    )
+    .bind(&record.text)
+    .bind(base)
+    .bind(record.updated_at)
+    .bind(usn)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| Error::Sqlx { source: e })?;
     Ok(())
 }
 
@@ -492,6 +516,9 @@ pub struct Applied {
     /// Notes whose text, tags or cards may have changed.
     pub notes_changed: BTreeSet<NoteId>,
     pub notes_deleted: BTreeSet<NoteId>,
+    /// Whether the collection's settings that rendering reads changed (see
+    /// [`crate::settings::RENDER_KEYS`]), so every note's files may be out of date
+    pub render_settings_changed: bool,
 }
 
 /// Applies `changes` exactly as given, stamping every row with `usn`. The server does this with a
@@ -503,6 +530,11 @@ pub(crate) async fn apply_changes(
     usn: i64,
 ) -> Result<Applied, Error> {
     let mut applied = Applied::default();
+    if let Some(record) = &changes.settings {
+        let before = crate::settings::read_text(conn).await?.unwrap_or_default();
+        write_settings(conn, record, usn, None).await?;
+        applied.render_settings_changed = crate::settings::changes_rendering(&before, &record.text);
+    }
     for record in &changes.parsers {
         upsert_parser(conn, record, usn).await?;
     }

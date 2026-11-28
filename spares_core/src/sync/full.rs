@@ -29,7 +29,8 @@ use crate::Error;
 
 /// The tables a full sync copies, parents first. `id_counter` is merged instead (see
 /// [`restore`]). Undo history, graves, bases and other local state are not copied.
-const DATA_TABLES: [&str; 12] = [
+const DATA_TABLES: [&str; 13] = [
+    "collection_settings",
     "parser",
     "tag",
     "saved_search",
@@ -92,6 +93,7 @@ pub async fn restore(db: &SqlitePool, path: &Path) -> Result<RestoredState, Erro
         .map_err(sqlx_error);
     let state = result?;
     detached?;
+    crate::settings::reload_after_sync(db).await;
     Ok(state)
 }
 
@@ -208,6 +210,10 @@ async fn restore_attached(conn: &mut sqlx::SqliteConnection) -> Result<RestoredS
             .await
             .map_err(sqlx_error)?;
     }
+    sqlx::query("UPDATE main.collection_settings SET base = NULL")
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_error)?;
     bump_notes_version(&mut tx).await?;
     for table in ["grave", "sync_base", "event", "sync_received"] {
         sqlx::query(AssertSqlSafe(format!("DELETE FROM main.{table}")))

@@ -149,6 +149,10 @@ pub(crate) async fn open(directory: &str) -> Result<Opened, JsValue> {
     spares_core::collection::set_default(Some(Arc::clone(&collection)));
     set_device_replica(load_replica(&device).await?);
     load_config(&device).await?;
+    // The collection's settings, which come with the sync
+    spares_core::settings::load(&db)
+        .await
+        .map_err(|e| js_error(&format!("failed to read the settings: {e}")))?;
     load_media_dirs(&device).await?;
     load_web_renders(&device).await?;
     crate::media::load(&device).await?;

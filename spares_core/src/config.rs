@@ -46,7 +46,6 @@ use crate::parsers::impls::markdown::MarkdownParserConfig;
 use crate::parsers::overlapper::OverlapperConfig;
 use crate::platform::is_file;
 use crate::platform::read_to_string;
-use crate::platform::write;
 use crate::sync::SyncConfig;
 
 /// True when running under a test harness. `cfg!(test)` alone is not enough: it only reflects
@@ -1815,36 +1814,24 @@ pub struct FittedAt {
     pub review_count: usize,
 }
 
-/// Sets `fsrs_parameters` in the config file, with when they were fitted (or, for `None`, without
-/// it, as parameters not fitted here), leaving the rest of the file, comments included, as it is.
-pub(crate) fn write_fsrs_parameters(
+/// Sets `fsrs_parameters` in the collection's settings, with when they were fitted (or, for
+/// `None`, without it, as parameters not fitted here), leaving the rest of them, comments
+/// included, as they are. Not logged as a settings change: the `OptimizeScheduler` event that
+/// does this is.
+pub(crate) async fn write_fsrs_parameters(
+    db: &SqlitePool,
     parameters: &[f32],
     fitted: Option<FittedAt>,
 ) -> Result<(), Error> {
-    let config_file_path = get_external_config_file();
-    if !is_file(&config_file_path) {
-        write_external_config(&SparesExternalConfig::default())?;
-    }
-    let file_contents = read_to_string(&config_file_path).map_err(|e| Error::Io {
-        description: format!("Failed to read {}.", config_file_path.display()),
-        source: e,
-    })?;
-    let new_contents = set_fsrs_parameters(&file_contents, parameters, fitted)?;
-    write(&config_file_path, new_contents).map_err(|e| Error::Io {
-        description: "Failed to write config".to_string(),
-        source: e,
-    })?;
+    crate::settings::edit(db, false, |doc| {
+        set_fsrs_parameters(doc, parameters, fitted);
+        Ok(())
+    })
+    .await?;
     Ok(())
 }
 
-fn set_fsrs_parameters(
-    file_contents: &str,
-    parameters: &[f32],
-    fitted: Option<FittedAt>,
-) -> Result<String, Error> {
-    let mut doc = file_contents
-        .parse::<DocumentMut>()
-        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
+fn set_fsrs_parameters(doc: &mut DocumentMut, parameters: &[f32], fitted: Option<FittedAt>) {
     // Through the shortest decimal that reads back as the same `f32`, so that `0.212` is not
     // written as `0.21199999749660492`.
     let array = parameters
@@ -1867,33 +1854,20 @@ fn set_fsrs_parameters(
         doc.remove("fsrs_parameters_fitted_at");
         doc.remove("fsrs_parameters_review_count");
     }
-    Ok(doc.to_string())
 }
 
-/// Adds `dates` to `easy_days.specific_dates` in the config file, leaving the rest of the file,
-/// comments included, as it is. Dates already there are not repeated.
-pub(crate) fn add_specific_easy_dates(dates: &[NaiveDate]) -> Result<(), Error> {
-    let config_file_path = get_external_config_file();
-    if !is_file(&config_file_path) {
-        write_external_config(&SparesExternalConfig::default())?;
-    }
-    let file_contents = read_to_string(&config_file_path).map_err(|e| Error::Io {
-        description: format!("Failed to read {}.", config_file_path.display()),
-        source: e,
-    })?;
-    let new_contents = with_specific_easy_dates(&file_contents, dates)?;
-    write(&config_file_path, new_contents).map_err(|e| Error::Io {
-        description: "Failed to write config".to_string(),
-        source: e,
-    })?;
+/// Adds `dates` to `easy_days.specific_dates` in the collection's settings, leaving the rest of
+/// them, comments included, as they are. Dates already there are not repeated.
+pub(crate) async fn add_specific_easy_dates(
+    db: &SqlitePool,
+    dates: &[NaiveDate],
+) -> Result<(), Error> {
+    crate::settings::edit(db, false, |doc| with_specific_easy_dates(doc, dates)).await?;
     Ok(())
 }
 
-fn with_specific_easy_dates(file_contents: &str, dates: &[NaiveDate]) -> Result<String, Error> {
+fn with_specific_easy_dates(doc: &mut DocumentMut, dates: &[NaiveDate]) -> Result<(), Error> {
     let invalid = |e: String| Error::Library(LibraryError::InvalidConfig(e));
-    let mut doc = file_contents
-        .parse::<DocumentMut>()
-        .map_err(|e| invalid(e.to_string()))?;
     let easy_days = doc
         .entry("easy_days")
         .or_insert_with(toml_edit::table)
@@ -1910,26 +1884,38 @@ fn with_specific_easy_dates(file_contents: &str, dates: &[NaiveDate]) -> Result<
             specific_dates.push(date);
         }
     }
-    Ok(doc.to_string())
+    Ok(())
 }
 
 // The `toml_edit` package was used in place of `confy` since `confy` does not support default values when serializing. For example, if a user had an existing config file and then `spares` was changed to add a new config key, deserialization would fail since a key was missing and not defaulted.
+///
+/// The collection's settings (see [`crate::settings`]) with this machine's `config.toml` over
+/// them. Neither need exist: what neither sets has its default.
 pub fn read_external_config() -> Result<SparesExternalConfig, Error> {
     let config_file_path = get_external_config_file();
-    if !is_file(&config_file_path) {
-        let config = SparesExternalConfig::default();
-        write_external_config(&config)?;
-        return Ok(config);
-    }
-    let file_contents = read_to_string(&config_file_path).map_err(|e| Error::Io {
-        description: format!("Failed to read {}.", config_file_path.display()),
-        source: e,
-    })?;
-    parse_external_config(&file_contents)
+    let file = if is_file(&config_file_path) {
+        Some(read_to_string(&config_file_path).map_err(|e| Error::Io {
+            description: format!("Failed to read {}.", config_file_path.display()),
+            source: e,
+        })?)
+    } else {
+        None
+    };
+    let name = if crate::settings::cached().is_some() {
+        "the settings (the collection's, with config.toml over them)"
+    } else {
+        "config.toml"
+    };
+    parse_named(&crate::settings::effective_text(file.as_deref())?, name)
 }
 
 /// Parse and validate collection settings without opening or modifying the collection.
 pub fn parse_external_config(file_contents: &str) -> Result<SparesExternalConfig, Error> {
+    parse_named(file_contents, "config.toml")
+}
+
+/// [`parse_external_config`], naming the text `name` in an error.
+pub(crate) fn parse_named(file_contents: &str, name: &str) -> Result<SparesExternalConfig, Error> {
     let mut config: SparesExternalConfig = toml_edit::de::from_str(file_contents).map_err(|e| {
         let line = e.span().map(|span| {
             file_contents[..file_contents.floor_char_boundary(span.start)]
@@ -1939,7 +1925,7 @@ pub fn parse_external_config(file_contents: &str) -> Result<SparesExternalConfig
                 + 1
         });
         let message = match line {
-            Some(line) => format!("config.toml line {line}: {}", e.message()),
+            Some(line) => format!("{name} line {line}: {}", e.message()),
             None => e.message().to_owned(),
         };
         Error::Library(LibraryError::InvalidConfig(message))
@@ -1950,43 +1936,16 @@ pub fn parse_external_config(file_contents: &str) -> Result<SparesExternalConfig
     Ok(config)
 }
 
-/// The `config.toml` for the sync server, made from this machine's (`contents`), so reviews and
-/// rendering there use the same settings: the same, without the `[sync]` table, which only means
-/// something on the machine that syncs, and with `render_browser_parsers = false`, since web
-/// clients compile those parsers' cards.
+/// The `config.toml` a device gets from its host (`GET /api/sync/config`), made from the host's
+/// (`contents`): its settings for this machine (see [`crate::settings::LOCAL_KEYS`]) but the
+/// `[sync]` table, which only means something on the host, with `render_browser_parsers = false`,
+/// since a device compiles those parsers' cards itself. The collection's settings come with the
+/// sync instead.
 pub fn server_config(contents: &str) -> Result<String, Error> {
-    let mut doc = contents
-        .parse::<DocumentMut>()
-        .map_err(|e| Error::Library(LibraryError::InvalidConfig(e.to_string())))?;
+    let mut doc = crate::settings::local_part(contents)?;
     doc.remove("sync");
     doc.insert("render_browser_parsers", toml_edit::value(false));
-    Ok(format!(
-        "# Copied from the config.toml of the machine that syncs by `spares sync cloud`, which \
-         overwrites\n# changes made here. Change that one instead.\n{doc}"
-    ))
-}
-
-/// The server's `config.toml` after `spares sync cloud` sends this machine's (`pushed`): the
-/// [`server_config`] of `pushed`, with the `[sync]` table of the server's own (`current`), which
-/// says how the server's copy syncs (its replica, and an upstream if it has one). Nothing of
-/// `pushed`'s `[sync]` table, such as its token, reaches the server. Fails if the result is not a
-/// valid config.
-pub fn merge_pushed_config(current: &str, pushed: &str) -> Result<String, Error> {
-    let invalid = |e: String| Error::Library(LibraryError::InvalidConfig(e));
-    let current = current
-        .parse::<DocumentMut>()
-        .map_err(|e| invalid(format!("the server's config.toml: {e}")))?;
-    let mut merged = server_config(pushed)?
-        .parse::<DocumentMut>()
-        .map_err(|e| invalid(e.to_string()))?;
-    if let Some(sync) = current.get("sync") {
-        merged.insert("sync", sync.clone());
-    }
-    let merged = merged.to_string();
-    let mut config: SparesExternalConfig =
-        toml_edit::de::from_str(&merged).map_err(|e| invalid(e.to_string()))?;
-    config.validate().map_err(invalid)?;
-    Ok(merged)
+    Ok(doc.to_string())
 }
 
 /// `contents` (a `config.toml`) with these keys of its `[sync]` table set, leaving the rest of the
@@ -2013,30 +1972,21 @@ pub fn set_sync_values(
     Ok(doc.to_string())
 }
 
-pub(crate) fn write_external_config(config: &SparesExternalConfig) -> Result<(), Error> {
-    let config_file_path = get_external_config_file();
-    if let Some(dir) = config_file_path.parent() {
-        crate::platform::create_dir_all(dir).map_err(|e| Error::Io {
-            description: format!("Failed to create {}", dir.display()),
-            source: e,
-        })?;
-    }
-    let config_string = toml_edit::ser::to_string_pretty(&config).map_err(|e| {
-        Error::Library(LibraryError::InvalidConfig(format!(
-            "Failed to serialize config: {}",
-            e
-        )))
-    })?;
-    write(&config_file_path, config_string).map_err(|e| Error::Io {
-        description: "Failed to write config".to_string(),
-        source: e,
-    })?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fsrs_written(text: &str, parameters: &[f32], fitted: Option<FittedAt>) -> String {
+        let mut doc = text.parse::<DocumentMut>().unwrap();
+        set_fsrs_parameters(&mut doc, parameters, fitted);
+        doc.to_string()
+    }
+
+    fn easy_written(text: &str, dates: &[NaiveDate]) -> Result<String, Error> {
+        let mut doc = text.parse::<DocumentMut>().unwrap();
+        with_specific_easy_dates(&mut doc, dates)?;
+        Ok(doc.to_string())
+    }
 
     #[test]
     fn ignore_reviews_before_is_a_quoted_date() {
@@ -2112,66 +2062,25 @@ mod tests {
     }
 
     #[test]
-    fn a_pushed_config_keeps_the_servers_sync_table_and_none_of_its_own() {
-        let laptop = "maximum_interval = 100\n\n\
-                      [sync]\nremote_host = \"me@vps\"\nurl = \"https://vps\"\n\
-                      token = \"spt_secret\"\nreplica = 0\n\n\
-                      [leech]\nlapses_threshold = 8\n";
-        let server = "render_browser_parsers = false\nmaximum_interval = 5\n\n\
-                      [sync] # the server's own\nreplica = 1\n";
-        let merged = merge_pushed_config(server, laptop).unwrap();
-        assert!(!merged.contains("spt_secret"), "{merged}");
-        assert!(!merged.contains("me@vps"), "{merged}");
-        assert!(merged.contains("# the server's own"), "{merged}");
-        let config = parse(&merged);
-        assert_eq!(config.maximum_interval, Duration::seconds(100));
-        assert_eq!(config.leech.lapses_threshold, 8);
+    fn a_devices_config_has_this_machines_settings_but_not_how_to_reach_the_server() {
+        let host = "audio_player = \"mpv\" # mine\nmaximum_interval = 100\n\n\
+                    [sync]\nremote_host = \"me@vps\"\nurl = \"https://vps\"\n\
+                    interval_minutes = 15\n\n\
+                    [leech]\nlapses_threshold = 8\n";
+        let device = server_config(host).unwrap();
+        let config = parse(&device);
+        assert_eq!(config.audio_player, "mpv");
         assert!(!config.render_browser_parsers);
-        assert_eq!(config.sync.replica, Some(1));
         assert_eq!(config.sync.url, None);
-        assert_eq!(config.sync.token, None);
-        // Pushing again changes nothing.
-        assert_eq!(merge_pushed_config(&merged, laptop).unwrap(), merged);
-
-        // A server with an upstream of its own keeps it.
-        let relaying = "[sync]\nurl = \"https://root\"\ntoken = \"spt_its_own\"\nreplica = 3\n";
-        let merged = merge_pushed_config(relaying, laptop).unwrap();
-        let config = parse(&merged);
-        assert_eq!(config.sync.url.as_deref(), Some("https://root"));
-        assert_eq!(config.sync.token.as_deref(), Some("spt_its_own"));
-        assert_eq!(config.sync.replica, Some(3));
-        // And one without a config yet gets no [sync] table.
-        assert!(!merge_pushed_config("", laptop).unwrap().contains("[sync]"));
-
-        assert!(merge_pushed_config("", "maximum_interval = \"soon\"").is_err());
-        assert!(merge_pushed_config("not toml [", laptop).is_err());
-    }
-
-    #[test]
-    fn server_config_keeps_settings_but_not_how_to_reach_the_server() {
-        let laptop = "maximum_interval = 100 # days, roughly\n\n\
-                      [sync]\nremote_host = \"me@vps\"\nurl = \"https://vps\"\n\
-                      interval_minutes = 15\n\n\
-                      [leech]\nlapses_threshold = 8\n";
-        let server = server_config(laptop).unwrap();
-        let config = parse(&server);
-        assert_eq!(config.maximum_interval, Duration::seconds(100));
-        assert_eq!(config.leech.lapses_threshold, 8);
-        assert!(!config.render_browser_parsers);
-        assert_eq!(config.sync.remote_host, None);
-        assert_eq!(config.sync.url, None);
-        assert_eq!(config.sync.interval_minutes, 0);
-        assert!(!server.contains("[sync]"), "{server}");
-        assert!(server.contains("# days, roughly"), "{server}");
-        // A top-level key after a table would belong to the table.
-        assert!(
-            server.find("render_browser_parsers") < server.find("[leech]"),
-            "{server}"
-        );
+        assert!(!device.contains("[sync]"), "{device}");
+        assert!(device.contains("# mine"), "{device}");
+        // The collection's settings come with the sync
+        assert!(!device.contains("maximum_interval"), "{device}");
+        assert!(!device.contains("leech"), "{device}");
         // An existing value is replaced.
-        let server = server_config("render_browser_parsers = true\n").unwrap();
-        assert!(!parse(&server).render_browser_parsers);
-        assert_eq!(server.matches("render_browser_parsers").count(), 1);
+        let device = server_config("render_browser_parsers = true\n").unwrap();
+        assert!(!parse(&device).render_browser_parsers);
+        assert_eq!(device.matches("render_browser_parsers").count(), 1);
     }
 
     #[test]
@@ -2270,7 +2179,7 @@ mod tests {
             lapses_threshold = 4
         "};
         let parameters = fsrs_rs::FSRS6_DEFAULT_PARAMETERS.to_vec();
-        let written = set_fsrs_parameters(original, &parameters, None).unwrap();
+        let written = fsrs_written(original, &parameters, None);
         assert!(written.contains("# My settings"), "{written}");
         assert!(written.contains("# keep this"), "{written}");
         let config = parse(&written);
@@ -2279,7 +2188,7 @@ mod tests {
         assert_eq!(config.fsrs_parameters, parameters);
 
         // Setting them again replaces them rather than adding a second key.
-        let rewritten = set_fsrs_parameters(&written, &parameters[..19], None).unwrap();
+        let rewritten = fsrs_written(&written, &parameters[..19], None);
         assert_eq!(parse(&rewritten).fsrs_parameters, parameters[..19]);
     }
 
@@ -2290,15 +2199,14 @@ mod tests {
             date: NaiveDate::from_ymd_opt(2026, 11, 26).unwrap(),
             review_count: 16_682,
         };
-        let written =
-            set_fsrs_parameters("load_balance = false\n", &parameters, Some(fitted)).unwrap();
+        let written = fsrs_written("load_balance = false\n", &parameters, Some(fitted));
         let config = parse(&written);
         assert_eq!(config.fsrs_parameters_fitted_at, Some(fitted.date));
         assert_eq!(config.fsrs_parameters_review_count, Some(16_682));
         assert!(!config.load_balance);
 
         // Parameters not fitted here, as an undo back to hand-set ones writes, have neither
-        let rewritten = set_fsrs_parameters(&written, &parameters, None).unwrap();
+        let rewritten = fsrs_written(&written, &parameters, None);
         let config = parse(&rewritten);
         assert_eq!(config.fsrs_parameters_fitted_at, None);
         assert_eq!(config.fsrs_parameters_review_count, None);
@@ -2373,7 +2281,7 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 12, 25).unwrap(),
             NaiveDate::from_ymd_opt(2026, 12, 26).unwrap(),
         ];
-        let written = with_specific_easy_dates(
+        let written = easy_written(
             indoc::indoc! {r#"
                 # my settings
                 load_balance = true
@@ -2396,7 +2304,7 @@ mod tests {
         assert_eq!(written.matches("2026-12-25").count(), 1, "{written}");
 
         // Without an [easy_days] table
-        let written = with_specific_easy_dates("load_balance = true\n", &dates).unwrap();
+        let written = easy_written("load_balance = true\n", &dates).unwrap();
         assert_eq!(parse(&written).easy_days.specific_dates, dates.into());
     }
 

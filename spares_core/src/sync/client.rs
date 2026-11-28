@@ -62,6 +62,7 @@ use super::apply::upsert_note;
 use super::apply::upsert_parser;
 use super::apply::upsert_review_log;
 use super::apply::upsert_tag;
+use super::apply::write_settings;
 use super::merge::Side;
 use super::merge::TextMerge;
 use super::merge::f64_eq;
@@ -77,6 +78,7 @@ use super::records::Grave;
 use super::records::NoteRecord;
 use super::records::ParserRecord;
 use super::records::SavedSearchRecord;
+use super::records::SettingsRecord;
 use super::records::TagRecord;
 use super::records::has_grave;
 use super::records::read_base;
@@ -179,6 +181,7 @@ pub async fn merge_pulled(
         merger.merge_tag(record).await?;
     }
     merger.merge_saved_searches().await?;
+    merger.merge_settings().await?;
     for grave in pulled.graves.iter().filter(|g| g.kind == SyncKind::Note) {
         merger
             .apply_note_grave(NoteId::from_packed(grave.oid))
@@ -276,6 +279,63 @@ impl Merger<'_> {
         .await?;
         let usn = self.usn_for(&merged, remote);
         upsert_parser(self.conn, &merged, usn).await
+    }
+
+    /// Merges the collection's settings the server sent. Changed here too since the last sync,
+    /// the two texts are merged key by key against the last synced one (see
+    /// [`crate::settings::merge3`]), a key both changed taking the newer side's value. A merge
+    /// that isn't a valid set of settings (two changes that only clash together) takes the newer
+    /// side's text whole.
+    async fn merge_settings(&mut self) -> Result<(), Error> {
+        let Some(remote) = &self.pulled.settings else {
+            return Ok(());
+        };
+        let before = crate::settings::read_text(self.conn)
+            .await?
+            .unwrap_or_default();
+        let local: Option<(String, Option<String>, i64, i64)> = sqlx::query_as(
+            "SELECT text, base, updated_at, usn FROM collection_settings WHERE id = 1",
+        )
+        .fetch_optional(&mut *self.conn)
+        .await
+        .map_err(sqlx_error)?;
+        let merged = match local {
+            Some((text, base, updated_at, -1)) if text != remote.text => {
+                let base = base.unwrap_or_else(|| remote.text.clone());
+                let prefer = if remote.updated_at > updated_at {
+                    crate::settings::Prefer::Remote
+                } else {
+                    crate::settings::Prefer::Local
+                };
+                let merged = crate::settings::merge3(&base, &text, &remote.text, prefer)
+                    .ok()
+                    .map(|(merged, _)| merged)
+                    .filter(|merged| crate::config::parse_external_config(merged).is_ok());
+                let text = merged.unwrap_or_else(|| match prefer {
+                    crate::settings::Prefer::Remote => remote.text.clone(),
+                    crate::settings::Prefer::Local => text,
+                });
+                SettingsRecord {
+                    text,
+                    updated_at: updated_at.max(remote.updated_at),
+                }
+            }
+            _ => remote.clone(),
+        };
+        // Still to be pushed if it isn't the server's, with the server's as the base
+        let (usn, base) = if merged.text == remote.text {
+            (self.usn, None)
+        } else {
+            (-1, Some(remote.text.as_str()))
+        };
+        let merged = if usn == self.usn {
+            remote.clone()
+        } else {
+            merged
+        };
+        self.outcome.applied.render_settings_changed |=
+            crate::settings::changes_rendering(&before, &merged.text);
+        write_settings(self.conn, &merged, usn, base).await
     }
 
     /// Merges the saved searches the server sent, after its deletes of them, so that a search can

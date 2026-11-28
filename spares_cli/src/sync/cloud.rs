@@ -32,7 +32,6 @@ use spares_core::api::render_state::read_render_dependencies;
 use spares_core::config::get_cache_dir;
 use spares_core::config::get_config_dir;
 use spares_core::config::get_data_dir;
-use spares_core::config::get_external_config_file;
 use spares_core::config::get_files_dir;
 use spares_core::config::get_media_dir;
 use spares_core::config::read_external_config;
@@ -75,6 +74,9 @@ pub(crate) struct Pushed {
     /// Whether templates, settings or the files notes read changed on the server, so its rendered
     /// files may be out of date
     render_inputs_changed: bool,
+    /// The collection's settings, if those rendering reads changed since the last run, to remember
+    /// once the server renders with them
+    settings: Option<String>,
 }
 
 impl Pushed {
@@ -90,6 +92,14 @@ impl Pushed {
             .await
             .map_err(|e| format!("Failed to ask the server to render: {e}"))?;
         println!("The server renders the notes these changes affect.");
+        if let Some(settings) = &self.settings {
+            let path = cloud_settings_file();
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            std::fs::write(&path, settings)
+                .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+        }
         Ok(())
     }
 }
@@ -146,9 +156,9 @@ pub(crate) async fn push_files(
         )?;
     }
 
-    // Templates, and config.toml, which the server merges with its own (keeping its `[sync]`
-    // table), so reviews there are scheduled with the same settings. What is gone here goes there.
-    println!("Copying templates and settings → {remote_host}");
+    // Templates, but not config.toml, which has this machine's settings: the collection's come
+    // with the sync. What is gone here goes there.
+    println!("Copying templates → {remote_host}");
     let templates = run_rsync(&[
         "-az",
         "--exclude=/config.toml",
@@ -164,7 +174,10 @@ pub(crate) async fn push_files(
         remote_entries(remote_host, &target.config)?,
     );
     remove_remote_files(remote_host, &target.config, &removed_templates)?;
-    let config_changed = push_config(&remote).await?;
+    let settings = settings_changed_for_rendering();
+    if dry_run() && settings.is_some() {
+        println!("  (the settings rendering reads changed, so the server renders again)");
+    }
 
     // Files the notes read, so the server can render notes edited there, and not those they no
     // longer read.
@@ -190,8 +203,9 @@ pub(crate) async fn push_files(
         remote,
         render_inputs_changed: !templates.is_empty()
             || !removed_templates.is_empty()
-            || config_changed
+            || settings.is_some()
             || !read.is_empty(),
+        settings,
     })
 }
 
@@ -400,24 +414,22 @@ fn check_target(
     Ok(())
 }
 
-/// Sends this machine's config.toml to the server, which keeps its own `[sync]` table, so the
-/// token, replica and addresses here never reach it.
-async fn push_config(remote: &HttpRemote) -> Result<bool, String> {
-    let path = get_external_config_file();
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    if dry_run() {
-        println!("  config.toml, without its [sync] table");
-        return Ok(false);
-    }
-    let changed = remote
-        .push_config(contents)
-        .await
-        .map_err(|e| format!("Failed to send {} to the server: {e}", path.display()))?;
-    if changed {
-        println!("  config.toml");
-    }
-    Ok(changed)
+/// Where `spares sync cloud` keeps the collection's settings as they were at its last run, to
+/// tell whether those rendering reads changed since.
+fn cloud_settings_file() -> PathBuf {
+    get_cache_dir().join("sync").join("cloud-settings.toml")
+}
+
+/// The collection's settings, if those that rendering reads (see
+/// `spares_core::settings::RENDER_KEYS`) changed since the last `spares sync cloud`: the sync
+/// gives them to the server, which then renders again the notes they affect.
+fn settings_changed_for_rendering() -> Option<String> {
+    let current = spares_core::settings::cached()
+        .as_deref()
+        .unwrap_or_default()
+        .to_string();
+    let last = std::fs::read_to_string(cloud_settings_file()).unwrap_or_default();
+    spares_core::settings::changes_rendering(&last, &current).then_some(current)
 }
 
 /// Parsers whose notes the server renders.

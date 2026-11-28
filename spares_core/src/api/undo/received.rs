@@ -138,6 +138,8 @@ fn changed_rows(event: &Event) -> BTreeSet<(&'static str, i64)> {
         EventType::OptimizeScheduler => {
             rows.card_changes(&payload::<OptimizeSchedulerPayload>(event).cards);
         }
+        // Undone key by key, refusing over keys changed since, a sync's changes included
+        EventType::UpdateSettings => {}
         EventType::UpdateCardTags => {
             let payload: UpdateCardTagsPayload = payload(event);
             rows.cards(payload.cards.iter().map(|card| card.card_id));

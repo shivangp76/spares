@@ -109,6 +109,10 @@ pub(crate) async fn sync_push_handler(
     let response = run_exclusive(async move {
         let (response, applied) = server::push(&db, body).await?;
         files::after_sync(&db, &applied.notes_changed, &applied.notes_deleted).await;
+        if applied.render_settings_changed {
+            let db = db.clone();
+            spares_core::collection::spawn(async move { files::render_out_of_date(&db).await });
+        }
         Ok(response)
     })
     .await
@@ -240,28 +244,8 @@ pub(crate) async fn sync_push_target_handler(
     ))
 }
 
-/// `spares sync cloud` sending its machine's `config.toml`, which replaces this collection's but
-/// for its `[sync]` table (`spares_core::sync::push::apply_pushed_config`).
-#[cfg(not(target_family = "wasm"))]
-pub(crate) async fn sync_push_config_handler(
-    auth: Option<axum::Extension<crate::handlers::auth::Auth>>,
-    body: String,
-) -> Result<impl IntoResponse, HandlerError> {
-    require_device_token(auth.as_ref().map(|auth| &auth.0))?;
-    // Not while a render reads it
-    let changed = run_exclusive(async move { spares_core::sync::push::apply_pushed_config(&body) })
-        .await
-        .map_err(|e| match e {
-            Error::Library(spares_core::LibraryError::InvalidConfig(message)) => (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "message": format!("Invalid config.toml: {message}") })),
-            ),
-            e => error_to_response(e),
-        })?;
-    Ok(Json(json!({ "changed": changed })))
-}
-
-/// `spares sync cloud` after sending templates, settings or files notes read: renders every note
+/// `spares sync cloud` after sending templates or files notes read, or syncing settings that
+/// rendering reads: renders every note
 /// whose files are out of date, in the background. The render cache leaves the others alone.
 #[cfg(not(target_family = "wasm"))]
 #[allow(clippy::unused_async, reason = "an axum handler")]

@@ -229,24 +229,6 @@ impl HttpRemote {
             .await?)
     }
 
-    /// Sends this machine's `config.toml` to the server, which keeps its own `[sync]` table (see
-    /// [`super::push::apply_pushed_config`]). Returns whether the server's changed.
-    pub async fn push_config(&self, contents: String) -> Result<bool, Error> {
-        let response: serde_json::Value = self
-            .send(
-                self.request(reqwest::Method::PUT, "/api/sync/push-config", QUICK_TIMEOUT)
-                    .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                    .body(contents),
-            )
-            .await?
-            .json()
-            .await?;
-        Ok(response
-            .get("changed")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(true))
-    }
-
     /// Has the server render every note whose files are out of date, in the background (see
     /// [`super::push`]).
     pub async fn render_all(&self) -> Result<(), Error> {

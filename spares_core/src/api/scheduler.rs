@@ -313,7 +313,7 @@ async fn apply_parameters(
     at: DateTime<Utc>,
 ) -> Result<i64, Error> {
     let before = current_parameters()?;
-    write_fsrs_parameters(&parameters.fsrs_parameters, parameters.fitted)?;
+    write_fsrs_parameters(db, &parameters.fsrs_parameters, parameters.fitted).await?;
     // Read back rather than patched in memory, so the reschedule sees exactly what was saved.
     let config = read_external_config()?;
     let cards = reschedule_all_cards_unlogged(db, scheduler, &config, at).await?;

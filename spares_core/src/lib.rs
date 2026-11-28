@@ -13,6 +13,7 @@ pub mod render_diff;
 pub mod schedulers;
 pub mod schema;
 pub mod search;
+pub mod settings;
 pub mod sync;
 
 use miette::Diagnostic;

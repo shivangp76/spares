@@ -482,6 +482,8 @@ pub async fn open_collection(
     let collection = Arc::new(Collection::new(id, db, paths));
     collection
         .scope(async {
+            // The collection's settings, after moving those still in config.toml into it
+            spares_core::settings::load(&collection.db).await?;
             collection.set_replica(Some(collection_replica()?));
             // Before serving: settle a push the host stopped in the middle of, and commit or
             // revert note files left uncommitted.

@@ -46,7 +46,8 @@
 //!
 //! The migrations (`spares_core/migrations`) add:
 //!
-//! - **`usn`** on `parser`, `tag`, `note`, `card`, `review_log` and `saved_search`. Every insert
+//! - **`usn`** on `parser`, `tag`, `note`, `card`, `review_log`, `saved_search` and
+//!   `collection_settings` (the collection's settings, see [`crate::settings`]). Every insert
 //!   writes `-1` (changed and not yet synced), so new rows are dirty without a trigger. A client
 //!   marks the rows it is pushing `-2` (see [`run`]); they count as dirty too.
 //! - **`grave(oid, kind, usn)`**: ids deleted here and not synced yet. Without it, "deleted over
@@ -164,9 +165,8 @@ mod tests;
 mod tracking_tests;
 
 /// The `[sync]` table of `config.toml`. It says how this host's copy syncs, so it never leaves
-/// this host: devices get the config without it ([`crate::config::server_config`]), and the
-/// server keeps its own when `spares sync cloud` sends this one
-/// ([`crate::config::merge_pushed_config`]).
+/// this host: it is one of the settings kept in `config.toml` rather than the collection (see
+/// [`crate::settings`]), and devices get the config without it ([`crate::config::server_config`]).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SyncConfig {
@@ -224,13 +224,14 @@ pub const NEEDS_FULL_SYNC_KEY: &str = "needs_full_sync";
 pub const NOTES_VERSION_OFFSET_KEY: &str = "notes_version_offset";
 
 /// The tables with a `usn` column.
-pub(crate) const USN_TABLES: [&str; 6] = [
+pub(crate) const USN_TABLES: [&str; 7] = [
     "parser",
     "tag",
     "note",
     "card",
     "review_log",
     "saved_search",
+    "collection_settings",
 ];
 
 fn sqlx_error(e: sqlx::Error) -> Error {

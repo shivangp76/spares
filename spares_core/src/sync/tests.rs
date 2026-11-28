@@ -2027,3 +2027,101 @@ async fn a_push_that_never_arrived_is_sent_again() {
     replicas.assert_converged().await;
     assert_eq!(unsynced(&replicas.laptop).await, 0);
 }
+
+/// The `collection_settings` row's text and usn.
+async fn settings_row(pool: &SqlitePool) -> Option<(String, i64)> {
+    sqlx::query_as("SELECT text, usn FROM collection_settings WHERE id = 1")
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+/// Sets the collection's settings text, as `crate::settings::edit` does, at `updated_at`.
+async fn set_settings(pool: &SqlitePool, text: &str, updated_at: i64) {
+    sqlx::query(
+        "INSERT INTO collection_settings (id, text, base, updated_at, usn) VALUES (1, ?1, NULL, ?2, -1)
+         ON CONFLICT (id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at",
+    )
+    .bind(text)
+    .bind(updated_at)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn settings_changed_on_both_sides_merge_key_by_key() {
+    let (replicas, _) = Replicas::synced(&["a"]).await;
+    let first = "# mine\nnew_cards_daily_limit = 20\nreviews_daily_limit = 200\n";
+    set_settings(&replicas.laptop, first, 100).await;
+    replicas.sync().await;
+    assert_eq!(settings_row(&replicas.server).await.unwrap().0, first);
+    assert!(
+        settings_row(&replicas.laptop).await.unwrap().1 > 0,
+        "synced"
+    );
+
+    // The laptop changes one key, a phone on the server another
+    set_settings(
+        &replicas.laptop,
+        "# mine\nnew_cards_daily_limit = 10\nreviews_daily_limit = 200\n",
+        200,
+    )
+    .await;
+    set_settings(
+        &replicas.server,
+        "new_cards_daily_limit = 20\nreviews_daily_limit = 300\n",
+        300,
+    )
+    .await;
+    replicas.sync().await;
+    let (merged, usn) = settings_row(&replicas.laptop).await.unwrap();
+    assert!(usn > 0, "pushed");
+    assert_eq!(
+        merged, "# mine\nnew_cards_daily_limit = 10\nreviews_daily_limit = 300\n",
+        "the laptop's text, with the server's change in it"
+    );
+    assert_eq!(settings_row(&replicas.server).await.unwrap().0, merged);
+    let base: Option<String> =
+        sqlx::query_scalar("SELECT base FROM collection_settings WHERE id = 1")
+            .fetch_one(&replicas.laptop)
+            .await
+            .unwrap();
+    assert_eq!(base, None, "no base once synced");
+
+    // Both change the same key: the newer change wins
+    set_settings(&replicas.laptop, &merged.replace("= 10", "= 11"), 400).await;
+    set_settings(&replicas.server, &merged.replace("= 10", "= 12"), 500).await;
+    replicas.sync().await;
+    let (merged, _) = settings_row(&replicas.laptop).await.unwrap();
+    assert!(merged.contains("new_cards_daily_limit = 12"), "{merged}");
+    assert_eq!(settings_row(&replicas.server).await.unwrap().0, merged);
+
+    // Changed on the server only: the laptop takes it as it is
+    set_settings(&replicas.server, "load_balance = false\n", 600).await;
+    replicas.sync().await;
+    assert_eq!(
+        settings_row(&replicas.laptop).await.unwrap().0,
+        "load_balance = false\n"
+    );
+}
+
+#[tokio::test]
+async fn settings_come_with_a_full_sync() {
+    let replicas = Replicas::new().await;
+    set_settings(&replicas.laptop, "new_cards_daily_limit = 7\n", 100).await;
+    replicas.sync_mode(SyncMode::FullUpload).await.unwrap();
+    assert_eq!(
+        settings_row(&replicas.server).await.unwrap(),
+        ("new_cards_daily_limit = 7\n".to_string(), 0)
+    );
+    set_settings(&replicas.server, "new_cards_daily_limit = 8\n", 200).await;
+    replicas.sync_mode(SyncMode::FullDownload).await.unwrap();
+    assert_eq!(
+        settings_row(&replicas.laptop).await.unwrap().0,
+        "new_cards_daily_limit = 8\n"
+    );
+    // And a normal sync after it has nothing to send
+    let report = replicas.sync().await;
+    assert_eq!(report.pushed, 0);
+}

@@ -518,7 +518,7 @@ pub async fn update_card_event(
 
 /// Schedules a break in reviews (see [`SrsScheduler::schedule_break`]), logged as an
 /// [`EventType::ScheduleBreak`] event. The break's days are added to
-/// `easy_days.specific_dates` in `config.toml`, so that cards rated before it are kept out of it
+/// `easy_days.specific_dates` in the collection's settings, so that cards rated before it are kept out of it
 /// where their fuzz range allows. Undoing the event puts the cards back, but leaves those dates.
 pub async fn schedule_break(
     db: &SqlitePool,
@@ -535,7 +535,7 @@ pub async fn schedule_break(
     let (outcome, event_id) =
         move_cards_past_break(db, scheduler.as_ref(), &config, plan, at, request.dry_run).await?;
     if !request.dry_run {
-        add_specific_easy_dates(&plan.break_days())?;
+        add_specific_easy_dates(db, &plan.break_days()).await?;
     }
     Ok(ScheduleBreakResponse {
         start: plan.start,

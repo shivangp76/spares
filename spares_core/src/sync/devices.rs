@@ -43,7 +43,6 @@ use crate::api::audio::get_audio_directory;
 use crate::api::image::get_image_directory;
 use crate::config::get_config_dir;
 use crate::config::get_external_config_file;
-use crate::config::read_external_config;
 use crate::config::server_config;
 use crate::parsers::get_all_parsers;
 use crate::parsers::image_occlusion::get_image_occlusion_directory;
@@ -212,8 +211,8 @@ pub(crate) async fn check_enrolled(conn: &mut SqliteConnection, replica: u8) -> 
 /// they are read-only on a device.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeviceConfig {
-    /// By path relative to the config directory: `config.toml` (made by [`server_config`], as for
-    /// the server itself) and every file in each parser's `templates` directory, such as
+    /// By path relative to the config directory: `config.toml` (made by [`server_config`]: the
+    /// host's settings for its own machine, as the collection's come with the sync) and every file in each parser's `templates` directory, such as
     /// `typst/templates/card_template.typ`. Typst cards compile in the browser from their template,
     /// which can import the files next to it. Also `markdown/web-defaults.yaml`, when there is one,
     /// with which a device converts the Markdown cards it shows before the server renders them.
@@ -230,13 +229,17 @@ pub struct DeviceConfig {
 
 /// The server's [`DeviceConfig`]. Files that aren't UTF-8 are left out.
 pub fn device_config() -> Result<DeviceConfig, Error> {
-    // Writes the default config.toml if there is none yet.
-    read_external_config()?;
     let path = get_external_config_file();
-    let contents = std::fs::read_to_string(&path).map_err(|e| Error::Io {
-        description: format!("Failed to read {}", path.display()),
-        source: e,
-    })?;
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err(Error::Io {
+                description: format!("Failed to read {}", path.display()),
+                source: e,
+            });
+        }
+    };
     let config_dir = get_config_dir();
     let mut files = BTreeMap::from([("config.toml".to_string(), server_config(&contents)?)]);
     for parser in get_all_parsers() {

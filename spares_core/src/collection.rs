@@ -217,6 +217,8 @@ impl CollectionPaths {
 #[derive(Default)]
 pub struct CollectionState {
     replica: RwLock<Option<Replica>>,
+    /// The collection's settings text, once loaded (see [`crate::settings`])
+    settings: RwLock<Option<Arc<str>>>,
     #[cfg(not(target_family = "wasm"))]
     pub(crate) manifest: Mutex<Option<crate::sync::media::Manifest>>,
     pub(crate) keywords: crate::api::note::KeywordCache,
@@ -252,6 +254,21 @@ impl CollectionState {
             .replica
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = replica;
+    }
+
+    /// See [`crate::settings::cached`].
+    pub fn settings(&self) -> Option<Arc<str>> {
+        self.settings
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn set_settings(&self, text: Option<Arc<str>>) {
+        *self
+            .settings
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = text;
     }
 }
 

@@ -120,10 +120,15 @@ pub async fn pull(db: &SqlitePool, request: PullRequest) -> Result<PullResponse,
             .await
             .map_err(sqlx_error)?;
         // Only clients merge, so the server needs no bases.
-        sqlx::query("DELETE FROM sync_base")
-            .execute(&mut *tx)
-            .await
-            .map_err(sqlx_error)?;
+        for query in [
+            "DELETE FROM sync_base",
+            "UPDATE collection_settings SET base = NULL",
+        ] {
+            sqlx::query(query)
+                .execute(&mut *tx)
+                .await
+                .map_err(sqlx_error)?;
+        }
         set_state(&mut tx, SYNC_USN_KEY, usn).await?;
     }
     let mut changes = read_changes(&mut tx, Selection::After(request.since)).await?;
@@ -227,6 +232,9 @@ pub async fn push(db: &SqlitePool, request: PushRequest) -> Result<(PushResponse
     let counts = read_counts(&mut tx).await?;
     set_applying(&mut tx, false).await?;
     tx.commit().await.map_err(sqlx_error)?;
+    if request.changes.settings.is_some() {
+        crate::settings::reload_after_sync(db).await;
+    }
     if prune_render_assets {
         remove_unpushed_render_assets(db, &request, orphaned).await;
     }

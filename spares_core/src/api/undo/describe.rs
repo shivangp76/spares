@@ -21,6 +21,7 @@ use crate::api::undo::payloads::UpdateCardPayload;
 use crate::api::undo::payloads::UpdateCardTagsPayload;
 use crate::api::undo::payloads::UpdateNotesPayload;
 use crate::api::undo::payloads::UpdateParserPayload;
+use crate::api::undo::payloads::UpdateSettingsPayload;
 use crate::api::undo::payloads::UpdateTagPayload;
 use crate::model::Event;
 use crate::model::EventAction;
@@ -148,6 +149,23 @@ async fn describe(
                 verb.to_string()
             } else {
                 format!("{verb}, rescheduling {}", count_ids("card", &ids))
+            }
+        }
+        EventType::UpdateSettings => {
+            let p: UpdateSettingsPayload = serde_json::from_value(payload).unwrap();
+            let keys =
+                crate::settings::changed_keys(&p.text.before, &p.text.after).unwrap_or_default();
+            match keys.as_slice() {
+                [] => "Change the settings".to_string(),
+                [key] => format!("Change the setting `{key}`"),
+                keys if keys.len() <= 3 => format!(
+                    "Change the settings {}",
+                    keys.iter()
+                        .map(|key| format!("`{key}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                keys => format!("Change {} settings", keys.len()),
             }
         }
         EventType::UpdateCardTags => {

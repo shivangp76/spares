@@ -107,6 +107,14 @@ pub struct ReviewLogRecord {
     pub custom_data: Value,
 }
 
+/// The `collection_settings` row: the collection's settings as TOML text (see
+/// [`crate::settings`]). There is one, never deleted, so it has no id and no grave.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize, sqlx::FromRow)]
+pub struct SettingsRecord {
+    pub text: String,
+    pub updated_at: i64,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Grave {
     pub kind: SyncKind,
@@ -123,6 +131,9 @@ pub struct Changes {
     pub review_logs: Vec<ReviewLogRecord>,
     pub saved_searches: Vec<SavedSearchRecord>,
     pub graves: Vec<Grave>,
+    /// The collection's settings, if they changed
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<SettingsRecord>,
 }
 
 impl Changes {
@@ -134,6 +145,7 @@ impl Changes {
             && self.review_logs.is_empty()
             && self.saved_searches.is_empty()
             && self.graves.is_empty()
+            && self.settings.is_none()
     }
 
     pub fn len(&self) -> usize {
@@ -144,6 +156,7 @@ impl Changes {
             + self.review_logs.len()
             + self.saved_searches.len()
             + self.graves.len()
+            + usize::from(self.settings.is_some())
     }
 }
 
@@ -333,7 +346,22 @@ pub(crate) async fn read_changes(
         review_logs: read_review_logs(conn, selection).await?,
         saved_searches: read_saved_searches(conn, selection).await?,
         graves: read_graves(conn, selection).await?,
+        settings: read_settings(conn, Some(selection)).await?,
     })
+}
+
+/// The `collection_settings` row, if there is one (in `selection`, if given).
+pub(crate) async fn read_settings(
+    conn: &mut SqliteConnection,
+    selection: Option<Selection>,
+) -> Result<Option<SettingsRecord>, Error> {
+    let condition = selection.map_or_else(|| "true".to_string(), Selection::condition);
+    sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT text, updated_at FROM collection_settings WHERE {condition}"
+    )))
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(sqlx_error)
 }
 
 /// One row's current record, or `None` if it does not exist.
