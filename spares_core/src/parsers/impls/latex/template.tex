@@ -3,6 +3,14 @@
 \newenvironment{note}{}{}
 \newcommand{\se}[1]{[#1]} % settings
 \newcommand{\li}[1]{#1} % linked note
+% A card's content is framed, and its clozes highlighted with `\hl`, in `\sethlcolor`'s colour:
+% tints of yellow for one to answer, green for one not to, and blue for one revealed. A box, not soul's
+% `\hl`, which fails in math, where a revealed cloze often is.
+\usepackage{xcolor}
+\usepackage{mdframed}
+\providecommand{\spareshlcolor}{yellow}
+\providecommand{\sethlcolor}[1]{\renewcommand{\spareshlcolor}{#1}}
+\providecommand{\hl}[1]{\ifmmode\colorbox{\spareshlcolor!25}{$#1$}\else\colorbox{\spareshlcolor!25}{#1}\fi}
 % The list of linked notes spares writes after a note: an enumerate with a label, of links to
 % their files. `\providecommand` keeps a `\lhref` a template defines itself, such as one with
 % `run:` links for a PDF viewer.
