@@ -1261,6 +1261,93 @@ input[type="checkbox"] {
   margin-top: 12px;
 }
 
+/* The collection's settings form (`SettingsForm`): groups of fields under small headings */
+.settings-heading {
+  margin: 28px 0 0;
+  font-size: var(--font-md);
+  color: var(--text-muted);
+}
+
+.settings-group {
+  margin-top: 18px;
+}
+
+.settings-subheading {
+  margin: 0 0 4px;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.settings-field {
+  margin-top: 8px;
+}
+
+.settings-field > .settings-row {
+  margin-top: 0;
+  flex-wrap: wrap;
+}
+
+.settings-field-label {
+  min-width: 14em;
+}
+
+/* An edited field not saved yet, marked by a thin accent bar */
+.settings-field-changed {
+  margin-left: -10px;
+  padding-left: 8px;
+  border-left: 2px solid var(--accent);
+}
+
+.field-unit {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+/* A preset or goal */
+.settings-entry {
+  margin-top: 8px;
+  padding: 6px 10px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.settings-entry > summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* A search fills the row, as some are long */
+.settings-search-input {
+  flex: 1;
+  min-width: 16em;
+}
+
+.settings-entry-removed {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.settings-save-row {
+  position: sticky;
+  bottom: 0;
+  padding: 8px 0;
+  background: var(--surface);
+}
+
+.settings-local {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: var(--font-xs);
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
 /* A setting's options side by side, its name first */
 .settings-choices {
   display: flex;

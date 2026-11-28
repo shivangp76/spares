@@ -47,6 +47,9 @@ import type {
   ReviewSnapshotResponse,
   SavedSearch,
   SearchField,
+  SettingsChangeResponse,
+  SettingsView,
+  SettingValue,
   SearchPage,
   SearchSort,
   StatisticsGraphsRequest,
@@ -786,6 +789,48 @@ export async function renderNote(noteId: number): Promise<void> {
       force_generate_rendered: false,
     }),
   });
+}
+
+/** The collection's settings, which every device shares (`GET /api/settings`). */
+export async function getSettings(): Promise<SettingsView> {
+  return apiFetch("Settings fetch", "/api/settings");
+}
+
+/** The message of a settings change refused because they changed since `base` was read. */
+export const SETTINGS_CHANGED_SINCE = "changed since you opened them";
+
+function settingsChanged<T>(response: T): T {
+  // Settings shape what most responses say, e.g. the review config, which is fetched once
+  clearCaches();
+  return response;
+}
+
+/**
+ * Replaces the collection's settings with `text`, which was edited from `base`. Refused (with
+ * `SETTINGS_CHANGED_SINCE` in the message) if they are no longer `base`.
+ */
+export async function replaceSettings(
+  text: string,
+  base: string,
+): Promise<SettingsChangeResponse> {
+  return settingsChanged(
+    await apiFetch<SettingsChangeResponse>("Save settings", "/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ text, base }),
+    }),
+  );
+}
+
+/** Sets or removes some of the collection's settings, as one change that can be undone. */
+export async function updateSettings(
+  values: SettingValue[],
+): Promise<SettingsChangeResponse> {
+  return settingsChanged(
+    await apiFetch<SettingsChangeResponse>("Save settings", "/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ values }),
+    }),
+  );
 }
 
 /** Undoes `eventId` and the rest of its group, or the latest event that isn't an undo if `null`. */

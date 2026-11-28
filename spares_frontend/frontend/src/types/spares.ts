@@ -1188,3 +1188,28 @@ export interface GoalStatus {
    */
   minutes_per_day: number | null;
 }
+
+/** `GET /api/settings`: the collection's settings (see `spares_core::settings`). */
+export interface SettingsView {
+  /** As written, comments included */
+  text: string;
+  /** This machine's settings, in the host's config.toml, without the sync token */
+  local: string;
+  /** Every setting in effect, defaults included */
+  values: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  local_keys: string[];
+}
+
+/** One value of `PATCH /api/settings`: `value` sets it, leaving it out takes the default. */
+export interface SettingValue {
+  key: string[];
+  value?: unknown;
+}
+
+export interface SettingsChangeResponse {
+  settings: SettingsView;
+  /** With dots between their parts, e.g. `queue.review_order` */
+  changed_keys: string[];
+  event_id: number | null;
+}

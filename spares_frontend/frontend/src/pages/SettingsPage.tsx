@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { loginPath } from "../login";
 import AccountSettings from "../components/AccountSettings";
+import CollectionSettings from "../components/CollectionSettings";
 import LocalCopySettings from "../components/LocalCopySettings";
 import SchedulerSettings from "../components/SchedulerSettings";
 import VersionSettings from "../components/VersionSettings";
@@ -79,7 +80,8 @@ function useSpeechVoices(): SpeechSynthesisVoice[] {
   return voices;
 }
 
-/** Settings kept in this browser, and whether it keeps a copy of the collection. */
+/** The collection's settings, which every device shares, settings kept in this browser, and
+    whether it keeps a copy of the collection. */
 export default function SettingsPage() {
   const { credentials } = useAuth();
   const navigate = useNavigate();
@@ -106,6 +108,10 @@ export default function SettingsPage() {
   return (
     <div className="page">
       <PageTitle>Settings</PageTitle>
+
+      <CollectionSettings />
+
+      <h2 className="settings-heading">This browser</h2>
 
       <fieldset className="settings-section">
         <legend className="section-label">Theme</legend>
