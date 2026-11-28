@@ -103,7 +103,9 @@ let configured = false;
 function configure(): void {
   if (configured) return;
   configured = true;
-  $typst.setCompilerInitOptions({ getModule: () => compilerWasmUrl });
+  $typst.setCompilerInitOptions({
+    getModule: () => __TYPST_COMPILER_CDN_URL__ ?? compilerWasmUrl,
+  });
   $typst.setRendererInitOptions({ getModule: () => rendererWasmUrl });
   const accessModel = new RecordingAccessModel();
   $typst.use(

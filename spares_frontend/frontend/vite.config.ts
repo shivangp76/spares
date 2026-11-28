@@ -94,6 +94,25 @@ function imageOcclusionEditorConfig(): Plugin {
 /** Whether this is the demo build or dev server (see src/demo.ts) */
 const DEMO = process.env.VITE_SPARES_DEMO === "1";
 
+/** Where the demo loads the Typst compiler's WebAssembly module from (src/typst/compiler.ts):
+    jsDelivr's copy of the npm package's, the same file, which it sends in under a third of the time
+    GitHub Pages takes for its 30 MB. Other builds load the build's own copy. */
+const TYPST_COMPILER_CDN_URL = DEMO
+  ? `https://cdn.jsdelivr.net/npm/@myriaddreamin/typst-ts-web-compiler@${
+      JSON.parse(
+        readFileSync(
+          fileURLToPath(
+            new URL(
+              "./node_modules/@myriaddreamin/typst-ts-web-compiler/package.json",
+              import.meta.url,
+            ),
+          ),
+          "utf8",
+        ),
+      ).version
+    }/pkg/typst_ts_web_compiler_bg.wasm`
+  : null;
+
 const DEMO_TYPES: Record<string, string> = {
   ...IMAGE_TYPES,
   ".html": "text/html",
@@ -219,8 +238,13 @@ function serviceWorker(): Plugin {
           (path) => !path.startsWith("svgedit/") && !path.endsWith(".wasm"),
         );
         const keep = files.filter(
-          (path) => path.startsWith("assets/") && path.endsWith(".wasm"),
+          (path) =>
+            path.startsWith("assets/") &&
+            path.endsWith(".wasm") &&
+            // The demo's is jsDelivr's, kept by its URL
+            !(TYPST_COMPILER_CDN_URL && basename(path).startsWith("typst_ts_web_compiler_bg")),
         );
+        if (TYPST_COMPILER_CDN_URL) keep.push(TYPST_COMPILER_CDN_URL);
         const editor = files.filter((path) => path.startsWith("svgedit/"));
         const source = template
           .replace("__BUILD__", JSON.stringify(hash.digest("hex").slice(0, 16)))
@@ -326,6 +350,7 @@ export default defineConfig({
   // The demo's dev server keeps its own prebundled dependencies, so that it doesn't rebuild those
   // of a dev server of the app running beside it
   cacheDir: DEMO ? "node_modules/.vite-demo" : undefined,
+  define: { __TYPST_COMPILER_CDN_URL__: JSON.stringify(TYPST_COMPILER_CDN_URL) },
   optimizeDeps: {
     exclude: ["@myriaddreamin/typst.ts", "@myriaddreamin/typst-ts-renderer"],
   },

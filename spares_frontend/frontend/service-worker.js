@@ -112,6 +112,11 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(cacheFirst(FONTS_CACHE, request));
     return;
   }
+  // Kept files of other origins, such as the demo's Typst compiler on jsDelivr (see vite.config.ts)
+  if (keepUrls.includes(request.url)) {
+    event.respondWith(cacheFirst(ASSETS_CACHE, request));
+    return;
+  }
   if (url.origin !== self.location.origin) return;
   // The server's data, which the app caches itself, and pandoc.wasm, which a device that keeps a
   // copy keeps itself (see src/local/pandoc.ts)
