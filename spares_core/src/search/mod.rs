@@ -347,7 +347,7 @@
 //!   and so do queries with `c.cloze`.
 //! - When reviewing (`spares card review --query`, or a filtered tag's query), a sort outside any
 //!   limited branch sets the order new and review cards are shown in, together, in place of the
-//!   `review_order`, `new_order` and `new_review_mix` settings of `[queue]` in `config.toml` (see
+//!   `review_order`, `new_order` and `new_review_mix` settings of `[queue]` in the settings (see
 //!   `QueueConfig` in `spares_core::config`). Learning cards whose step is over still come first.
 //!   - Example: `tag=chess sort_by_desc=c.difficulty` reviews the hardest chess cards first.
 //!

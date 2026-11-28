@@ -16,7 +16,7 @@
 //! this is plain uniform fuzz. This is the same approach as Anki's load balancer, and replaces
 //! `fsrs4anki-helper`'s separate easy days, load balance and disperse siblings features.
 //!
-//! The weights are set in `config.toml` ([`load_balance`], [`disperse_siblings`], [`EasyDaysConfig`]):
+//! The weights are set in the settings ([`load_balance`], [`disperse_siblings`], [`EasyDaysConfig`]):
 //!
 //! ```toml
 //! # Prefer days that have fewer cards due.

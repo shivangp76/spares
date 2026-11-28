@@ -610,7 +610,7 @@ export interface TagRetention {
 }
 
 /** `spares_core::schema::review::IntervalPreviewRequest`: settings to try, each left out being
-    config.toml's. Durations in seconds. */
+    the collection's. Durations in seconds. */
 export interface IntervalPreviewRequest {
   desired_retention?: number;
   learning_steps?: number[];
@@ -1170,7 +1170,7 @@ export interface GoalSearch {
   parts: [string, string][];
 }
 
-/** A `[goals.<name>]` table of config.toml and how it is going (`spares goal status`). */
+/** A `[goals.<name>]` table of the settings and how it is going (`spares goal status`). */
 export interface GoalStatus {
   name: string;
   date: string;

@@ -378,9 +378,8 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             "/api/notes/live/relocate-cards",
             post(relocate_live_cards_handler),
         )
-        // These use the scheduler settings in the collection's `config.toml`, which optimizing and
-        // scheduling a break write, so a browser's copy sends them to the server and syncs the
-        // cards they changed.
+        // These go over every card or the whole review log, so a browser's copy sends them to the
+        // server and syncs the cards (and settings) they changed.
         .route(
             "/api/scheduler/{name}/optimize",
             post(optimize_scheduler_handler),
@@ -399,7 +398,7 @@ fn native_routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
             "/api/scheduler/{name}/reschedule",
             get(reschedule_preview_handler).post(reschedule_scheduler_handler),
         )
-        // Adds the break's days to the easy days in `config.toml`.
+        // Adds the break's days to the easy days in the settings.
         .route("/api/cards/break", post(schedule_break_handler))
         .merge(media_routes())
         .merge(notes_vcs_routes())

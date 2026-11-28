@@ -454,7 +454,7 @@ function LearnedBar({ part }: { part: GoalPartStatus }) {
 }
 
 /**
- * The goals of config.toml (`[goals.<name>]`): for each, a row per part with how much is learned,
+ * The goals of the settings (`[goals.<name>]`): for each, a row per part with how much is learned,
  * the pace it needs and has, and the recall predicted on the day, then the weeks of the whole goal.
  * A part's name starts a review of its cards.
  */
@@ -1615,7 +1615,7 @@ function SchedulerSection({
       !(await askConfirm({
         title: "Apply optimized parameters?",
         message:
-          "Optimize again, and if the parameters still predict your reviews better, save them to config.toml and recompute the memory state and due date of every card, suspended and buried ones included.\n\nUndo puts back both the previous parameters and the cards' schedule.",
+          "Optimize again, and if the parameters still predict your reviews better, save them to the settings and recompute the memory state and due date of every card, suspended and buried ones included.\n\nUndo puts back both the previous parameters and the cards' schedule.",
         confirmLabel: "Optimize and apply",
       }))
     )
@@ -1790,7 +1790,7 @@ function SchedulerSection({
       )}
       <p style={note}>
         Changing the scheduler, its parameters, learning steps or easy days in
-        config.toml only affects cards as they are next rated. Reschedule
+        the settings only affects cards as they are next rated. Reschedule
         applies the change to every card now. Once you have a few hundred
         reviews, optimizing fits the parameters to your own history, which
         usually predicts your memory better; again every month or so keeps them
@@ -1895,7 +1895,7 @@ export default function StatisticsPage() {
   const todayResult = useStatisticsRequest(todayRequest, enabled, revision);
   const graphResult = useStatisticsRequest(graphsRequest, enabled, revision);
   const historyResult = useStatisticsRequest(historyRequest, enabled, revision);
-  // Goals are about today and the server's config.toml, so they are shown as they are, and left
+  // Goals are about today and the settings, so they are shown as they are, and left
   // out where they can't be fetched, as offline.
   const goalsResult = useStatisticsRequest(
     goalsRequest,

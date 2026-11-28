@@ -44,7 +44,7 @@ pub struct CardPreview {
 }
 
 /// The examples for `parser`. Overlapping clozes are split into cards by `overlapper`, as for the
-/// notes the server creates (the `[overlapper]` table of `config.toml`).
+/// notes the server creates (the `[overlapper]` table of the settings).
 #[expect(clippy::too_many_lines, reason = "A list of examples")]
 pub fn syntax_examples(
     parser: &dyn Parseable,
@@ -217,7 +217,7 @@ pub fn syntax_examples(
             "Overlapping clozes",
             format!(
                 "Clozes marked `{}` are a sequence, like the lines of a poem. Each card asks for \
-                 one, showing those around it as the `[overlapper]` table of `config.toml` sets.",
+                 one, showing those around it as the `[overlapper]` table of the settings sets.",
                 keys.overlapper
             ),
             ["Roses are red", "Violets are blue", "Sugar is sweet"]

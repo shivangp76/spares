@@ -95,7 +95,7 @@ pub use unmask::unmasked_overlay_svg;
 const CLOZE_SETTINGS_KEY: &str = "data-cloze-settings";
 const CLOZES_GROUP_ID: &str = "clozes-group";
 
-/// How cards draw image occlusions, set by `[image_occlusion]` in `config.toml`.
+/// How cards draw image occlusions, set by `[image_occlusion]` in the settings.
 ///
 /// A hidden cloze is labeled with its hint, or with "(no answer)" when the card does not ask
 /// for it. The label is sized to fill the cloze: as large as fits in `cloze_hint_fill` of the
@@ -136,7 +136,7 @@ impl Default for ImageOcclusionConfig {
 }
 
 /// The initial style of the image occlusion editor, set by `[image_occlusion.editor]` in
-/// `config.toml`. The editor embedded in the web app gets it from
+/// the settings. The editor embedded in the web app gets it from
 /// `GET /api/image-occlusions/editor-config`, and the standalone editor from `spares_frontend`
 /// when it starts. After changing it, reload the web app or restart `spares_frontend`.
 #[derive(Clone, Debug, Deserialize, Serialize)]

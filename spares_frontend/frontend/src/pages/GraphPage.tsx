@@ -213,9 +213,9 @@ function GraphGuide() {
             1.5 and 2.5 for one or two typos in a long word, and 2.5 and up for
             words that only share a stem. Links scoring higher than this aren't
             shown or followed. <em>Queue's</em> uses{" "}
-            <code>linked_note_max_score</code> from the server's{" "}
-            <code>config.toml</code> (1.5 unless set), the same cutoff review
-            uses to hold cards back until the notes they build on are learned.
+            <code>linked_note_max_score</code> from the settings (1.5 unless
+            set), the same cutoff review uses to hold cards back until the notes
+            they build on are learned.
           </li>
           <li>
             <strong>Color by:</strong> <em>Found or built on</em> colors notes

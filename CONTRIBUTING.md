@@ -35,7 +35,7 @@ What an older version of spares wrote keeps working in newer ones, so updating n
 
 - **Databases.** A change to the schema or to stored data is a new migration in `spares_core/migrations` (or `spares_server/accounts_migrations`) that converts existing rows. Never edit, squash or delete a migration that is on `main`: sqlx checksums applied migrations, and every database since the baseline has to migrate up from wherever it is.
 - **Note files and syntax.** A note that parsed keeps parsing to the same cards, with the same card ids. To change a syntax, accept the old spelling alongside the new one.
-- **Config files.** `config.toml` and `host.toml` reject unknown keys, so a renamed key keeps its old name as a `#[serde(alias)]`, and a removed key stays in the struct, accepted and ignored, with a doc comment saying so.
+- **Config files.** `config.toml` (this machine's settings), the collection's settings (kept in its database, see `spares_core::settings`) and `host.toml` reject unknown keys, so a renamed key keeps its old name as a `#[serde(alias)]`, and a removed key stays in the struct, accepted and ignored, with a doc comment saying so.
 - **Sync.** A host and its devices check each other's sync protocol and schema versions (`spares_core::sync::protocol`), and refuse a mismatch with an error that says which side to update, rather than misreading each other. Bump the protocol version only for a change that can't be made compatibly. The web app is served by its host, so the two always match.
 - **Code for old data stays.** A fallback that reads what older versions wrote is kept, with a comment naming the version that wrote it. Don't remove it once your own data has been converted.
 
@@ -196,7 +196,7 @@ Without the Simulator app, `xcrun simctl` (with `DEVELOPER_DIR=/Applications/Xco
 
 Document things where they are implemented, so the docs change with the code:
 
-- Settings: on their fields in `config.toml`'s structs (`spares_core::config`), and note and cloze settings on `NoteSettings`, `ClozeSettings` and `ClozeGroupingSettings`.
+- Settings: on their fields in the settings' structs (`spares_core::config`; where they are kept: `spares_core::settings`), and note and cloze settings on `NoteSettings`, `ClozeSettings` and `ClozeGroupingSettings`.
 - Syntax and behavior of a feature, and the reasons for a design: in the module docs of the code that implements it, e.g. `spares_core::sync` and `spares_core::ids`.
 - Command-line options: in the doc comments of the clap structs, which become `spares <command> --help`.
 - Work that is planned but not done: in a plan file in `docs/`, such as `docs/queue_plan.md`.

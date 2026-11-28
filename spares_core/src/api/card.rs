@@ -366,7 +366,7 @@ pub async fn update_cards(
             if let Some(latest_review) = review_logs.iter().rev().find(|rl| rl.is_review()) {
                 let scheduler = get_scheduler_from_string(latest_review.scheduler_name.as_str())?;
 
-                // Read once for all of the cards, rather than parsing config.toml for each
+                // Read once for all of the cards, rather than parsing the settings for each
                 if config.is_none() {
                     config = Some(read_external_config()?);
                 }
@@ -547,7 +547,7 @@ pub async fn schedule_break(
     })
 }
 
-/// The cards' part of [`schedule_break`], without the change to `config.toml`: moves the cards
+/// The cards' part of [`schedule_break`], without the change to the settings: moves the cards
 /// and logs the event, returning its id (none with `dry_run`, or if no card moved).
 pub(crate) async fn move_cards_past_break(
     db: &SqlitePool,

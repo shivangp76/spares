@@ -166,7 +166,7 @@ impl AudioPlayer {
 }
 
 /// The program and arguments that read `speech` aloud with `tts_command` (see `tts_command` in
-/// `config.toml`).
+/// this machine's `config.toml`).
 fn tts_args(tts_command: &str, speech: &Speech) -> Vec<String> {
     let Speech { text, voice } = speech;
     let values = [

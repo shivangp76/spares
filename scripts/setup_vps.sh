@@ -333,6 +333,7 @@ fi
 HOST_TOML="$ROOT/host.toml"
 # The settings this script manages; the rest of host.toml is the admin's
 as_user "sed -i -E -e 's|^#? ?bind = .*|bind = \"127.0.0.1:8080\"|' -e 's|^#? ?frontend_dir = .*|frontend_dir = \"$FRONTEND_DIR\"|' '$HOST_TOML'"
+# This machine's settings; the collection's are in its database, and come with the sync
 CONFIG_FILE="$USER_DIR/config/config.toml"
 as_user "mkdir -p '$USER_DIR/config'"
 if [[ -f "$CONFIG_FILE" ]] && grep -q '^render_browser_parsers' "$CONFIG_FILE"; then
@@ -468,8 +469,8 @@ Next, on the machine you sync from, whose host's copy of your collection syncs w
        remote_host = "$SPARES_USER@$HOST"   # for \`spares sync cloud\` to copy files over SSH
        interval_minutes = 15                # sync in the background
   3. Run once:  spares sync cloud --full-upload
-     After that, \`spares sync cloud\` copies your templates, settings and the files your notes
-     read, then syncs both ways. \`spares sync cloud --dry-run\` lists what it would copy.
+     After that, \`spares sync cloud\` copies your templates and the files your notes read, then
+     syncs both ways, settings included. \`spares sync cloud --dry-run\` lists what it would copy.
 
 Logs: journalctl -u spares -f      Update: sudo bash setup_vps.sh (no arguments needed)
 EOF

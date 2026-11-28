@@ -499,7 +499,7 @@ pub(crate) enum CardCommands {
     /// alone. The cards that lose the most recall by waiting get the first days. Load balancing,
     /// easy days and sibling dispersal decide among the days as they do when rating.
     ///
-    /// The break's days are also added to `easy_days.specific_dates` in config.toml, so cards
+    /// The break's days are also added to the setting `easy_days.specific_dates`, so cards
     /// rated before it are kept out of it where their fuzz range allows, and rescheduling keeps
     /// the moved cards where the break put them (see `reschedule_moved_cards`).
     ///
@@ -517,7 +517,7 @@ pub(crate) enum CardCommands {
     ///
     /// Cards moved since their last review (given a due date by hand, postponed, advanced or moved
     /// past a break) keep their due date, and the others are placed around them. Their memory
-    /// state is still recomputed. Set `reschedule_moved_cards = true` in config.toml to move
+    /// state is still recomputed. Set `reschedule_moved_cards = true` (`spares config set reschedule_moved_cards true`) to move
     /// them too.
     ///
     /// It always reschedules every card; there is no `--query`. Cards are placed one at a time,
@@ -538,7 +538,7 @@ pub(crate) enum CardCommands {
     /// later day than the card's previous review count, and cards whose history was cut short by
     /// an import are skipped. Without `--apply`, it does not change anything.
     ///
-    /// With `--apply`, the parameters are saved to `fsrs_parameters` in config.toml only if they
+    /// With `--apply`, the parameters are saved to the setting `fsrs_parameters` only if they
     /// predict your reviews better than the current ones, and every card is rescheduled. Like
     /// `spares card reschedule`, it asks for confirmation, and undoing the event it prints restores
     /// the cards but not the parameters it saved. Optimizing
@@ -558,7 +558,7 @@ pub(crate) enum CardCommands {
     /// - relearning step: after a lapse
     ///
     /// Steps are set per preset, so this looks at one preset's cards at a time. Groups with fewer
-    /// than 100 reviews recommend nothing. It changes nothing: set the steps in config.toml.
+    /// than 100 reviews recommend nothing. It changes nothing: set the steps with `spares config` or on the web app's Settings page.
     Steps(StepsArgs),
     /// Forget cards (reset scheduling, keep review logs)
     Forget(ForgetCardArgs),

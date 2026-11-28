@@ -126,7 +126,7 @@ pub async fn optimize_scheduler(
 const PREVIEW_REVIEWS: [usize; 2] = [0, 3];
 
 /// The next interval of each rating for example cards (a new card, and one rated Good three times,
-/// each when it was due), as the scheduler gives them with `config.toml`'s settings, or the
+/// each when it was due), as the scheduler gives them with the collection's settings, or the
 /// request's in their place. It is the scheduler's own `schedule`, kept within the minimum and
 /// maximum interval as placing a card does, but before load balancing or easy days move it by a
 /// day or so (see `place_due`), so it shows what the settings' numbers mean.
@@ -284,7 +284,7 @@ const PROPOSAL_KEY: &str = "fsrs_parameters_proposal";
 /// passed since.
 const AUTO_OPTIMIZED_KEY: &str = "fsrs_auto_optimized";
 
-/// The parameters in `config.toml`, and when they were fitted.
+/// The parameters in the settings, and when they were fitted.
 pub(crate) fn current_parameters() -> Result<SchedulerParameters, Error> {
     Ok(parameters_of(&read_external_config()?))
 }
@@ -303,7 +303,7 @@ fn fitted_of(config: &SparesExternalConfig) -> Option<FittedAt> {
     })
 }
 
-/// Saves `parameters` to `config.toml` and reschedules every card with them, logged as one
+/// Saves `parameters` to the settings and reschedules every card with them, logged as one
 /// [`OptimizeScheduler`](EventType::OptimizeScheduler) event, whose id it returns. Any proposal is
 /// dropped, as it was scored against the parameters replaced.
 async fn apply_parameters(
@@ -419,7 +419,7 @@ pub async fn auto_optimize_due(
 }
 
 /// Fits the parameters by itself, for `auto_optimize`, and keeps them as a proposal if they predict
-/// the review history at least [`AUTO_OPTIMIZE_MIN_IMPROVEMENT`] better. Nothing in `config.toml`
+/// the review history at least [`AUTO_OPTIMIZE_MIN_IMPROVEMENT`] better. Nothing in the settings
 /// or the cards changes until the proposal is applied ([`apply_optimize_proposal`]). Returns it.
 pub async fn auto_optimize(
     db: &SqlitePool,

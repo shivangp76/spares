@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { getGoals } from '../api/client';
 import type { GoalSearch } from '../types/spares';
 
-/** The goals of config.toml (`[goals.<name>]`) and their parts' searches, to review them with. */
+/** The goals of the settings (`[goals.<name>]`) and their parts' searches, to review them with. */
 export function useGoalSearches(): GoalSearch[] {
   const [goals, setGoals] = useState<GoalSearch[]>([]);
   useEffect(() => {

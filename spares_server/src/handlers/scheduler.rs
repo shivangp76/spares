@@ -163,7 +163,7 @@ pub(crate) async fn discard_optimize_proposal_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The next interval of each rating for example cards, with `config.toml`'s settings or those the
+/// The next interval of each rating for example cards, with the collection's settings or those the
 /// request tries in their place (`spares_core::api::scheduler::preview_intervals`).
 pub(crate) async fn preview_intervals_handler(
     Path(name): Path<String>,

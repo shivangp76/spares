@@ -486,7 +486,7 @@ pub enum EventType {
     UnsetCardsDue,
     /// The cards `spares card break` moved past a break, logged as [`ReviewLogKind::Reschedule`]
     /// rows like `PostponeCards`. Shares payload schema with `UpdateCards`. Undoing it restores
-    /// the cards, not the break's easy days in `config.toml`.
+    /// the cards, not the break's easy days in the settings.
     ScheduleBreak,
     /// The undo of a `ScheduleBreak`. Carries `UnmoveCardsPayload`, like `UnadvanceCards`.
     UnscheduleBreak,
@@ -494,10 +494,10 @@ pub enum EventType {
     /// `UpdateCardTagsPayload`, and is its own undo, like `UpdateNotes`. See
     /// [`crate::api::card_tags`].
     UpdateCardTags,
-    /// FSRS parameters fitted to the review history and saved to `config.toml`, by
+    /// FSRS parameters fitted to the review history and saved to the collection's settings, by
     /// `spares card optimize --apply` or by applying them in the web app, with the cards the
     /// reschedule after it changed. Carries `OptimizeSchedulerPayload`, and is its own undo, like
-    /// `UpdateNotes`: undoing it restores both the cards and the parameters in `config.toml`.
+    /// `UpdateNotes`: undoing it restores both the cards and the parameters in the settings.
     /// Unlike `RescheduleCards`, it is the user's action, as they asked for or approved it.
     OptimizeScheduler,
     /// A change to the collection's settings (see [`crate::settings`]) through the web app or

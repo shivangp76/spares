@@ -309,7 +309,7 @@ impl UpdateCardTagsPayload {
     }
 }
 
-/// The scheduler parameters `config.toml` has: `fsrs_parameters`, with when they were fitted
+/// The scheduler parameters the settings have: `fsrs_parameters`, with when they were fitted
 /// (`fsrs_parameters_fitted_at` and `fsrs_parameters_review_count`), if they were fitted here.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SchedulerParameters {
@@ -318,7 +318,7 @@ pub struct SchedulerParameters {
     pub fitted: Option<crate::config::FittedAt>,
 }
 
-/// Payload for `OptimizeScheduler`: the parameters `config.toml` had and was given, and the cards
+/// Payload for `OptimizeScheduler`: the parameters the settings had and was given, and the cards
 /// the reschedule after it changed. Undo restores both. It is its own undo, with everything
 /// swapped, like `UpdateNotes`.
 #[derive(Clone, Debug, Deserialize, Serialize)]

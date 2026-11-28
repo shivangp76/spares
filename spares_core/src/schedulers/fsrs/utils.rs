@@ -107,7 +107,7 @@ const STABILITY_MIN: f64 = 0.0001;
 const DIFFICULTY_RANGE: (f64, f64) = (1.0, 10.0);
 
 /// The forgetting curve under the configured parameters, or the defaults' if they are invalid
-/// (which validating `config.toml` rules out).
+/// (which validating the settings rules out).
 #[derive(Clone, Debug)]
 pub enum Curve {
     /// FSRS-4.5 to FSRS-6: one power curve for every card, stretched by its stability.

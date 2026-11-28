@@ -419,7 +419,7 @@ async fn schedule_break(args: BreakArgs, base_url: &str, client: &Client) -> Res
     }
     if !yes {
         let prompt = format!(
-            "Move them, and add {} to {} to `easy_days.specific_dates` in config.toml?",
+            "Move them, and add {} to {} to the setting `easy_days.specific_dates`?",
             preview.start,
             preview.end.pred_opt().unwrap_or(preview.end)
         );
@@ -481,7 +481,7 @@ fn moved_cards_note(preview: &ReschedulePreviewResponse) -> String {
     let cards = if count == 1 { "card was" } else { "cards were" };
     if preview.moved_cards_kept {
         format!(
-            " {count} {cards} moved since their last review (a due date set by hand, a postponement, an advance or a break) and keep their due date; `reschedule_moved_cards = true` in config.toml moves them too."
+            " {count} {cards} moved since their last review (a due date set by hand, a postponement, an advance or a break) and keep their due date; the setting `reschedule_moved_cards = true` moves them too."
         )
     } else {
         format!(

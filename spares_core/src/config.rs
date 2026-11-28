@@ -1,4 +1,6 @@
-//! Settings from `config.toml` ([`SparesExternalConfig`]), and where spares keeps its files.
+//! The settings ([`SparesExternalConfig`]): the collection's, kept in its database (see
+//! [`crate::settings`]), with this machine's from `config.toml` over them; and where spares keeps
+//! its files.
 //!
 //! # Directories
 //!
@@ -8,7 +10,7 @@
 //! testing, say) never share files as long as their roots differ.
 //!
 //! - [`get_data_dir`]: the collection's directory, with the database and raw note files
-//! - [`get_config_dir`]: `config.toml` and the parser templates
+//! - [`get_config_dir`]: `config.toml` (this machine's settings) and the parser templates
 //! - [`get_media_dir`]: images, audio and image occlusions
 //! - [`get_cache_dir`]: what spares recreates: rendered files, raw card files, render hashes and
 //!   sync's snapshots
@@ -58,7 +60,7 @@ pub fn is_test_mode() -> bool {
     cfg!(test) || std::env::var_os("SPARES_TEST_MODE").is_some()
 }
 
-/// The current collection's `config.toml` and parser templates.
+/// The current collection's `config.toml` (this machine's settings) and parser templates.
 pub fn get_config_dir() -> PathBuf {
     collection::paths().config.clone()
 }
@@ -275,7 +277,7 @@ impl Default for EasyDaysConfig {
     }
 }
 
-/// The `[queue]` table of `config.toml`: the order review shows the cards it can show today.
+/// The `[queue]` table of the settings: the order review shows the cards it can show today.
 ///
 /// `spares card review` and the web app, on the server or a device's copy, all use this order. Which cards can be shown at all (what is due, and the daily limits) is set
 /// elsewhere, such as [`SparesExternalConfig::new_cards_daily_limit`].
@@ -316,7 +318,7 @@ impl Default for EasyDaysConfig {
 #[serde(default)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "settings of config.toml, each its own switch"
+    reason = "settings, each its own switch"
 )]
 pub struct QueueConfig {
     /// The order of review cards (cards that graduated from their learning steps). Defaults to
@@ -510,7 +512,7 @@ pub struct QueueConfig {
     pub presets: IndexMap<String, QueuePreset>,
 }
 
-/// A `[queue.auto_advance]` table of `config.toml`: see [`QueueConfig::auto_advance`]. For
+/// A `[queue.auto_advance]` table of the settings: see [`QueueConfig::auto_advance`]. For
 /// example, to show the answer after 15 seconds, and rate the card Again if it is still not rated
 /// 10 seconds later:
 ///
@@ -591,7 +593,7 @@ impl Default for QueueConfig {
     }
 }
 
-/// The `[queue.tag_buried]` table of `config.toml`: tagging the cards you keep burying.
+/// The `[queue.tag_buried]` table of the settings: tagging the cards you keep burying.
 ///
 /// Burying a card puts it off to the next day. A card you bury on day after day, rather than
 /// rating it, is usually one to rewrite, split or drop, like a leech. Once a card has been buried
@@ -632,7 +634,7 @@ impl Default for TagBuriedConfig {
     }
 }
 
-/// A `[queue.presets.<name>]` table of `config.toml`: settings for the cards of notes with some
+/// A `[queue.presets.<name>]` table of the settings: settings for the cards of notes with some
 /// tags, like a deck preset in Anki, where tags play the role of decks. See
 /// [`QueueConfig::presets`].
 ///
@@ -666,7 +668,7 @@ impl Default for TagBuriedConfig {
 ///
 /// # Which preset a card uses
 ///
-/// A card uses the first preset, in the order of `config.toml`, one of whose [`Self::tags`] its
+/// A card uses the first preset, in the order of the settings, one of whose [`Self::tags`] its
 /// note has, either exactly or as a parent: `lang` matches the tags `lang` and `lang:german` but
 /// not `language` or `old:lang`. Only the note's own tags count, not the filtered tags its cards
 /// are in. Changing a note's tags changes its cards' preset right away, for the counts of what was
@@ -959,7 +961,7 @@ pub enum InterleaveBy {
     Preset,
 }
 
-/// The `[leech]` table of `config.toml`: cards you keep forgetting.
+/// The `[leech]` table of the settings: cards you keep forgetting.
 ///
 /// A card lapses when it fails a review after it graduated from its learning steps: it is given a
 /// rating its scheduler does not count as a pass, like FSRS's Again (failing during learning or
@@ -1026,7 +1028,7 @@ impl LeechConfig {
     }
 }
 
-/// The `[statistics]` table of `config.toml`. It changes only how statistics are shown, not how
+/// The `[statistics]` table of the settings. It changes only how statistics are shown, not how
 /// cards are scheduled, so changing it needs no `spares card reschedule`: every past review is
 /// counted again under it the next time statistics load.
 ///
@@ -1068,7 +1070,7 @@ pub struct ParserConfig {
 #[serde(default)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "each bool is an independent setting of config.toml"
+    reason = "each bool is an independent setting"
 )]
 pub struct SparesExternalConfig {
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
@@ -1135,8 +1137,8 @@ pub struct SparesExternalConfig {
     ///
     /// Without it, the laptop and a sync server only agree on days if their machines are set to
     /// the same zone (`spares deploy` sets the server's to the laptop's), and a server of several
-    /// users counts days in one zone for all of them. `spares sync cloud` copies `config.toml` to
-    /// the server, so setting it on the laptop is enough, and each user of a server has their own. Anki follows the zone of the device studied on, so travelling
+    /// users counts days in one zone for all of them. The collection's settings sync, so setting
+    /// it on one device is enough, and each user of a server has their own. Anki follows the zone of the device studied on, so travelling
     /// changes its days; this stays put until it is changed, which is the thing to do after a
     /// move for good.
     ///
@@ -1278,7 +1280,7 @@ pub struct SparesExternalConfig {
     pub goals: IndexMap<String, Goal>,
 }
 
-/// A `[goals.<name>]` table of `config.toml`: a set of cards to know by a date, like an exam's.
+/// A `[goals.<name>]` table of the settings: a set of cards to know by a date, like an exam's.
 ///
 /// ```toml
 /// [goals.may-exam]
@@ -1374,7 +1376,7 @@ pub struct GoalMilestone {
     pub new_left: u32,
 }
 
-/// A date in `config.toml` written either as a TOML date, `2027-05-01`, or as a string,
+/// A date in the settings written either as a TOML date, `2027-05-01`, or as a string,
 /// `"2027-05-01"`.
 mod toml_date {
     use chrono::NaiveDate;

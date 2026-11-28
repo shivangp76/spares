@@ -16,8 +16,8 @@ interface Draft {
 
 /**
  * "Try a card": the next interval of each rating for a new card and one seen a few times, with
- * config.toml's scheduler settings, or with other values typed here to see what they would do.
- * Nothing typed here is saved: the cards are scheduled with config.toml's.
+ * the collection's scheduler settings, or with other values typed here to see what they would do.
+ * Nothing typed here is saved: the cards are scheduled with the saved settings.
  */
 export default function IntervalPreview({
   schedulerName,
@@ -28,7 +28,7 @@ export default function IntervalPreview({
   const [preview, setPreview] = useState<IntervalPreviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // What to ask for: config.toml's settings until one is changed
+  // What to ask for: the saved settings until one is changed
   const request = draft && {
     desired_retention: Number(draft.retention),
     learning_steps: parseSteps(draft.learning),
@@ -54,7 +54,7 @@ export default function IntervalPreview({
             if (cancelled) return;
             setPreview(response);
             setError(null);
-            // The fields start from what config.toml has
+            // The fields start from the saved settings
             setDraft(
               (d) =>
                 d ?? {
@@ -165,7 +165,7 @@ export default function IntervalPreview({
       )}
       <p className="field-hint">
         The next interval after each rating, for a new card and one rated Good
-        each time it was due. It starts from config.toml&apos;s settings: try
+        each time it was due. It starts from the collection&apos;s settings: try
         others here to see what they would do. Nothing here is saved. Load
         balancing may move a card by a day or so.
       </p>

@@ -28,7 +28,7 @@ use crate::parsers::generate_files::construct_note_file_contents;
 use crate::parsers::get_file_notes;
 use crate::schema::note::LinkedNote;
 
-/// What reading and writing note files takes from outside the notes: `config.toml` (for parsing)
+/// What reading and writing note files takes from outside the notes: the settings (for parsing)
 /// and each parser's note template. Each is read the first time it is needed, then kept, so that
 /// the files of a push or a reconcile share one read of each rather than reading them for every
 /// note. Make one per operation: a later one sees changes to the files.

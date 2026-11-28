@@ -748,7 +748,7 @@ pub mod card {
         pub days: u32,
         pub spread: u32,
         /// Only work out what the break would do, without moving any card or changing
-        /// `config.toml`.
+        /// the settings.
         #[serde(default)]
         pub dry_run: bool,
     }
@@ -1220,7 +1220,7 @@ pub mod review {
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct OptimizeProposal {
         pub parameters: Vec<f32>,
-        /// The parameters they were scored against. If `config.toml` no longer has these, the
+        /// The parameters they were scored against. If the settings no longer have these, the
         /// proposal is out of date and dropped.
         pub current_parameters: Vec<f32>,
         pub current: ParametersEvaluation,
@@ -1231,8 +1231,8 @@ pub mod review {
         pub fitted_at: NaiveDate,
     }
 
-    /// Settings to preview the scheduler's intervals with, in place of `config.toml`'s, for
-    /// `POST /api/scheduler/{name}/preview`. Each left out is `config.toml`'s.
+    /// Settings to preview the scheduler's intervals with, in place of the settings', for
+    /// `POST /api/scheduler/{name}/preview`. Each left out is the settings'.
     #[derive(Debug, Default, Deserialize, Serialize)]
     pub struct IntervalPreviewRequest {
         /// The retention cards are scheduled for, such as 0.9

@@ -1,4 +1,4 @@
-//! `spares goal`: how the goals of `config.toml` are going.
+//! `spares goal`: how the goals of the settings are going.
 
 use std::fmt::Write as _;
 
@@ -41,7 +41,7 @@ fn only_goal(mut statuses: Vec<GoalStatus>, name: &str) -> Result<GoalStatus, Er
 fn no_goal(name: &str, names: &[String]) -> Error {
     miette!(
         help = if names.is_empty() {
-            "Goals are `[goals.<name>]` tables of config.toml".to_string()
+            "Goals are `[goals.<name>]` tables of the settings (`spares config edit`)".to_string()
         } else {
             format!("The goals are: {}", names.join(", "))
         },
@@ -109,7 +109,7 @@ pub(crate) async fn handle(args: GoalArgs, base_url: &str, client: &Client) -> R
     }
     if statuses.is_empty() {
         println!(
-            "No goals. Add a `[goals.<name>]` table to config.toml: see `Goal` in spares_core::config."
+            "No goals. Add a `[goals.<name>]` table to the settings (`spares config edit`): see `Goal` in spares_core::config."
         );
     }
     for (i, status) in statuses.iter().enumerate() {

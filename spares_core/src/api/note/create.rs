@@ -138,7 +138,7 @@ pub async fn create_notes(
     let mut new_tag_payloads: Vec<CreateTagPayload> = Vec::new();
     // One run of ids for the whole call, so notes created together sort next to each other.
     let note_ids = allocate_note_ids(db, body.requests.len()).await?;
-    // Read once for every note, rather than parsing config.toml again for each
+    // Read once for every note, rather than parsing the settings again for each
     let external_config = read_external_config().ok();
     for (create_note_request, note_id) in body.requests.iter().zip(note_ids) {
         let CreateNoteRequest {

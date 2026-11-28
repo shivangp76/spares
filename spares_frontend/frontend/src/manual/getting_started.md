@@ -67,7 +67,7 @@ Notes can be edited and reviewed both on your machine and on the server (e.g. fr
 ```sh
 spares sync login https://<the server>
 ```
-It gets a sync-only device token there, enrolls this copy (your machine keeps `0`, the laptop's number), and sets `url`, `token` and `replica` in the `[sync]` table of your collection's `config.toml`. `spares sync logout` undoes it.
+It gets a sync-only device token there, enrolls this copy (your machine keeps `0`, the laptop's number), and sets `url`, `token` and `replica` in the `[sync]` table of your collection's `config.toml`, which keeps this machine's own settings (see [Settings](./getting_started.md#settings)). `spares sync logout` undoes it.
 
 A phone's browser can be a replica too, with a copy of its own: see [Keeping a copy on this device](./getting_started.md#keeping-a-copy-on-this-device). It gets its number from the root, also when it uses your machine's host, which relays its sync to the server.
 
@@ -84,13 +84,13 @@ Some limitations:
 To keep a remote server's compute low, render Typst notes on your own machine and let web clients compile their cards. Before syncing the database, `spares sync cloud` copies to `sync.remote_host` over SSH:
 
 - the stored copies of the files Typst cards read (render assets), which web clients compile them with, but not those of images and audio, which the sync gives the server itself;
-- your templates, and your `config.toml`, so reviews on the server are scheduled with your settings (see below);
+- your templates (the collection's [settings](./getting_started.md#settings) come with the sync itself);
 - every file that rendering recorded your notes as reading, such as preambles, figures and pandoc defaults, to the same paths relative to the server's home directory, so the server can render notes edited there. A file is only known once a note reading it has been rendered locally;
 - the rendered cards of markdown and LaTeX notes, only if the server has no pandoc and LaTeX (`setup_vps.sh --no-latex`). Otherwise the server renders them itself after the sync, and again when your templates or the files they read change.
 
 It first asks the server where your collection is, and checks over SSH that `remote_host` reaches that collection (the server's machine, as the user it runs as), that it is in the same directory as yours (notes name images and the files they read by absolute path), and that your home directory leads to the server user's (`setup_vps.sh --local-home`, which `spares deploy` passes). `spares sync cloud --dry-run` runs these checks and lists what would be copied, without copying or syncing anything. On the server:
 
-- `render_browser_parsers` is `false` in its `config.toml`: `spares sync cloud` sends yours, which replaces the server's with that changed, but the server keeps its own `[sync]` table, and yours, with its token, never leaves your machine. Change settings on your machine. Parsers that render in the browser (such as "typst") are then not compiled on the server, and their cards' raw files are not written. Web clients compile these cards themselves. Keep this setting on where you render before syncing, since rendering is what records the files the notes read (figures, preambles, ...).
+- `render_browser_parsers` is `false` in its `config.toml` (one of the settings of each machine, which `spares sync cloud` never sends; your `[sync]` table, with its token, never leaves your machine). Parsers that render in the browser (such as "typst") are then not compiled on the server, and their cards' raw files are not written. Web clients compile these cards themselves. Keep this setting on where you render before syncing, since rendering is what records the files the notes read (figures, preambles, ...).
 - Set `RAYON_NUM_THREADS=1` when starting `spares_server`, so generating note files cannot use every core while reviews are being served.
 - Every render runs in a sandbox (`sandbox-exec` on macOS, bubblewrap on Linux; see `spares_core::render`): it reads only the system's directories, your collection's directory and the directories in `read_dirs` under `[render]` in `host.toml`, and has no network. List there what your templates import from outside the collection, such as your preambles. LaTeX runs without shell escape.
 
@@ -204,9 +204,26 @@ spares note generate --render
 
 The note's text file will also contain the linked notes. The exact syntax of these files can be modified in the parser.
 
+### Settings
+
+The collection's settings (daily limits, learning steps, FSRS, the review order and its presets, leeches, goals, easy days, and the rest documented on `spares_core::config::SparesExternalConfig`) are kept in the collection and sync with it, so every device shares them. Change them on the **Settings** page of the web app, as a form for the common ones or as TOML for all of them, or with `spares config`:
+
+```sh
+spares config show                               # as written, comments included (--all: every value in effect)
+spares config get queue.review_order
+spares config set new_cards_daily_limit 15
+spares config set queue.review_order '"retrievability"'
+spares config unset learning_steps               # back to the default
+spares config edit                               # in $VISUAL or $EDITOR
+```
+
+A device that keeps a copy changes them offline too, and the change syncs. When two devices change the same setting before syncing, the later change wins; changes to different settings are combined. Every change can be undone (`spares event undo`, or Undo on the page).
+
+What belongs to one machine stays in its collection's `config.toml` (`config/config.toml` in the collection's directory): the `[sync]` table, `audio_player`, `tts_command` and `render_browser_parsers`. Older versions of spares kept every setting there: the first time a host opens the collection, it moves the collection's settings into it and keeps the old file as `config.toml.collection-settings.bak`. A collection setting written into `config.toml` later is moved the same way the next time.
+
 ### Where files are written
 
-Everything of a collection is in its directory on the host, `<SPARES_ROOT>/users/<id>/`: rendered files in `files/`, `config.toml` and the templates in `config/`, images, audio and image occlusions in `media/`, and the notes repository in `notes.git/` (see `spares_core::collection`). A second host for testing only needs its own `SPARES_ROOT`: nothing is shared with your main one.
+Everything of a collection is in its directory on the host, `<SPARES_ROOT>/users/<id>/`: rendered files in `files/`, the database (`collection.sqlite`, which holds the collection's settings too), `config.toml` (this machine's settings) and the templates in `config/`, images, audio and image occlusions in `media/`, and the notes repository in `notes.git/` (see `spares_core::collection`). A second host for testing only needs its own `SPARES_ROOT`: nothing is shared with your main one.
 
 ## Editing notes
 
@@ -245,4 +262,4 @@ The cloze key `tts` reads a cloze aloud with the device's voices, as Anki's `{{t
 <!--- # tts: en_US --->
 Good morning in French: {{[tts:fr_FR] bonjour}}
 ```
-The value is a language, then optionally a speed and a voice, such as `fr_FR,0.8,Thomas`, or `off`. The web app reads text aloud with the browser's voices, which **Settings** lists and can turn off. `spares card review` uses the `tts_command` of `config.toml`. The rules are on `spares_core::parsers::tts`.
+The value is a language, then optionally a speed and a voice, such as `fr_FR,0.8,Thomas`, or `off`. The web app reads text aloud with the browser's voices, which **Settings** lists and can turn off. `spares card review` uses the `tts_command` of your machine's `config.toml`. The rules are on `spares_core::parsers::tts`.

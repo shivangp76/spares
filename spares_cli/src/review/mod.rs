@@ -116,7 +116,7 @@ pub(crate) struct FilterArgs {
     /// Filter with the search saved under this name (see `spares saved-search`), as `--query`
     #[arg(long, conflicts_with_all = ["query", "tag_id", "tag_name", "goal"])]
     pub(crate) saved: Option<String>,
-    /// Filter with the search of the goal with this name (`[goals.<name>]` of config.toml), as
+    /// Filter with the search of the goal with this name (`[goals.<name>]` of the settings), as
     /// `--query`
     #[arg(long, conflicts_with_all = ["query", "tag_id", "tag_name"])]
     pub(crate) goal: Option<String>,

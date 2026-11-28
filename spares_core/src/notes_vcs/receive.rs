@@ -589,7 +589,7 @@ impl PushedFile {
 
 #[expect(clippy::too_many_lines)]
 async fn receive_locked(db: &SqlitePool, request: &ReceiveRequest) -> Result<Outcome, Error> {
-    // config.toml and the note templates, read once for every pushed file
+    // The settings and the note templates, read once for every pushed file
     let context = NoteFileContext::default();
     // 1. The hook's repository must be the one this server writes to.
     if let Some(reason) = wrong_repo(&request.repo) {

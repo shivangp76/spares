@@ -1053,12 +1053,12 @@ export async function getStatisticsGraphs(
 }
 
 /** How quickly a preset's cards are forgotten in their steps, and the steps that fit. */
-/** The searches of the goals of config.toml and of their parts, to review them with. */
+/** The searches of the goals of the settings and of their parts, to review them with. */
 export async function getGoals(): Promise<GoalSearch[]> {
   return apiFetch("Goals fetch", "/api/goals");
 }
 
-/** How each goal of config.toml is going, like `spares goal status`. */
+/** How each goal of the settings is going, like `spares goal status`. */
 export async function getGoalStatus(): Promise<GoalStatus[]> {
   return apiFetch("Goal status fetch", "/api/goals/status");
 }
@@ -1075,7 +1075,7 @@ export async function getStepsStats(
 /**
  * Fits the scheduler's parameters to the review history, like `spares card optimize`. With
  * `apply`, saves them if they predict it better and reschedules every card. On the server, which
- * keeps the parameters in its `config.toml`; this can take a minute.
+ * keeps the parameters in the collection's settings; this can take a minute.
  */
 export async function optimizeScheduler(
   schedulerName: string,
@@ -1088,7 +1088,7 @@ export async function optimizeScheduler(
   );
 }
 
-/** The next interval of each rating for example cards, with config.toml's settings or `request`'s. */
+/** The next interval of each rating for example cards, with the saved settings or `request`'s. */
 export async function previewIntervals(
   schedulerName: string,
   request: IntervalPreviewRequest,

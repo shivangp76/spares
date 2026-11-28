@@ -1338,7 +1338,7 @@ struct EvaluationContext {
     scope_clause: Option<String>,
     /// The words results are ranked by, for [`relevance_cte`].
     relevance_match: Option<String>,
-    /// `config.toml`, read the first time a comparison needs it and shared with the children, so
+    /// the settings, read the first time a comparison needs it and shared with the children, so
     /// that a query comparing several such fields reads it once
     config: Arc<OnceLock<Result<SparesExternalConfig, String>>>,
 }

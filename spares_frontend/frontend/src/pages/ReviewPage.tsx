@@ -600,7 +600,7 @@ export default function ReviewPage() {
   const [sessionInfo, setSessionInfo] = useState<string | null>(null);
   // The searches saved on the Notes and Cards pages, to review the cards they find in one click
   const savedSearches = useSavedSearches();
-  // The goals of config.toml and their parts, likewise
+  // The goals of the settings and their parts, likewise
   const goals = useGoalSearches();
   const recentFilters = useRecentSearches<RecentFilter>(
     "spares_review_recent_filters",

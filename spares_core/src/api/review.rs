@@ -1565,7 +1565,7 @@ pub async fn rate_card(
     .await
 }
 
-/// [`rate_card`] with `config` rather than the one in `config.toml`.
+/// [`rate_card`] with `config` rather than the settings'.
 pub(crate) async fn rate_card_with_config(
     db: &SqlitePool,
     scheduler: &dyn SrsScheduler,

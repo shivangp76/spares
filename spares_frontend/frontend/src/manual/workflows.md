@@ -59,7 +59,7 @@ Notes can be shared like Anki's shared decks. Export the ones matching a query t
 spares note export 'tag=oceans' --share -o shared
 ```
 This writes one file per parser into `shared` (such as `shared/export.md`), using the parser's export template. Each note keeps its tags and keywords, so links between the shared notes still work. What is private or only means something in your collection is left out (see `spares_core::api::note::export`):
-- Notes tagged `private`, or a tag under it such as `private:health`. The tag is `private_tag_name` in `config.toml`.
+- Notes tagged `private`, or a tag under it such as `private:health`. The tag is the setting `private_tag_name`.
 - The notes' ids, so they are imported as new notes.
 - The tags that say how a note is doing rather than what it is about: the flagged and leech tags, `sync-conflict`, and the `live:` tags of live notes.
 - Custom data, and clozes' `id:` keys.

@@ -1,4 +1,4 @@
-/** Links to review a goal of config.toml (`[goals.<name>]`) or one of its parts. */
+/** Links to review a goal of the settings (`[goals.<name>]`) or one of its parts. */
 
 /** `minutes` as "2 h 10 min" or "25 min". */
 export function formatMinutes(minutes: number): string {

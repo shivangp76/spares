@@ -122,7 +122,7 @@ pub(crate) fn optimal_interval_days(card: &Card) -> f64 {
 /// within the day, outside its steps (see the `steps` module).
 const SAME_DAY_KEY: &str = "same_day";
 
-/// The name review logs and `config.toml` know FSRS by.
+/// The name review logs and the settings know FSRS by.
 const SCHEDULER_NAME: &str = "fsrs";
 
 /// Stateless: the model is built from the config's `fsrs_parameters` whenever it is needed, so a

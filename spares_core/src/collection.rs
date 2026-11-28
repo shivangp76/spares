@@ -8,7 +8,8 @@
 //! ```text
 //! <root>/users/<user_id>/      CollectionPaths::root
 //!   collection.sqlite   the database
-//!   config/             config.toml and the parser templates (`<parser>/templates`)
+//!   config/             config.toml (this machine's settings) and the parser templates
+//!                       (`<parser>/templates`); the collection's settings are in the database
 //!   media/              images, audio and image occlusions that notes name
 //!   notes.git/          the notes repository (see `crate::notes_vcs`)
 //!   notes/              raw note files, a clone of the notes repository
@@ -90,7 +91,7 @@ pub struct CollectionPaths {
     /// The collection's own directory, `users/<user_id>` on a host: what can't be recreated. Raw
     /// note files and the other files that were in the data directory are under it.
     pub root: PathBuf,
-    /// `config.toml` and parser templates
+    /// `config.toml` (this machine's settings) and parser templates
     pub config: PathBuf,
     /// Rendered files, served at `/files`, in [`Self::cache`]. API responses name files relative
     /// to it.

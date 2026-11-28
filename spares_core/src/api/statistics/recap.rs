@@ -44,7 +44,7 @@ pub struct YearRecap {
     pub retention: Option<f64>,
     /// The tags of the cards reviewed most, with their reviews, most first. A card's note's tags
     /// and its own count, but not filtered tags, nor the tags that say how a card went rather
-    /// than what it is about: the flagged, leech and buried tags of `config.toml`.
+    /// than what it is about: the flagged, leech and buried tags of the settings.
     pub top_tags: Vec<(String, u32)>,
 }
 

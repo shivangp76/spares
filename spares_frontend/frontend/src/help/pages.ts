@@ -233,7 +233,8 @@ export const PAGE_HELP: Record<string, PageHelp> = {
   "/settings": {
     title: "Settings",
     about: [
-      "These settings are kept in this browser. Scheduling, the daily limits and the presets are set in the server's `config.toml`.",
+      "Collection holds the settings every device shares, which sync: scheduling, the daily limits, the review order and its presets, goals and more, as a form for the common ones or as TOML for all of them. Each save can be undone. `spares config` changes the same settings.",
+      "The rest are kept in this browser.",
       "This Device can keep a copy of the whole collection in this browser, so every page works offline. It syncs with the server like the laptop does.",
       "Account lists the devices logged in with `spares login`, and logs out one you lost.",
     ],

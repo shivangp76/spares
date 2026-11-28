@@ -42,7 +42,7 @@ struct CardImage {
     clozes_svg: Vec<u8>,
 }
 
-/// The `[image_occlusion]` table of `config.toml`. Each card's image is made with it, and on a
+/// The `[image_occlusion]` table of the settings. Each card's image is made with it, and on a
 /// device the file only changes at a sync, so there it's parsed again only once the device's files
 /// have changed (see `platform::version`), rather than for every card.
 fn image_occlusion_config() -> Result<ImageOcclusionConfig, Error> {

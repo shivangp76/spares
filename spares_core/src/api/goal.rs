@@ -91,7 +91,7 @@ impl CardHistory {
     }
 }
 
-/// The searches of the goals of `config` and of their parts, in the order of `config.toml`.
+/// The searches of the goals of `config` and of their parts, in the order of the settings.
 pub fn goal_searches(config: &SparesExternalConfig) -> Vec<GoalSearch> {
     config
         .goals
@@ -108,7 +108,7 @@ pub fn goal_searches(config: &SparesExternalConfig) -> Vec<GoalSearch> {
         .collect()
 }
 
-/// How every goal of `config` is going, as of `now`, in the order of `config.toml`.
+/// How every goal of `config` is going, as of `now`, in the order of the settings.
 pub async fn goal_status(
     db: &SqlitePool,
     config: &SparesExternalConfig,

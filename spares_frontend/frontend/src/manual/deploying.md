@@ -114,7 +114,7 @@ To use spares on the phone without a connection, add the page to the home screen
 | Its settings and accounts | `host.toml` and `accounts.sqlite` in the root; manage with `SPARES_ROOT=<root> spares_server host --help` |
 | Your collection | `users/<you>/` in the root |
 | `setup_vps.sh`'s arguments, the URL | `/etc/spares/setup.conf`, `/etc/spares/url` |
-| `config.toml` (copied from the laptop) | `users/<you>/config/config.toml` |
+| The server's own settings (`config.toml`); the collection's are in its database | `users/<you>/config/config.toml` |
 | The last deploy's build, which the next one updates | `~/.cache/spares-bundle` |
 
 Spares uses about 15 MB of memory idle and 30 MB while sending the whole database, so 512 MB is plenty. `setup_vps.sh` adds 1 GB of swap for `apt`.

@@ -345,7 +345,7 @@ async fn create_undo_payload(db: &SqlitePool, event: &Event) -> Result<Value, Er
             let current = crate::api::scheduler::current_parameters()?;
             if current.fsrs_parameters != payload.parameters.after.fsrs_parameters {
                 return Err(Error::Library(LibraryError::InvalidConfig(format!(
-                    "Event {} can't be undone: `fsrs_parameters` in config.toml changed since. \
+                    "Event {} can't be undone: `fsrs_parameters` in the settings changed since. \
                      Undo the later change first, or set them by hand.",
                     event.id
                 ))));
