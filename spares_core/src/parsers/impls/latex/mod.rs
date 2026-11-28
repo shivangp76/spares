@@ -75,10 +75,10 @@ use crate::parsers::RenderedFile;
 use crate::parsers::audio::regex_ranges;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
-use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ConstructImageOcclusionType;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::parsers::linked_note_raw_path;
 use crate::parsers::render_command_output;
 use crate::schema::note::LinkedNote;
 
@@ -413,21 +413,18 @@ fn get_linked_notes_string(
                     searched_keyword,
                     linked_note_id,
                     matched_keyword,
+                    linked_parser_name,
                     ..
                 } = linked_note_request;
                 assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
                 match (linked_note_id, matched_keyword) {
                     (None, None) => "  \\item{{-}}".to_string(),
                     (Some(linked_note_id), Some(matched_keyword)) => {
-                        let mut note_raw_path = get_output_raw_dir(
-                            parser.get_parser_name(),
-                            RenderOutputType::Note,
-                            None,
+                        let note_raw_path = linked_note_raw_path(
+                            parser,
+                            linked_parser_name.as_deref(),
+                            *linked_note_id,
                         );
-                        note_raw_path.push(
-                            parser.get_output_filename(RenderOutputType::Note, *linked_note_id),
-                        );
-                        note_raw_path.set_extension(parser.file_extension());
                         format!(
                             "  \\item{{\\lhref{{{}}}{{{} $\\rightarrow$ {}}}}}",
                             note_raw_path.display(),

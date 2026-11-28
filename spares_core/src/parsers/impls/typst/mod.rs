@@ -28,18 +28,17 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
-use crate::parsers::RenderOutputType;
 use crate::parsers::RenderedFile;
 use crate::parsers::audio::AudioRef;
 use crate::parsers::audio::find_audio_refs;
 use crate::parsers::audio::regex_ranges;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
-use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
 use crate::parsers::image_occlusion::image_occlusion_caption;
 use crate::parsers::image_occlusion::image_occlusion_overlay;
+use crate::parsers::linked_note_raw_path;
 use crate::parsers::render_command_output;
 use crate::schema::note::LinkedNote;
 
@@ -633,21 +632,18 @@ fn get_linked_notes_string(
                     searched_keyword,
                     linked_note_id,
                     matched_keyword,
+                    linked_parser_name,
                     ..
                 } = linked_note_request;
                 assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
                 match (linked_note_id, matched_keyword) {
                     (None, None) => format!("+ {} $->$ (no match found)", searched_keyword),
                     (Some(linked_note_id), Some(matched_keyword)) => {
-                        let mut note_raw_path = get_output_raw_dir(
-                            parser.get_parser_name(),
-                            RenderOutputType::Note,
-                            None,
+                        let note_raw_path = linked_note_raw_path(
+                            parser,
+                            linked_parser_name.as_deref(),
+                            *linked_note_id,
                         );
-                        note_raw_path.push(
-                            parser.get_output_filename(RenderOutputType::Note, *linked_note_id),
-                        );
-                        note_raw_path.set_extension(parser.file_extension());
                         format!(
                             "+ {} $->$ #link(\"{}\")[{}]",
                             searched_keyword,
@@ -745,18 +741,21 @@ pub mod tests {
                 linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
                 relation: crate::model::LinkRelation::Prerequisite,
+                linked_parser_name: None,
             },
             LinkedNote {
                 searched_keyword: "keyword 1.5".to_string(),
                 linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
                 relation: crate::model::LinkRelation::Prerequisite,
+                linked_parser_name: None,
             },
             LinkedNote {
                 searched_keyword: "keyword 2".to_string(),
                 linked_note_id: Some("aab".parse().unwrap()),
                 matched_keyword: Some("keyword 2".to_string()),
                 relation: crate::model::LinkRelation::Prerequisite,
+                linked_parser_name: None,
             },
         ]);
         let (new_note_data, linked_notes_string) = get_linked_notes_string(

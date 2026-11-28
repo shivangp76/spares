@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { openableUrl } from "./links";
+import { linkedNoteName, openableUrl } from "./links";
 
 test("openableUrl opens web pages and app files, never scripts", () => {
   const base = "https://spares.example/review";
@@ -22,4 +22,13 @@ test("openableUrl opens web pages and app files, never scripts", () => {
   ]) {
     expect(openableUrl(href, base)).toBeNull();
   }
+});
+
+test("linkedNoteName reads a linked note's ID from the path of its file, whatever its parser", () => {
+  expect(linkedNoteName("/data/notes/markdown/abc.md")).toBe("abc");
+  expect(linkedNoteName("/data/notes/typst/abd.typ")).toBe("abd");
+  expect(linkedNoteName("/data/notes/latex-note/abe.tex")).toBe("abe");
+  expect(linkedNoteName("abf.md")).toBe("abf");
+  expect(linkedNoteName("/files/clip.mp3")).toBeNull();
+  expect(linkedNoteName("https://example.com/notes.md")).toBeNull();
 });

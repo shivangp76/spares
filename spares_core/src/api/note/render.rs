@@ -332,6 +332,7 @@ fn rematch_note_links(
                     .map(|x| x.matched_keyword.clone()),
                 score: matched_keyword_data.as_ref().map(|x| x.score),
                 relation: existing_link.relation,
+                linked_parser_name: None,
             };
             Some((link, target_changed))
         })
@@ -376,9 +377,12 @@ pub async fn get_note_links_map(
     let mut all_note_links_map: HashMap<NoteId, Vec<NoteLink>> = HashMap::new();
     // Keep even an unbounded CLI list below SQLite's bind parameter limit.
     for note_ids in note_ids.chunks(5000) {
-        // Note that the query sorts by order, so we don't need to do this after
+        // Note that the query sorts by order, so we don't need to do this after. With each linked
+        // note's parser, which says where the link points.
         let query_str = format!(
-            "SELECT * FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
+            "SELECT note_link.*, (SELECT parser.name FROM note JOIN parser ON parser.id = \
+             note.parser_id WHERE note.id = note_link.linked_note_id) AS linked_parser_name \
+             FROM note_link WHERE parent_note_id IN ({}) ORDER BY parent_note_id, \"order\"",
             placeholders(note_ids.len())
         );
         let mut query = sqlx::query_as(AssertSqlSafe(query_str));
@@ -666,20 +670,8 @@ pub fn render_note_data_to_generate_files_request<S: ::std::hash::BuildHasher>(
         mapping.get(note_id).map(|note_links| {
             note_links
                 .iter()
-                .map(
-                    |NoteLink {
-                         searched_keyword,
-                         linked_note_id,
-                         matched_keyword,
-                         relation,
-                         ..
-                     }| LinkedNote {
-                        searched_keyword: searched_keyword.clone(),
-                        linked_note_id: *linked_note_id,
-                        matched_keyword: matched_keyword.clone(),
-                        relation: *relation,
-                    },
-                )
+                .cloned()
+                .map(LinkedNote::new)
                 .collect::<Vec<_>>()
         })
     });
@@ -774,6 +766,55 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// A link to a note of another parser knows that parser, which says where the note's file is.
+    #[sqlx::test]
+    async fn note_links_know_the_parser_of_the_linked_note(pool: SqlitePool) {
+        use chrono::Utc;
+        use serde_json::Map;
+
+        use crate::api::note::create_notes;
+        use crate::api::note::get_note_links_map;
+        use crate::api::parser::tests::create_parser_helper;
+        use crate::schema::note::CreateNoteRequest;
+        use crate::schema::note::CreateNotesRequest;
+
+        let create = async |parser: &str, data: &str, keyword: &str| {
+            let parser = create_parser_helper(&pool, parser).await;
+            let request = CreateNotesRequest {
+                parser_id: parser.id,
+                requests: vec![CreateNoteRequest {
+                    data: data.to_string(),
+                    keywords: vec![keyword.to_string()],
+                    tags: vec![],
+                    is_suspended: false,
+                    custom_data: Map::new(),
+                }],
+            };
+            create_notes(&pool, request, Utc::now(), &get_all_parsers(), false)
+                .await
+                .unwrap()
+                .notes[0]
+                .id
+        };
+        let target = create("typst", "Target #cl[Cloze]", "target").await;
+        let note = create("markdown", "Links to [target][li] {{ Cloze }}", "linking").await;
+        let body = RenderNotesRequest {
+            selector: NotesSelector::All,
+            immutable_note_ids: None,
+            overridden_output_raw_dir: None,
+            include_linked_notes: true,
+            include_cards: false,
+            generate_rendered: false,
+            force_generate_rendered: false,
+        };
+        render_notes(&pool, body, &get_all_parsers()).await.unwrap();
+
+        let links = get_note_links_map(&pool, &[note]).await.unwrap();
+        let link = &links[&note][0];
+        assert_eq!(link.linked_note_id, Some(target));
+        assert_eq!(link.linked_parser_name.as_deref(), Some("typst"));
     }
 
     #[sqlx::test]

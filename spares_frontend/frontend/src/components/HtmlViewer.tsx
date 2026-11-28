@@ -3,7 +3,7 @@ import { fetchFile } from "../api/client";
 import { audioLinkPath } from "../audio";
 import { scrollClozesIntoView } from "../clozeScroll";
 import { useResolvedTheme } from "../theme";
-import { openableUrl } from "../links";
+import { linkedNoteName, openableUrl } from "../links";
 import { withoutCardId } from "../markdownCard";
 import { errorMessage, parseNoteId } from "../utils";
 import Skeleton from "./Skeleton";
@@ -28,8 +28,6 @@ interface Props {
 
 type Loaded = { key: string; html?: string; error?: string };
 
-// Links to linked notes point at their raw file, e.g. `/…/0012.md`, so the note's ID is its name
-const NOTE_LINK = /(?:^|\/)([a-z]{1,8})\.md$/;
 const STYLE_ID = "spares-theme";
 
 /**
@@ -240,8 +238,8 @@ function onClick(
     window.focus();
     return;
   }
-  const noteLink = NOTE_LINK.exec(href);
-  const noteId = noteLink ? parseNoteId(noteLink[1]) : null;
+  const noteName = linkedNoteName(href);
+  const noteId = noteName ? parseNoteId(noteName) : null;
   if (noteId !== null) {
     onOpenNote?.(noteId);
     return;

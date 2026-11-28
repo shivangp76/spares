@@ -14,3 +14,15 @@ export function openableUrl(href: string, base: string): string | null {
     ? url.href
     : null;
 }
+
+/**
+ * The name of the note `href` links to, which is its ID, if it is a link to a linked note: those
+ * point at the note's raw file, e.g. `/…/abc.md`, in the directory and with the extension of the
+ * linked note's parser, which can be another than the linking note's (`.typ`, `.tex`). Not a
+ * URL, such as a web page's.
+ */
+export function linkedNoteName(href: string): string | null {
+  // A web page's address can end in `.md` too
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
+  return /(?:^|\/)([a-z]{1,8})\.(?:md|typ|tex)$/.exec(href)?.[1] ?? null;
+}

@@ -496,17 +496,9 @@ pub fn linked_notes_from_map(
     linked_notes_map: &HashMap<NoteId, Vec<NoteLink>>,
     note_id: NoteId,
 ) -> Option<Vec<LinkedNote>> {
-    linked_notes_map.get(&note_id).map(|links| {
-        links
-            .iter()
-            .map(|link| LinkedNote {
-                searched_keyword: link.searched_keyword.clone(),
-                linked_note_id: link.linked_note_id,
-                matched_keyword: link.matched_keyword.clone(),
-                relation: link.relation,
-            })
-            .collect()
-    })
+    linked_notes_map
+        .get(&note_id)
+        .map(|links| links.iter().cloned().map(LinkedNote::new).collect())
 }
 
 /// In the notes repository, fills in the linked-notes section from the notes' current `note_link`

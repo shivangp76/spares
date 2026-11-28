@@ -66,6 +66,7 @@ pub(crate) async fn update_note_links(
                         .unwrap_or_default(),
                     score: nl_opt.map(|nl| nl.score).unwrap_or_default(),
                     relation: link.relation,
+                    linked_parser_name: None,
                 }
             })
             .collect();

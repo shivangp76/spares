@@ -301,6 +301,11 @@ pub struct NoteLink {
     pub matched_keyword: Option<String>,
     pub score: Option<Score>,
     pub relation: LinkRelation,
+    /// The parser of the linked note, which says where its file is. Not a column: read only by
+    /// `get_note_links_map`, for the notes' files, and never synced or sent.
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub linked_parser_name: Option<String>,
 }
 
 /// Tree-like structure using colons, like <https://hledger.org/account-names.html>

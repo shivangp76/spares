@@ -644,6 +644,23 @@ pub fn find_parser(
     Ok(matching_parsers[0]())
 }
 
+/// The raw file of note `note_id`, which a link of a `parser` note points at: in the directory and
+/// with the extension of `linked_parser_name`, the linked note's parser, which can be another
+/// than `parser`. `parser`'s when it isn't known.
+pub fn linked_note_raw_path(
+    parser: &dyn Parseable,
+    linked_parser_name: Option<&str>,
+    note_id: NoteId,
+) -> PathBuf {
+    let linked_parser =
+        linked_parser_name.and_then(|name| find_parser(name, &get_all_parsers()).ok());
+    let parser = linked_parser.as_deref().unwrap_or(parser);
+    let mut path = get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
+    path.push(parser.get_output_filename(RenderOutputType::Note, note_id));
+    path.set_extension(parser.file_extension());
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;

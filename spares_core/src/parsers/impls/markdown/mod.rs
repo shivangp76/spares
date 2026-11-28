@@ -63,7 +63,6 @@ use crate::parsers::NoteImportAction;
 use crate::parsers::NoteSettingsKeys;
 use crate::parsers::Parseable;
 use crate::parsers::RenderDependencies;
-use crate::parsers::RenderOutputType;
 use crate::parsers::RenderedFile;
 use crate::parsers::WebRenderMode;
 use crate::parsers::audio::AudioRef;
@@ -71,9 +70,9 @@ use crate::parsers::audio::find_audio_refs;
 use crate::parsers::audio::regex_ranges;
 use crate::parsers::construct_card_data;
 use crate::parsers::generate_files::CardSide;
-use crate::parsers::get_output_raw_dir;
 use crate::parsers::image_occlusion::ImageOcclusionData;
 use crate::parsers::image_occlusion::construct_image_occlusion_from_image;
+use crate::parsers::linked_note_raw_path;
 use crate::parsers::render_command_output;
 use crate::schema::note::LinkedNote;
 
@@ -907,12 +906,10 @@ fn get_linked_notes_regex() -> Arc<fancy_regex::Regex> {
     get_or_compile_regex(r"(?m)\[([^\]]*)\]\[li([^\]]*)?\]").unwrap()
 }
 
-/// The file a link to `linked_note_id` points at, which the web app opens the note for.
-fn linked_note_path(parser: &dyn Parseable, linked_note_id: NoteId) -> PathBuf {
-    let mut path = get_output_raw_dir(parser.get_parser_name(), RenderOutputType::Note, None);
-    path.push(parser.get_output_filename(RenderOutputType::Note, linked_note_id));
-    path.set_extension(parser.file_extension());
-    path
+/// The file `link` to `linked_note_id` points at, which the web app opens the note for: the
+/// linked note's own, whatever its parser.
+fn linked_note_path(parser: &dyn Parseable, link: &LinkedNote, linked_note_id: NoteId) -> PathBuf {
+    linked_note_raw_path(parser, link.linked_parser_name.as_deref(), linked_note_id)
 }
 
 /// A card's file with its links to other notes made inline links, as `[text](<path> "title")`,
@@ -934,11 +931,13 @@ fn link_card_links(
                 .into_iter()
                 .flatten()
                 .find(|link| link.searched_keyword == text)
-                .and_then(|link| Some((link.linked_note_id?, link.matched_keyword.as_ref()?)));
+                .and_then(|link| {
+                    Some((link, link.linked_note_id?, link.matched_keyword.as_ref()?))
+                });
             match target {
-                Some((id, matched)) => format!(
+                Some((link, id, matched)) => format!(
                     "[{text}](<{}> \"{text} -> {matched}\")",
-                    linked_note_path(parser, id).display()
+                    linked_note_path(parser, link, id).display()
                 ),
                 None => text.to_string(),
             }
@@ -985,7 +984,7 @@ fn get_linked_notes_string(
                     format!("[li{n}]: -"),
                 ),
                 (Some(linked_note_id), Some(matched_keyword)) => {
-                    let path = linked_note_path(parser, *linked_note_id);
+                    let path = linked_note_path(parser, linked_note_request, *linked_note_id);
                     let title = format!("{searched_keyword} -> {matched_keyword}");
                     (
                         format!("{n}. [{title}](<{}> \"{title}\")", path.display()),
@@ -1062,18 +1061,21 @@ pub mod tests {
                 linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
                 relation: crate::model::LinkRelation::Prerequisite,
+                linked_parser_name: None,
             },
             LinkedNote {
                 searched_keyword: "keyword 1.5".to_string(),
                 linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("keyword 1".to_string()),
                 relation: crate::model::LinkRelation::Prerequisite,
+                linked_parser_name: None,
             },
             LinkedNote {
                 searched_keyword: "keyword 2".to_string(),
                 linked_note_id: Some("aab".parse().unwrap()),
                 matched_keyword: Some("keyword 2".to_string()),
                 relation: crate::model::LinkRelation::Prerequisite,
+                linked_parser_name: None,
             },
         ]);
         let (new_note_data, linked_notes_string) = get_linked_notes_string(
@@ -1094,6 +1096,31 @@ pub mod tests {
         assert_eq!(linked_notes_string, expected_linked_notes_string);
     }
 
+    /// A link to a note of another parser points at that note's file, in its parser's directory
+    /// and with its extension, in the note and in its cards
+    #[test]
+    fn test_markdown_links_to_another_parser() {
+        use crate::parsers::impls::typst::TypstParser;
+        use crate::parsers::linked_note_raw_path;
+
+        let parser = MarkdownParser::new();
+        let id = "aaa".parse().unwrap();
+        let links = vec![LinkedNote {
+            searched_keyword: "target".to_string(),
+            linked_note_id: Some(id),
+            matched_keyword: Some("target".to_string()),
+            relation: crate::model::LinkRelation::Prerequisite,
+            linked_parser_name: Some("typst".to_string()),
+        }];
+        let typst_path = linked_note_raw_path(&TypstParser::new(), None, id);
+        assert_eq!(typst_path.extension().unwrap(), "typ");
+        let typst_path = typst_path.display().to_string();
+        let (_, list) = get_linked_notes_string(&parser, "Links to [target][li]", Some(&links));
+        assert_eq!(list.matches(&typst_path).count(), 2, "{list}");
+        let card = super::link_card_links(&parser, "Links to [target][li]", Some(&links));
+        assert!(card.contains(&typst_path), "{card}");
+    }
+
     /// A card's links point at their notes inline, found by their text, since a card has no link
     /// definitions and a hidden cloze can take some of its links out. A link to a keyword no note
     /// has is plain text.
@@ -1106,12 +1133,14 @@ pub mod tests {
                 linked_note_id: Some("aaa".parse().unwrap()),
                 matched_keyword: Some("Keyword 1".to_string()),
                 relation: crate::model::LinkRelation::Prerequisite,
+                linked_parser_name: None,
             },
             LinkedNote {
                 searched_keyword: "keyword 2".to_string(),
                 linked_note_id: None,
                 matched_keyword: None,
                 relation: crate::model::LinkRelation::Prerequisite,
+                linked_parser_name: None,
             },
         ];
         // The first link was in a cloze this card hides

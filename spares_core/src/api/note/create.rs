@@ -209,6 +209,7 @@ pub async fn create_notes(
                     matched_keyword: None,
                     score: None,
                     relation: link.relation,
+                    linked_parser_name: None,
                 }),
         );
 
@@ -664,6 +665,7 @@ pub(crate) async fn create_note_links_on(
             matched_keyword,
             score,
             relation,
+            linked_parser_name: _,
         } in chunk
         {
             query = query.bind(parent_note_id);

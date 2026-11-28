@@ -599,6 +599,10 @@ pub mod note {
         pub linked_note_id: Option<NoteId>,
         pub matched_keyword: Option<String>,
         pub relation: LinkRelation,
+        /// The linked note's parser, for where its file is (see
+        /// [`crate::parsers::linked_note_raw_path`]). Not sent.
+        #[serde(skip)]
+        pub linked_parser_name: Option<String>,
     }
 
     impl LinkedNote {
@@ -608,6 +612,7 @@ pub mod note {
                 linked_note_id: note_link.linked_note_id,
                 matched_keyword: note_link.matched_keyword,
                 relation: note_link.relation,
+                linked_parser_name: note_link.linked_parser_name,
             }
         }
     }
