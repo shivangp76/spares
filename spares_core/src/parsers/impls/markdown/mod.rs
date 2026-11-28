@@ -946,50 +946,62 @@ fn link_card_links(
         .into_owned()
 }
 
+/// `note_data` with its links numbered in order, as `[text][liN]`, and what goes under the
+/// `Linked Notes:` label after the note: a numbered list of the links, as LaTeX and Typst notes
+/// show, then the definitions of `liN`. pandoc shows definitions nowhere, so without the list the
+/// label would stand over nothing. The list's links are inline, so that they are not read back as
+/// links of the note (see [`get_linked_notes_regex`]).
 fn get_linked_notes_string(
     parser: &dyn Parseable,
     note_data: &str,
     linked_notes_opt: Option<&Vec<LinkedNote>>,
 ) -> (String, String) {
-    if let Some(linked_notes) = linked_notes_opt {
-        // Order all linked notes in `note_data` sequentially
-        let mut count = 0;
-        let linked_notes_regex = get_linked_notes_regex();
-        let new_note_data =
-            linked_notes_regex.replace_all(note_data, |caps: &Captures<'_, str>| {
-                count += 1;
-                format!("[{}][li{}]", &caps[1], count)
-            });
+    let Some(linked_notes) = linked_notes_opt else {
+        return (note_data.to_string(), String::new());
+    };
+    // Order all linked notes in `note_data` sequentially
+    let mut count = 0;
+    let linked_notes_regex = get_linked_notes_regex();
+    let new_note_data = linked_notes_regex.replace_all(note_data, |caps: &Captures<'_, str>| {
+        count += 1;
+        format!("[{}][li{}]", &caps[1], count)
+    });
 
-        let linked_notes_string = linked_notes
-            .iter()
-            .enumerate()
-            .map(|(i, linked_note_request)| {
-                let LinkedNote {
-                    searched_keyword,
-                    linked_note_id,
-                    matched_keyword,
-                    ..
-                } = linked_note_request;
-                assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
-                match (linked_note_id, matched_keyword) {
-                    (None, None) => format!("[li{}]: -", i + 1),
-                    (Some(linked_note_id), Some(matched_keyword)) => format!(
-                        "[li{}]: {} \"{} -> {}\"",
-                        i + 1,
-                        linked_note_path(parser, *linked_note_id).display(),
-                        searched_keyword,
-                        matched_keyword,
-                    ),
-                    (None, Some(_)) | (Some(_), None) => unreachable!(),
+    let (items, definitions): (Vec<String>, Vec<String>) = linked_notes
+        .iter()
+        .enumerate()
+        .map(|(i, linked_note_request)| {
+            let LinkedNote {
+                searched_keyword,
+                linked_note_id,
+                matched_keyword,
+                ..
+            } = linked_note_request;
+            assert_eq!(linked_note_id.is_some(), matched_keyword.is_some());
+            let n = i + 1;
+            match (linked_note_id, matched_keyword) {
+                (None, None) => (
+                    format!("{n}. {searched_keyword} -> (no match found)"),
+                    format!("[li{n}]: -"),
+                ),
+                (Some(linked_note_id), Some(matched_keyword)) => {
+                    let path = linked_note_path(parser, *linked_note_id);
+                    let title = format!("{searched_keyword} -> {matched_keyword}");
+                    (
+                        format!("{n}. [{title}](<{}> \"{title}\")", path.display()),
+                        format!("[li{n}]: {} \"{title}\"", path.display()),
+                    )
                 }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        (new_note_data.to_string(), linked_notes_string)
+                (None, Some(_)) | (Some(_), None) => unreachable!(),
+            }
+        })
+        .unzip();
+    let linked_notes_string = if linked_notes.is_empty() {
+        String::new()
     } else {
-        (note_data.to_string(), String::new())
-    }
+        format!("{}\n\n{}", items.join("\n"), definitions.join("\n"))
+    };
+    (new_note_data.to_string(), linked_notes_string)
 }
 
 /// `card_data` without the delimiters of the clozes it still has: the note's other cards', which
@@ -1071,7 +1083,14 @@ pub mod tests {
         );
         let expected_new_note_data = "Third {{[o:1] Cloze here, linking to [keyword 1][li1], [keyword 1.5][li2], and [keyword 2][li3] }}";
         assert_eq!(new_note_data, expected_new_note_data);
-        let expected_linked_notes_string = "[li1]: /tmp/spares/data/notes/markdown/aaa.md \"keyword 1 -> keyword 1\"\n[li2]: /tmp/spares/data/notes/markdown/aaa.md \"keyword 1.5 -> keyword 1\"\n[li3]: /tmp/spares/data/notes/markdown/aab.md \"keyword 2 -> keyword 2\"";
+        let expected_linked_notes_string = "\
+1. [keyword 1 -> keyword 1](</tmp/spares/data/notes/markdown/aaa.md> \"keyword 1 -> keyword 1\")
+2. [keyword 1.5 -> keyword 1](</tmp/spares/data/notes/markdown/aaa.md> \"keyword 1.5 -> keyword 1\")
+3. [keyword 2 -> keyword 2](</tmp/spares/data/notes/markdown/aab.md> \"keyword 2 -> keyword 2\")
+
+[li1]: /tmp/spares/data/notes/markdown/aaa.md \"keyword 1 -> keyword 1\"
+[li2]: /tmp/spares/data/notes/markdown/aaa.md \"keyword 1.5 -> keyword 1\"
+[li3]: /tmp/spares/data/notes/markdown/aab.md \"keyword 2 -> keyword 2\"";
         assert_eq!(linked_notes_string, expected_linked_notes_string);
     }
 
