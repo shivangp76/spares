@@ -1364,9 +1364,12 @@ async fn a_full_download_keeps_the_cards_buried_today() {
     .await;
     exec(&replicas.server, "UPDATE card SET special_state = 2").await;
     let device = replicas.device().await;
-    on_device(unbury_cards_and_update_config(&device, &SparesExternalConfig::default()))
-        .await
-        .unwrap();
+    on_device(unbury_cards_and_update_config(
+        &device,
+        &SparesExternalConfig::default(),
+    ))
+    .await
+    .unwrap();
     let states: Vec<Option<i64>> = sqlx::query_scalar("SELECT special_state FROM card")
         .fetch_all(&device)
         .await

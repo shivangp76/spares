@@ -1,15 +1,28 @@
 //! A collection owns its watcher, so closing it releases the watch and its file list.
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
+use std::time::Instant;
 
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::Event;
+use notify::EventKind;
+use notify::RecommendedWatcher;
+use notify::RecursiveMode;
+use notify::Watcher;
 
-use super::{
-    ChangedFilesRequest, ChangedFilesResponse, INTERNAL_DIRS, RenderedFile, bucket_digest,
-    file_bucket, is_rendered, mtime, rendered_files_in,
-};
+use super::ChangedFilesRequest;
+use super::ChangedFilesResponse;
+use super::INTERNAL_DIRS;
+use super::RenderedFile;
+use super::bucket_digest;
+use super::file_bucket;
+use super::is_rendered;
+use super::mtime;
+use super::rendered_files_in;
 use crate::Error;
 use crate::collection::lock;
 

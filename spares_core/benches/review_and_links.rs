@@ -2,16 +2,19 @@
 #[path = "common/statistics_fixture.rs"]
 mod fixture;
 
-use spares_core::api::note::KeywordMatcher;
-use spares_core::api::review::{get_review_card, submit_study_action};
-use spares_core::ids::NoteId;
-use spares_core::parsers::get_all_parsers;
-use spares_core::schema::review::{
-    GetReviewCardFilterRequest, GetReviewCardRequest, RatingSubmission, StudyAction,
-    SubmitStudyActionRequest,
-};
 use std::hint::black_box;
 use std::time::Instant;
+
+use spares_core::api::note::KeywordMatcher;
+use spares_core::api::review::get_review_card;
+use spares_core::api::review::submit_study_action;
+use spares_core::ids::NoteId;
+use spares_core::parsers::get_all_parsers;
+use spares_core::schema::review::GetReviewCardFilterRequest;
+use spares_core::schema::review::GetReviewCardRequest;
+use spares_core::schema::review::RatingSubmission;
+use spares_core::schema::review::StudyAction;
+use spares_core::schema::review::SubmitStudyActionRequest;
 
 fn links() {
     let keywords: Vec<_> = (0..10_000)
@@ -77,11 +80,16 @@ async fn rematch(db: &sqlx::SqlitePool) {
 
 /// Times the public APIs, including SQLite row decoding and response construction.
 async fn browsing(db: &sqlx::SqlitePool, root: &std::path::Path) {
-    use spares_core::api::note::{search_keyword, search_page};
-    use spares_core::collection::{Collection, CollectionPaths};
-    use spares_core::schema::note::{SearchKeywordRequest, SearchPageItems, SearchPageRequest};
+    use spares_core::api::note::search_keyword;
+    use spares_core::api::note::search_page;
+    use spares_core::collection::Collection;
+    use spares_core::collection::CollectionPaths;
+    use spares_core::schema::note::SearchKeywordRequest;
+    use spares_core::schema::note::SearchPageItems;
+    use spares_core::schema::note::SearchPageRequest;
     use spares_core::search::QueryReturnItemType;
-    use spares_core::sync::media::{ChangedFilesRequest, changed_rendered_files};
+    use spares_core::sync::media::ChangedFilesRequest;
+    use spares_core::sync::media::changed_rendered_files;
     let paths = CollectionPaths::in_dir(root);
     paths.create().unwrap();
     let note = ("word αβγ ".repeat(120) + "{{ answer }} ").repeat(8);
@@ -161,8 +169,10 @@ async fn browsing(db: &sqlx::SqlitePool, root: &std::path::Path) {
 
 /// Measures the default note list and graph against the same linked fixture.
 async fn note_views(db: &sqlx::SqlitePool) {
-    use spares_core::api::note::{get_note_graph, list_notes};
-    use spares_core::schema::{FilterOptions, note::NoteGraphRequest};
+    use spares_core::api::note::get_note_graph;
+    use spares_core::api::note::list_notes;
+    use spares_core::schema::FilterOptions;
+    use spares_core::schema::note::NoteGraphRequest;
 
     for sample in 0..12 {
         let start = Instant::now();

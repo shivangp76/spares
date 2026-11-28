@@ -83,7 +83,8 @@ mod tests {
     use crate::parsers::get_all_parsers;
     use crate::schema::note::CreateNoteRequest;
     use crate::schema::note::CreateNotesRequest;
-    use crate::schema::note::{SearchNotesRequest, SearchNotesResponse};
+    use crate::schema::note::SearchNotesRequest;
+    use crate::schema::note::SearchNotesResponse;
     use crate::search::QueryReturnItemType;
     use crate::search::evaluator::Evaluator;
     use crate::search::fields;

@@ -3,9 +3,12 @@ use std::future::Future;
 use std::time::Instant;
 
 use chrono::DateTime;
-use spares_core::api::note::{search_notes, search_page};
+use spares_core::api::note::search_notes;
+use spares_core::api::note::search_page;
 use spares_core::api::queue_position::queue_positions;
-use spares_core::schema::note::{SearchNotesRequest, SearchNotesResponse, SearchPageRequest};
+use spares_core::schema::note::SearchNotesRequest;
+use spares_core::schema::note::SearchNotesResponse;
+use spares_core::schema::note::SearchPageRequest;
 use spares_core::schema::review::QueuePositionRequest;
 use spares_core::search::QueryReturnItemType;
 use sqlx::sqlite::SqlitePoolOptions;

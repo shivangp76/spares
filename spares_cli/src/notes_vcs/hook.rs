@@ -114,7 +114,8 @@ fn ref_update_problems(updates: &[(String, String, String)], has_update_hook: bo
     }
     if names.contains(&ANKI) && !has_update_hook {
         problems.push(
-            "this repository has no hook that writes to Anki; run `spares vcs init --repair-hooks`".to_string(),
+            "this repository has no hook that writes to Anki; run `spares vcs init --repair-hooks`"
+                .to_string(),
         );
     }
     problems

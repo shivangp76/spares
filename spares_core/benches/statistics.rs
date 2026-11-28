@@ -19,7 +19,9 @@ use spares_core::schema::statistics::StatisticsGraphsRequest;
 
 #[path = "common/statistics_fixture.rs"]
 mod fixture;
-use fixture::{fill, now, server_pool};
+use fixture::fill;
+use fixture::now;
+use fixture::server_pool;
 
 fn graphs_request(query: Option<&str>, period_days: Option<u32>) -> StatisticsGraphsRequest {
     StatisticsGraphsRequest {

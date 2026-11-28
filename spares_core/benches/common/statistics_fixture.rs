@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::str::FromStr;
+
 use chrono::DateTime;
 use chrono::Utc;
 use spares_core::api::parser::create_parser;
@@ -8,8 +11,6 @@ use sqlx::migrate::Migrator;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::sqlite::SqliteJournalMode;
 use sqlx::sqlite::SqlitePoolOptions;
-use std::path::Path;
-use std::str::FromStr;
 
 const CARDS: u32 = 50_000;
 const REVIEWS: u32 = 500_000;

@@ -172,7 +172,13 @@ fn warn_of_saved_copies() {
 fn check_hooks() {
     let repo = server_repo_dir();
     let _index = git_index_lock();
-    if git(&repo, &["config", "--local", "--get", "core.hooksPath"], None).is_err() {
+    if git(
+        &repo,
+        &["config", "--local", "--get", "core.hooksPath"],
+        None,
+    )
+    .is_err()
+    {
         log::info!(
             "Pushes to {} aren't imported until `spares vcs init` installs its hooks",
             repo.display()
