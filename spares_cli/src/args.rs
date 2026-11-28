@@ -85,7 +85,16 @@ pub(crate) enum Commands {
     /// server. They are not synced.
     #[command(arg_required_else_help = true)]
     SavedSearch(SavedSearchArgs),
-    /// Show how the goals of `config.toml` (`[goals.<name>]`) are going
+    /// Show and change the collection's settings, as the web app's Settings page does
+    ///
+    /// The collection's settings (limits, steps, FSRS, the queue and its presets, leeches, goals,
+    /// easy days, ...) are kept in the collection and sync with it, so they can be changed from any
+    /// device. This machine's settings (`[sync]`, `audio_player`, `tts_command`,
+    /// `render_browser_parsers`) stay in its `config.toml`. A change can be undone with `spares
+    /// event undo`. The settings are documented on `spares_core::config::SparesExternalConfig`.
+    #[command(arg_required_else_help = true)]
+    Config(ConfigArgs),
+    /// Show how the goals of the settings (`[goals.<name>]`) are going
     ///
     /// For each goal, and each of its parts: how many cards are new, learning and learned, how many
     /// new cards a day learn the rest by its `learned_by` date, when the pace of the last two weeks
@@ -822,6 +831,36 @@ pub(crate) struct GoalArgs {
     /// Print the status as JSON
     #[arg(long)]
     pub(crate) json: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct ConfigArgs {
+    #[command(subcommand)]
+    pub(crate) command: ConfigCommands,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum ConfigCommands {
+    /// Print the collection's settings as written, comments included
+    Show {
+        /// Every setting in effect instead, defaults included
+        #[arg(long)]
+        all: bool,
+    },
+    /// Print one setting's value in effect, such as `new_cards_daily_limit` or
+    /// `queue.review_order`
+    Get { key: String },
+    /// Set a setting to a TOML value, such as `spares config set new_cards_daily_limit 15` or
+    /// `spares config set queue.review_order '"retrievability"'`
+    Set {
+        key: String,
+        #[arg(allow_hyphen_values = true)]
+        value: String,
+    },
+    /// Remove a setting, so it takes its default
+    Unset { key: String },
+    /// Edit the collection's settings in `$VISUAL` or `$EDITOR`, saved once they are valid
+    Edit,
 }
 
 #[derive(Args, Debug)]

@@ -2,6 +2,7 @@ mod args;
 mod card;
 mod card_info;
 mod chart;
+mod config;
 mod deploy;
 mod event;
 mod goal;
@@ -141,6 +142,7 @@ async fn process_args(args: Cli) -> Result<(), Error> {
         Commands::Event(event_args) => event::handle(event_args, &base_url, &client).await,
         Commands::SavedSearch(args) => saved_search::handle(args, &base_url, &client).await,
         Commands::Goal(args) => goal::handle(args, &base_url, &client).await,
+        Commands::Config(args) => config::handle(args, &base_url, &client).await,
         #[cfg(feature = "language-tools")]
         Commands::LanguageTools(args) => {
             Box::pin(language_tools::handle(args, &base_url, &client)).await
