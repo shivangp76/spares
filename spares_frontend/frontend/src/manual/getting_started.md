@@ -133,9 +133,10 @@ Spares ships with a script to migrate data from Anki. See `spares migrate --help
 
 Spares ships with a CLI to interact with the server. Its documentation can be found by running `spares --help`.
 
-Using the CLI, we can add our parsers to the database. This is needed for creating notes that use these parsers.
+A new collection has no parsers. Add the ones your notes use before creating notes with the CLI (the web app's **Create your first note** adds its parser itself):
 ```sh
 spares parser add --name markdown
+spares parser add --name typst
 spares parser add --name latex-note
 ```
 
@@ -187,7 +188,7 @@ The capital of France is {{[t] Paris}}.
 ```
 The comparison options (`t:ci`, `t:nc`, `t:m`) and the rest are on `spares_core::parsers::TypeAnswer`.
 
-# Render notes
+## Rendering notes
 
 You can render notes with the following command. This will create the following files for each note:
 
@@ -215,7 +216,7 @@ In the web UI, Ctrl+Enter (Cmd+Enter on a Mac) saves a note or creates a new one
 
 To edit the files, keep them in a git or jj repository: run `spares vcs init` (or `spares vcs init --jj`), edit, commit, and push to import your changes. See [Notes as a git or jj repository](./workflows.md#notes-as-a-git-or-jj-repository).
 
-# Reviewing
+## Reviewing
 
 ```sh
 spares card review
