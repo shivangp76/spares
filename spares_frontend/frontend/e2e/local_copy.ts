@@ -5,7 +5,8 @@
 //    Device.
 // 2. Offline: review a card, and a card's image occlusion without masks, open `/`, see a card's
 //    audio clip, add notes, one with a dropped image, edit a note the server also edits and one
-//    with the server's image occlusion, search, open the statistics, undo. Show a Typst card with
+//    with the server's image occlusion, search, open the statistics, change the collection's
+//    settings, undo. Show a Typst card with
 //    the server's image occlusion, whose image the device makes.
 // 3. Online again: sync, resolve the conflict on the Conflicts page, sync again. Add a note with a
 //    new image occlusion, which the copy stores, and a Typst note with one, whose card shows before
@@ -620,7 +621,10 @@ async function firstReviewAndDrafts(page: Page, engine: string) {
   await startNote(page, "markdown", "Private unfinished draft");
   await logIn(page, `first-${engine}`);
   await page.goto(`${ORIGIN}/review`);
-  await page.getByRole("button", { name: "Create your first note" }).click();
+  await page
+    .getByRole("region", { name: "Getting started" })
+    .getByRole("button", { name: "Markdown", exact: true })
+    .click();
   const editor = page.locator(".cm-content").first();
   await see(page, /The capital of France is/);
   check(
@@ -1022,6 +1026,19 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
       (await page.getByText(/failed/i).count()) === 0,
     );
 
+    // The collection's settings, changed on the device and sent with its next sync. A value of
+    // each engine's own, since the engines share the server.
+    const newCardsLimit = 30 + Object.keys(ENGINES).indexOf(engine);
+    await page.goto(`${ORIGIN}/settings`);
+    await page
+      .getByLabel("New cards a day", { exact: true })
+      .fill(String(newCardsLimit));
+    await page
+      .getByRole("button", { name: "Save 1 change", exact: true })
+      .click();
+    await see(page, /Saved new_cards_daily_limit/);
+    check("changed the collection's settings offline", true);
+
     // 3. Online again
     // It syncs by itself once the connection is back, so the button may find nothing left to do
     await context.setOffline(false);
@@ -1045,6 +1062,15 @@ async function run(engine: keyof typeof ENGINES): Promise<void> {
     await see(page, /Resolved the conflict/);
     await page.getByRole("button", { name: /^Sync/ }).click();
     await see(page, /Synced: received \d+ changes, sent [1-9]/);
+    const settings = await api<{ values: Record<string, unknown> }>(
+      "GET",
+      "/api/settings",
+    );
+    check(
+      "the server has the settings changed offline",
+      settings.values.new_cards_daily_limit === newCardsLimit,
+      String(settings.values.new_cards_daily_limit),
+    );
 
     // A new image occlusion, stored by the copy and uploaded with the note that names it
     const occlusionsBefore = await serverMedia("image-occlusion");
