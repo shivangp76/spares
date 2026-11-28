@@ -563,8 +563,11 @@ async fn reschedule_keeps_a_due_date_set_by_hand(pool: SqlitePool) {
     let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
     let now = Utc::now();
     graduate(&pool, card_id, now, &[10, 9, 5]).await;
-    let stability = fetch_card(&pool, card_id).await.stability;
-    let exam = whole_seconds(now + Duration::days(40));
+    let graduated = fetch_card(&pool, card_id).await;
+    let stability = graduated.stability;
+    // Not `now + 40 days`: with some fuzz, that is the date the card already has, and setting it
+    // is no move, so nothing is logged
+    let exam = whole_seconds(graduated.due + Duration::days(10));
     set_due(&pool, card_id, exam, now).await;
     let rows = reschedule_rows(&pool, card_id).await;
     assert_eq!(rows.len(), 1, "the move is logged");
@@ -662,7 +665,8 @@ async fn changing_desired_retention_keeps_a_due_date_set_by_hand(pool: SqlitePoo
     let card_id = create_cards(&pool, &["a {{ b }} c"]).await[0][0];
     let now = Utc::now();
     graduate(&pool, card_id, now, &[10, 9, 5]).await;
-    let exam = whole_seconds(now + Duration::days(40));
+    // Not `now + 40 days`: with some fuzz, that is the date the card already has
+    let exam = whole_seconds(fetch_card(&pool, card_id).await.due + Duration::days(10));
     set_due(&pool, card_id, exam, now).await;
 
     update_cards(
