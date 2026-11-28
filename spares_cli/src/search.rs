@@ -127,13 +127,11 @@ pub(crate) async fn search(
              machine. Use `--output-format rendered-filepath` for the URLs of their rendered files."
         ));
     }
-    // Rendered files are in the collection's files directory, which the host serves at `/files`
     let rendered = |path: &Path| {
         if local {
             path.display().to_string()
         } else {
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            format!("{base_url}/files/{name}")
+            crate::local::host_file_url(base_url, path)
         }
     };
     let response = search_notes(query, output_type, base_url, client).await?;

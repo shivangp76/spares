@@ -51,6 +51,14 @@ pub(crate) fn is_local_host(base_url: &str) -> bool {
         .is_ok_and(|local| loopback(&local) == loopback(base_url))
 }
 
+/// The URL of a rendered file on the host at `base_url`. Rendered files are in the collection's
+/// files directory, which the host serves at `/files`; `path` is where the file would be in this
+/// machine's collection.
+pub(crate) fn host_file_url(base_url: &str, path: &Path) -> String {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    format!("{base_url}/files/{name}")
+}
+
 /// The host to talk to and its token (see [`crate::login`]): `--host`, else the one last logged in
 /// to, else the host on this machine.
 pub(crate) fn host_client(

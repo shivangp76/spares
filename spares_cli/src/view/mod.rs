@@ -209,6 +209,15 @@ async fn view_items<T: ViewItem>(
     let total = items.len();
     let mut index = 0;
     let mut rendered_file_child: Option<Child> = None;
+    // Another host's files are on its machine, not in this one's collection: its rendered files
+    // are opened by their URL, and its raw files can't be opened or synced from here
+    let local = crate::local::is_local_host(base_url);
+    if !local {
+        println!(
+            "{base_url} is not the host on this machine, so its rendered files open from their URLs, \
+             and its notes' raw files, on its own machine, can't be opened or synced from here."
+        );
+    }
 
     loop {
         if let Some(mut child) = rendered_file_child.take() {
@@ -219,6 +228,11 @@ async fn view_items<T: ViewItem>(
         item.display(parser_name, index, total);
 
         if let Ok(path) = item.rendered_path(parser_name) {
+            let path = if local {
+                path
+            } else {
+                PathBuf::from(crate::local::host_file_url(base_url, &path))
+            };
             let effective_open_cmd = open_command_card.or(open_command);
             let card_id_str = item.card_id_str();
             rendered_file_child = Some(open_rendered_file(
@@ -229,14 +243,16 @@ async fn view_items<T: ViewItem>(
             )?);
         }
 
-        let mut action_options: Vec<ViewAction> =
-            vec![ViewAction::Previous, ViewAction::Next, ViewAction::OpenNote];
-        if let Some(ln) = item.linked_notes()
-            && !ln.is_empty()
-        {
-            action_options.push(ViewAction::OpenLinkedNotes);
+        let mut action_options: Vec<ViewAction> = vec![ViewAction::Previous, ViewAction::Next];
+        if local {
+            action_options.push(ViewAction::OpenNote);
+            if let Some(ln) = item.linked_notes()
+                && !ln.is_empty()
+            {
+                action_options.push(ViewAction::OpenLinkedNotes);
+            }
+            action_options.push(ViewAction::SyncNote);
         }
-        action_options.push(ViewAction::SyncNote);
         action_options.push(ViewAction::GoTo);
         action_options.push(ViewAction::Exit);
 
