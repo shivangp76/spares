@@ -125,24 +125,27 @@ const CONFIG = join(COLLECTION, "config/config.toml");
 const dateIn = (days: number) => new Date((NOW + days * DAY) * 1000).toISOString().slice(0, 10);
 
 /**
- * The host's default config.toml, with Typst cards compiled by browsers only, as on a server,
- * lighter Sundays, new cards held back until the notes they link to are learned, a preset for
- * languages, and two goals: one on track, and one with a milestone missed.
+ * The host's config.toml: Typst cards compiled by browsers only, as on a server, and the
+ * collection's settings that differ from the defaults, which the host moves into the collection
+ * when it opens it (see spares_core::settings): lighter Sundays, new cards held back until the
+ * notes they link to are learned, a preset for languages, and two goals: one on track, and one
+ * with a milestone missed.
  */
 function writeConfig(): void {
-  let config = readFileSync(CONFIG, "utf8");
-  for (const [from, to] of [
-    [/^render_browser_parsers = true$/m, "render_browser_parsers = false"],
-    [/^\[sync\]$/m, `[sync]\nreplica = ${HOST_REPLICA}`],
-    [/^Sun = 1\.0$/m, "Sun = 0.5"],
-    [/^new_after_linked_notes = false$/m, "new_after_linked_notes = true"],
-  ] as const) {
-    if (!from.test(config)) throw new Error(`config.toml has no ${from} to change`);
-    config = config.replace(from, to);
-  }
+  mkdirSync(dirname(CONFIG), { recursive: true });
   writeFileSync(
     CONFIG,
-    `${config}
+    `render_browser_parsers = false
+
+[sync]
+replica = ${HOST_REPLICA}
+
+[easy_days.days_to_workload_percentage]
+Sun = 0.5
+
+[queue]
+new_after_linked_notes = true
+
 [queue.presets.languages]
 tags = ["languages"]
 new_cards_daily_limit = 5
