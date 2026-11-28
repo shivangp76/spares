@@ -3,9 +3,9 @@
 //
 // - `collection.sqlite` goes in with spares_wasm's `load_snapshot`, as a full download would, with
 //   the host's settings (`config.json`) and image occlusions.
-// - The rendered files and render assets go in the copy's caches (`COPY_FILES_CACHE`,
-//   `COPY_RENDER_ASSETS_CACHE`), under the URLs the API client looks them up by, as copy.ts
-//   keeps what it downloads.
+// - The rendered files and render assets, which come in one file (`bundle.bin`), go in the copy's
+//   caches (`COPY_FILES_CACHE`, `COPY_RENDER_ASSETS_CACHE`), under the URLs the API client looks
+//   them up by, as copy.ts keeps what it downloads.
 // - pandoc.wasm isn't kept: at 16 MB compressed, it would be most of what the demo downloads, so the
 //   Markdown cards of notes changed here are shown from their source with `marked` (see pandoc.ts).
 //
@@ -26,14 +26,21 @@ import {
   stopCopy,
 } from "./transport";
 
+/** Where a file is in `bundle.bin`: bytes `start` to `end`, and its `Content-Type` */
+interface BundleEntry {
+  start: number;
+  end: number;
+  type: string;
+}
+
 /** `manifest.json` (see demo/build.ts) */
 interface Manifest {
   /** Unix time */
   built: number;
   replica: number;
-  /** Rendered files, relative to the files directory */
-  files: string[];
-  assets: { path: string; hash: string }[];
+  /** Rendered files, by path relative to the files directory */
+  files: ({ path: string } & BundleEntry)[];
+  assets: ({ path: string; hash: string } & BundleEntry)[];
   /** Image occlusion files, by name */
   imageOcclusions: string[];
 }
@@ -41,8 +48,8 @@ interface Manifest {
 const DEMO_DIR = `${BASE_URL}demo/`;
 /** When the build of the demo whose collection this browser has was made, from its manifest */
 const DEMO_BUILT_KEY = "spares_demo_built";
-/** Files fetched at once */
-const CONCURRENCY = 6;
+/** Files put in the caches at once */
+const CONCURRENCY = 16;
 
 /** How far loading the demo has got, for the page shown meanwhile */
 export interface DemoProgress {
@@ -57,12 +64,11 @@ async function fetchOk(path: string): Promise<Response> {
   return res;
 }
 
-/** `res` to keep in a cache, without the headers that describe how it was sent rather than its body */
-async function keepable(res: Response): Promise<Response> {
-  const headers = new Headers();
-  const type = res.headers.get("Content-Type");
-  if (type) headers.set("Content-Type", type);
-  return new Response(await res.blob(), { headers });
+/** The file `entry` describes in `bundle`, to keep in a cache as a host would have sent it */
+function bundled(bundle: Blob, entry: BundleEntry): Response {
+  return new Response(bundle.slice(entry.start, entry.end), {
+    headers: { "Content-Type": entry.type },
+  });
 }
 
 /**
@@ -91,6 +97,10 @@ export async function loadDemo(
       "This browser has no storage for the demo's collection, as in a private window. Open the demo in a normal window.",
     );
   onProgress({ step: "Loading the collection", done: 0, total: 1 });
+  // The rendered files and assets, in one file (see demo/build.ts), fetched while the collection loads.
+  // Named by the build, since a static host lets browsers keep a file for a while.
+  const bundle = fetchOk(`bundle.bin?built=${built}`).then((res) => res.blob());
+  bundle.catch(() => {});
   const state = (await openCopy()) as { replica: number | null };
   // Already loaded when an earlier attempt stopped after it
   if (state.replica === null) {
@@ -117,20 +127,20 @@ export async function loadDemo(
     caches.open(COPY_FILES_CACHE),
     caches.open(COPY_RENDER_ASSETS_CACHE),
   ]);
+  const step = "Loading cards";
+  const total = manifest.files.length + manifest.assets.length;
+  onProgress({ step, done: 0, total });
+  const files = await bundle;
   const tasks: (() => Promise<void>)[] = [
-    ...manifest.files.map((path) => async () => {
-      const res = await fetchOk(`files/${path.split("/").map(encodeURIComponent).join("/")}`);
-      await filesCache.put(fileUrl(path), await keepable(res));
-    }),
-    ...manifest.assets.map(({ path, hash }) => async () => {
-      const res = await fetchOk(`assets/${hash}`);
-      await assetsCache.put(renderAssetUrl(path), await keepable(res));
-    }),
+    ...manifest.files.map((entry) => () =>
+      filesCache.put(fileUrl(entry.path), bundled(files, entry)),
+    ),
+    ...manifest.assets.map((entry) => () =>
+      assetsCache.put(renderAssetUrl(entry.path), bundled(files, entry)),
+    ),
   ];
   let next = 0;
   let done = 0;
-  const step = "Loading cards";
-  onProgress({ step, done, total: tasks.length });
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, tasks.length) }, async () => {
       while (next < tasks.length) {
@@ -143,7 +153,7 @@ export async function loadDemo(
   // Notes and cards are shown with their HTML only once the device says it has it
   await call(
     "web_renders",
-    manifest.files.filter((path) => path.endsWith(".html")),
+    manifest.files.map(({ path }) => path).filter((path) => path.endsWith(".html")),
   );
   setLocalCopy({
     replica: manifest.replica,

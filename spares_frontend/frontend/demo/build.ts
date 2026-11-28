@@ -13,9 +13,9 @@
 //
 // - `collection.sqlite`: the database, which `load_snapshot` in spares_wasm restores;
 // - `config.json`: the host's `DeviceConfig` (`GET /api/sync/config`);
-// - `files/`: the rendered files devices download (`/api/sync/files/changed`), `assets/` the
-//   files Typst cards read, by hash, and `image-occlusions/` the image occlusions' files;
-// - `manifest.json`: what is there, and when it was built.
+// - `bundle.bin`: the rendered files devices download (`/api/sync/files/changed`) and the files
+//   Typst cards read, one after another, and `image-occlusions/` the image occlusions' files;
+// - `manifest.json`: what is there (and where in `bundle.bin`), and when it was built.
 //
 // Reviews are dated from when it runs, so the demo is rebuilt now and then (see
 // .github/workflows/demo.yml) to keep cards due. It needs `spares` and `spares_server` (by
@@ -575,6 +575,13 @@ interface RenderedFile {
   bucket: string;
 }
 
+/** Where a file is in `bundle.bin`: bytes `start` to `end`, and its `Content-Type` */
+interface BundleEntry {
+  start: number;
+  end: number;
+  type: string;
+}
+
 async function writeBundle(): Promise<void> {
   const config = await api<unknown>("GET", "/api/sync/config");
   const listed = (await api<{ files: RenderedFile[] }>("POST", "/api/sync/files/changed", { buckets: {} })).files;
@@ -593,16 +600,29 @@ async function writeBundle(): Promise<void> {
   db.close();
   writeFileSync(join(OUT, "config.json"), JSON.stringify(config));
 
+  // The rendered files and assets in one file, `bundle.bin`, which the browser loads with one
+  // request rather than hundreds, each a round trip to a static host
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  const pack = (path: string, type: string): BundleEntry => {
+    const bytes = readFileSync(path);
+    parts.push(bytes);
+    size += bytes.length;
+    return { start: size - bytes.length, end: size, type };
+  };
   const filesDir = join(ROOT, "cache/users", USER, "files");
-  for (const file of files) {
-    const target = join(OUT, "files", file.path);
-    mkdirSync(dirname(target), { recursive: true });
-    copyFileSync(join(filesDir, file.path), target);
-  }
-  // Each asset's stored copy, named by its hash in the collection's directory
+  const bundledFiles = files
+    .map((file) => file.path)
+    .sort()
+    .map((path) => ({ path, ...pack(join(filesDir, path), Bun.file(path).type) }));
+  // Each asset's stored copy, named by its hash in the collection's directory. Typst reads them
+  // as bytes, whatever their type.
   const stored = join(COLLECTION, "render_assets");
-  mkdirSync(join(OUT, "assets"), { recursive: true });
-  for (const asset of assets) copyFileSync(join(stored, asset.hash), join(OUT, "assets", asset.hash));
+  const bundledAssets = assets.map((asset) => ({
+    ...asset,
+    ...pack(join(stored, asset.hash), "application/octet-stream"),
+  }));
+  writeFileSync(join(OUT, "bundle.bin"), Buffer.concat(parts));
   const occlusionsDir = join(COLLECTION, "media/image_occlusions");
   const imageOcclusions = existsSync(occlusionsDir) ? readdirSync(occlusionsDir) : [];
   mkdirSync(join(OUT, "image-occlusions"), { recursive: true });
@@ -614,8 +634,8 @@ async function writeBundle(): Promise<void> {
     JSON.stringify({
       built: NOW,
       replica: 2,
-      files: files.map((file) => file.path).sort(),
-      assets,
+      files: bundledFiles,
+      assets: bundledAssets,
       imageOcclusions,
     }),
   );

@@ -30,6 +30,8 @@ const FONTS_CACHE = "spares-typst-fonts";
 const FONTS_URL = "https://cdn.jsdelivr.net/gh/typst/typst-assets@";
 
 const PAGE_URL = new URL("index.html", self.registration.scope).href;
+// The demo's collection, which src/local/demo.ts keeps in the copy's caches itself
+const DEMO_DATA_URL = new URL("demo/", self.registration.scope).href;
 const precacheUrls = PRECACHE.map(
   (path) => new URL(path, self.registration.scope).href,
 );
@@ -116,7 +118,8 @@ self.addEventListener("fetch", (event) => {
   if (
     url.pathname.startsWith("/api/") ||
     url.pathname.startsWith("/files/") ||
-    url.pathname.startsWith("/pandoc/")
+    url.pathname.startsWith("/pandoc/") ||
+    url.href.startsWith(DEMO_DATA_URL)
   )
     return;
 
