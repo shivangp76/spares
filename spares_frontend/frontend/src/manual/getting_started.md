@@ -1,12 +1,26 @@
 # Getting Started
 
-Clone this repository:
+## Installing
+
+spares needs Rust 1.94 or later. Install its three programs:
+```sh
+cargo install --locked --git https://github.com/shivangp76/spares spares_cli spares_server spares_frontend
+```
+- `spares`: the CLI
+- `spares_server`: the host
+- `spares_frontend`: the image occlusion editor, without the web app
+
+They go in `~/.cargo/bin`, which rustup puts on your `PATH`. The web app is built from a clone of the repository, with its submodules (see [Starting the server](./getting_started.md#starting-the-server)):
 ```sh
 git clone --recurse-submodules https://github.com/shivangp76/spares.git
-cd spares
-cargo build --release
-export PATH="$PWD/target/release:$PATH"
 ```
+
+What rendering notes needs depends on the parser:
+- "typst": nothing, since Typst is built into `spares_server`. Installing it with `--no-default-features` leaves Typst out, and Typst notes then render with the `typst` CLI (it also leaves out the "markdown-language-tools" parser).
+- "markdown": pandoc (3.12.1 or later for the web app's HTML cards) and LaTeX.
+- "latex-note": LaTeX.
+
+To update, run the same `cargo install` command again, which rebuilds the programs if the repository changed. Then run `git pull --recurse-submodules` in the clone and rebuild the web app.
 
 ## Reference documentation
 
@@ -27,7 +41,7 @@ spares runs as a *host*: one `spares_server` with a root directory (`SPARES_ROOT
 spares host init --user your-name
 ```
 
-For the web app, build its files from the repository root. This requires Bun, npm, and LLVM with WebAssembly support (Homebrew LLVM on macOS).
+For the web app, build its files in your clone of the repository. This requires Bun, npm, and LLVM with WebAssembly support (Homebrew LLVM on macOS).
 
 ```sh
 (cd spares_frontend/frontend && bun install --frozen-lockfile && bun run build)
