@@ -43,6 +43,14 @@ pub(crate) fn local_host(root: &Path) -> Result<String, String> {
     ))
 }
 
+/// Whether `base_url` is the host on this machine, whose collection's files are this machine's.
+/// Not when there is no host here.
+pub(crate) fn is_local_host(base_url: &str) -> bool {
+    let loopback = |url: &str| url.replacen("://localhost", "://127.0.0.1", 1);
+    local_host(&spares_server::host::default_root())
+        .is_ok_and(|local| loopback(&local) == loopback(base_url))
+}
+
 /// The host to talk to and its token (see [`crate::login`]): `--host`, else the one last logged in
 /// to, else the host on this machine.
 pub(crate) fn host_client(

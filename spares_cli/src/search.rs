@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use miette::Error;
 use miette::miette;
 use reqwest::Client;
@@ -116,6 +118,24 @@ pub(crate) async fn search(
     base_url: &str,
     client: &Client,
 ) -> Result<(), Error> {
+    // Another host's files are on its machine, not in this one's collection: its rendered files
+    // are given by their URL, and its raw files can't be given
+    let local = crate::local::is_local_host(base_url);
+    if !local && output_format == OutputFormat::RawFilepath {
+        return Err(miette!(
+            "{base_url} is not the host on this machine, so its notes' raw files are on its own \
+             machine. Use `--output-format rendered-filepath` for the URLs of their rendered files."
+        ));
+    }
+    // Rendered files are in the collection's files directory, which the host serves at `/files`
+    let rendered = |path: &Path| {
+        if local {
+            path.display().to_string()
+        } else {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            format!("{base_url}/files/{name}")
+        }
+    };
     let response = search_notes(query, output_type, base_url, client).await?;
     match response {
         SearchNotesResponse::Notes(note_responses) => {
@@ -129,7 +149,7 @@ pub(crate) async fn search(
                     }
                     OutputFormat::RenderedFilepath => {
                         match compute_note_rendered_path(parser_name.as_str(), note_response.id) {
-                            Ok(p) => println!("{}", p.display()),
+                            Ok(p) => println!("{}", rendered(&p)),
                             Err(e) => eprintln!("Error: {}", e),
                         }
                     }
@@ -161,7 +181,7 @@ pub(crate) async fn search(
                             RenderOutputType::Card(card_response.order as usize, CardSide::Front),
                             card_response.note_id,
                         ));
-                        println!("{}", card_rendered_path.display());
+                        println!("{}", rendered(&card_rendered_path));
                     }
                 }
             }

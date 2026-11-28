@@ -888,6 +888,9 @@ pub(crate) enum OutputFormat {
 
 #[derive(Args, Debug)]
 pub(crate) struct SearchArgs {
+    /// What to print for each result: the path of its raw or its rendered file. With a host that
+    /// isn't the one on this machine, `rendered-filepath` prints the file's URL on that host, and
+    /// `raw-filepath` is an error, since the raw files are on that host's machine.
     #[arg(long, default_value = "raw-filepath")]
     pub(crate) output_format: OutputFormat,
     /// The query, like `tag=spanish c.due<=today`. `--fields` lists the fields it can use, and
