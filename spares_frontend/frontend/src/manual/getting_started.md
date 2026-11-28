@@ -53,7 +53,7 @@ In the generated `host.toml`, set `frontend_dir` to the absolute path of `spares
 spares_server
 spares login            # in another terminal: the CLI's device token for this host
 ```
-Then open the web app at the host's address (`http://127.0.0.1:8080`, or `bind` in `host.toml`) and log in with the same name and password. On the Review page of an empty collection, choose **Create your first note**, edit the Markdown cloze, and choose **Create and review**. Settings in the web app lists the devices logged in with `spares login`, and logs out one you lost (as `spares logout` on it would). `spares host --help` lists the admin's commands, which work on the root directly: adding accounts, resetting passwords, making device tokens, limits and backups.
+Then open the web app at the host's address (`http://127.0.0.1:8080`, or `bind` in `host.toml`) and log in with the same name and password. On the Review page of an empty collection, **Getting started** offers a first note in Markdown, Typst or LaTeX, or sample notes (tagged `sample`): choose **Markdown**, edit its cloze, and choose **Create and review**. Settings in the web app lists the devices logged in with `spares login`, and logs out one you lost (as `spares logout` on it would). `spares host --help` lists the admin's commands, which work on the root directly: adding accounts, resetting passwords, making device tokens, limits and backups.
 
 ### Running on a remote server (optional)
 
@@ -133,7 +133,7 @@ Spares ships with a script to migrate data from Anki. See `spares migrate --help
 
 Spares ships with a CLI to interact with the server. Its documentation can be found by running `spares --help`.
 
-A new collection has no parsers. Add the ones your notes use before creating notes with the CLI (the web app's **Create your first note** adds its parser itself):
+A new collection has no parsers. Add the ones your notes use before creating notes with the CLI (the web app's first note, from **Getting started** on the Review page, adds its parser itself):
 ```sh
 spares parser add --name markdown
 spares parser add --name typst
